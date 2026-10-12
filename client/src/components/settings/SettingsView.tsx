@@ -1,0 +1,1285 @@
+import React, { useState, useMemo } from 'react';
+import { useApp } from '../../context/AppContext';
+import { AuditLog } from '../../types';
+import { Card } from '../common/Card';
+import { Button } from '../common/Button';
+import { Badge } from '../common/Badge';
+import { Modal } from '../common/Modal';
+import { ConfirmDialog } from '../common/ConfirmDialog';
+import {
+  Settings as SettingsIcon,
+  Building2,
+  Database,
+  Users,
+  ShieldCheck,
+  RefreshCw,
+  Copy,
+  Check,
+  AlertTriangle,
+  Server,
+  Search,
+  Filter,
+  Download,
+  Eye,
+  FileText,
+  Clock,
+  ArrowRight,
+  Code,
+  ShieldAlert,
+  Calendar,
+  CheckCircle2,
+} from 'lucide-react';
+import { formatDate, exportToCSV } from '../../utils/formatters';
+
+type SettingsTab = 'general' | 'audit' | 'database' | 'access';
+
+export const SettingsView: React.FC = () => {
+  const {
+    settings,
+    updateSettings,
+    resetData,
+    currentUser,
+    profiles,
+    switchUserRole,
+    auditLogs,
+    activityLogs,
+    showToast,
+    employees,
+    invitations,
+    createEmployeeInvitation,
+  } = useApp();
+
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+
+  // Form states
+  const [companyName, setCompanyName] = useState(settings.companyName);
+  const [companyEmail, setCompanyEmail] = useState(settings.companyEmail);
+  const [companyPhone, setCompanyPhone] = useState(settings.companyPhone);
+  const [companyAddress, setCompanyAddress] = useState(settings.companyAddress);
+  const [companyGstin, setCompanyGstin] = useState(settings.companyGstin || '');
+  const [defaultCurrency, setDefaultCurrency] = useState(settings.defaultCurrency);
+  const [financialYearStartMonth, setFinancialYearStartMonth] = useState(
+    settings.financialYearStartMonth
+  );
+  const [invoicePrefix, setInvoicePrefix] = useState(settings.invoicePrefix);
+  const [taxRatePercentage, setTaxRatePercentage] = useState(settings.taxRatePercentage);
+  const [companyTimezone, setCompanyTimezone] = useState(settings.companyTimezone || 'Asia/Kolkata');
+  const [workStartTime, setWorkStartTime] = useState(settings.workStartTime || '09:30');
+  const [workEndTime, setWorkEndTime] = useState(settings.workEndTime || '18:30');
+  const [expectedDailyHours, setExpectedDailyHours] = useState(settings.expectedDailyHours || 8.0);
+  const [weeklyWorkingDays, setWeeklyWorkingDays] = useState(settings.weeklyWorkingDays || 5);
+
+  // Invite state
+  const [inviteEmpId, setInviteEmpId] = useState(employees[0]?.id || '');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [generatedInviteLink, setGeneratedInviteLink] = useState('');
+
+  // Supabase cloud integration credentials
+  const [supabaseUrl, setSupabaseUrl] = useState(settings.supabaseUrl || '');
+  const [supabaseAnonKey, setSupabaseAnonKey] = useState(settings.supabaseAnonKey || '');
+
+  // Reset confirmation
+  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
+  const [copiedSchema, setCopiedSchema] = useState(false);
+
+  // Audit Logs inspection modal state
+  const [selectedAuditLog, setSelectedAuditLog] = useState<AuditLog | null>(null);
+
+  // Audit log table filters
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditEntityFilter, setAuditEntityFilter] = useState<string>('all');
+  const [auditActionFilter, setAuditActionFilter] = useState<string>('all');
+
+  const handleSaveCompany = (e: React.FormEvent) => {
+    e.preventDefault();
+    updateSettings({
+      ...settings,
+      companyName: companyName.trim(),
+      companyEmail: companyEmail.trim(),
+      companyPhone: companyPhone.trim(),
+      companyAddress: companyAddress.trim(),
+      companyGstin: companyGstin.trim(),
+      defaultCurrency,
+      financialYearStartMonth,
+      invoicePrefix: invoicePrefix.trim(),
+      taxRatePercentage: Number(taxRatePercentage) || 18,
+      companyTimezone,
+      workStartTime,
+      workEndTime,
+      expectedDailyHours: Number(expectedDailyHours) || 8.0,
+      weeklyWorkingDays: Number(weeklyWorkingDays) || 5,
+    });
+    showToast('success', 'Company profile and schedule policies updated successfully');
+  };
+
+  const handleGenerateInvite = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inviteEmail.trim()) return;
+    const inv = createEmployeeInvitation(inviteEmpId, inviteEmail.trim(), 'employee');
+    const link = `${window.location.origin}?invite=${inv.token}`;
+    setGeneratedInviteLink(link);
+    showToast('success', 'Invitation link generated successfully');
+  };
+
+  const handleSaveDatabase = (e: React.FormEvent) => {
+    e.preventDefault();
+    updateSettings({
+      ...settings,
+      supabaseUrl: supabaseUrl.trim() || undefined,
+      supabaseAnonKey: supabaseAnonKey.trim() || undefined,
+      backendType: supabaseUrl.trim() && supabaseAnonKey.trim() ? 'supabase' : 'local-persistent',
+    });
+    showToast('success', 'Database connection parameters saved');
+  };
+
+  // Production-grade PostgreSQL / Supabase Schema including audit_logs table and function
+  const schemaSnippet = `-- ==============================================================================
+-- HYBRID MONKS INTERNAL MANAGEMENT SYSTEM — PRODUCTION DATABASE SCHEMA
+-- Target Engine: PostgreSQL 15+ / Supabase
+-- Includes: audit_logs table, log_audit_event stored function, RLS policies
+-- ==============================================================================
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- 1. PROFILES & USERS
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    role TEXT NOT NULL DEFAULT 'employee' CHECK (role IN ('admin', 'manager', 'employee')),
+    designation TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 2. EMPLOYEES ROSTER
+CREATE TABLE IF NOT EXISTS public.employees (
+    id TEXT PRIMARY KEY,
+    full_name TEXT NOT NULL,
+    work_email TEXT NOT NULL UNIQUE,
+    department TEXT NOT NULL,
+    designation TEXT NOT NULL,
+    joining_date DATE NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('Active', 'On Leave', 'Inactive')),
+    monthly_salary NUMERIC(14,2) NOT NULL DEFAULT 0.00,
+    payment_method TEXT DEFAULT 'Bank Transfer',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 3. FINANCIAL TRANSACTIONS
+CREATE TABLE IF NOT EXISTS public.transactions (
+    id TEXT PRIMARY KEY,
+    date DATE NOT NULL,
+    type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
+    category TEXT NOT NULL,
+    description TEXT NOT NULL,
+    amount NUMERIC(14,2) NOT NULL CHECK (amount >= 0),
+    payment_method TEXT NOT NULL,
+    reference_number TEXT,
+    linked_salary_id TEXT,
+    created_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 4. INVOICES & PAYMENTS
+CREATE TABLE IF NOT EXISTS public.invoices (
+    id TEXT PRIMARY KEY,
+    invoice_number TEXT NOT NULL UNIQUE,
+    client_name TEXT NOT NULL,
+    total_amount NUMERIC(14,2) NOT NULL CHECK (total_amount >= 0),
+    amount_paid NUMERIC(14,2) NOT NULL DEFAULT 0.00,
+    outstanding_amount NUMERIC(14,2) NOT NULL DEFAULT 0.00,
+    status TEXT NOT NULL CHECK (status IN ('Draft', 'Sent', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled')),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 5. SALARY RECORDS
+CREATE TABLE IF NOT EXISTS public.salary_records (
+    id TEXT PRIMARY KEY,
+    employee_id TEXT NOT NULL REFERENCES public.employees(id),
+    salary_month TEXT NOT NULL,
+    base_salary NUMERIC(14,2) NOT NULL,
+    adjustments NUMERIC(14,2) NOT NULL DEFAULT 0.00,
+    final_payable_amount NUMERIC(14,2) NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('Pending', 'Paid')),
+    payment_date DATE,
+    payment_method TEXT,
+    linked_expense_txn_id TEXT REFERENCES public.transactions(id),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_emp_month UNIQUE (employee_id, salary_month)
+);
+
+-- 6. AUDIT LOGS TABLE (TAMPER-EVIDENT ACCOUNTABILITY SYSTEM)
+CREATE TABLE IF NOT EXISTS public.audit_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+    user_name TEXT NOT NULL,
+    user_email TEXT,
+    user_role TEXT NOT NULL,
+    action TEXT NOT NULL, -- e.g. 'SALARY_PAYMENT', 'ATTENDANCE_CORRECTION'
+    entity_type TEXT NOT NULL, -- 'salary', 'attendance', 'invoice', 'employee', 'settings'
+    entity_id TEXT, -- e.g. 'SAL-2026-09-EMP001'
+    details TEXT NOT NULL,
+    previous_state JSONB, -- Previous record state before mutation
+    new_state JSONB,      -- Mutated record state after action
+    ip_address TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON public.audit_logs(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON public.audit_logs(action);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON public.audit_logs(entity_type, entity_id);
+
+-- 7. STORED FUNCTION: log_audit_event
+CREATE OR REPLACE FUNCTION public.log_audit_event(
+    p_action TEXT,
+    p_entity_type TEXT,
+    p_entity_id TEXT,
+    p_details TEXT,
+    p_user_name TEXT DEFAULT NULL,
+    p_user_email TEXT DEFAULT NULL,
+    p_user_role TEXT DEFAULT NULL,
+    p_previous_state JSONB DEFAULT NULL,
+    p_new_state JSONB DEFAULT NULL,
+    p_ip_address TEXT DEFAULT NULL
+) RETURNS UUID AS $$
+DECLARE
+    v_log_id UUID;
+    v_user_id UUID;
+BEGIN
+    v_user_id := auth.uid();
+    INSERT INTO public.audit_logs (
+        user_id,
+        user_name,
+        user_email,
+        user_role,
+        action,
+        entity_type,
+        entity_id,
+        details,
+        previous_state,
+        new_state,
+        ip_address
+    ) VALUES (
+        v_user_id,
+        COALESCE(p_user_name, auth.jwt()->>'name', 'System'),
+        COALESCE(p_user_email, auth.jwt()->>'email'),
+        COALESCE(p_user_role, auth.jwt()->>'role', 'system'),
+        p_action,
+        p_entity_type,
+        p_entity_id,
+        p_details,
+        p_previous_state,
+        p_new_state,
+        p_ip_address
+    ) RETURNING id INTO v_log_id;
+    RETURN v_log_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 8. ROW LEVEL SECURITY (RLS) POLICIES
+ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Admin full access audit_logs" ON public.audit_logs FOR SELECT USING (auth.jwt()->>'role' = 'admin');
+CREATE POLICY "Manager operational audit_logs" ON public.audit_logs FOR SELECT USING (
+    auth.jwt()->>'role' IN ('admin', 'manager') AND entity_type IN ('attendance', 'invoice')
+);
+CREATE POLICY "Authenticated users insert audit_logs" ON public.audit_logs FOR INSERT WITH CHECK (
+    auth.role() = 'authenticated'
+);
+-- Tamper resistance: No UPDATE or DELETE allowed on public.audit_logs.`;
+
+  const handleCopySchema = () => {
+    navigator.clipboard.writeText(schemaSnippet);
+    setCopiedSchema(true);
+    showToast('info', 'Supabase SQL schema (with audit_logs table) copied to clipboard');
+    setTimeout(() => setCopiedSchema(false), 2500);
+  };
+
+  // Filtered audit logs
+  const filteredAuditLogs = useMemo(() => {
+    return auditLogs.filter(log => {
+      if (auditEntityFilter !== 'all' && log.entityType !== auditEntityFilter) return false;
+      if (auditActionFilter !== 'all' && log.action !== auditActionFilter) return false;
+      if (auditSearch.trim()) {
+        const query = auditSearch.toLowerCase();
+        const matchesUser = log.userName.toLowerCase().includes(query);
+        const matchesAction = log.action.toLowerCase().includes(query);
+        const matchesDetails = log.details.toLowerCase().includes(query);
+        const matchesEntity = (log.entityId || '').toLowerCase().includes(query);
+        if (!matchesUser && !matchesAction && !matchesDetails && !matchesEntity) return false;
+      }
+      return true;
+    });
+  }, [auditLogs, auditEntityFilter, auditActionFilter, auditSearch]);
+
+  // Distinct actions for filter dropdown
+  const distinctActions = useMemo(() => {
+    const set = new Set<string>();
+    auditLogs.forEach(l => set.add(l.action));
+    return Array.from(set).sort();
+  }, [auditLogs]);
+
+  // Export audit logs to CSV
+  const handleExportAuditCSV = () => {
+    const headers = [
+      'Log ID',
+      'Timestamp (UTC)',
+      'Actor Name',
+      'Actor Role',
+      'Actor Email',
+      'Action Type',
+      'Entity Type',
+      'Entity ID',
+      'Details',
+      'IP Address / Station',
+      'Previous State (JSON)',
+      'New State (JSON)',
+    ];
+
+    const rows = filteredAuditLogs.map(log => [
+      log.id,
+      log.timestamp,
+      log.userName,
+      log.userRole.toUpperCase(),
+      log.userEmail || '',
+      log.action,
+      log.entityType,
+      log.entityId || '',
+      log.details,
+      log.ipAddress || '',
+      log.previousState ? JSON.stringify(log.previousState) : '',
+      log.newState ? JSON.stringify(log.newState) : '',
+    ]);
+
+    exportToCSV(`audit_trail_${new Date().toISOString().split('T')[0]}_hybridmonks`, headers, rows);
+    showToast('success', 'Exported audit trail to CSV file');
+  };
+
+  // Helper function to render action badge variants
+  const getActionBadgeVariant = (action: string): 'purple' | 'success' | 'warning' | 'error' | 'info' | 'neutral' => {
+    if (action.includes('SALARY') || action.includes('Salary')) return 'purple';
+    if (action.includes('ATTENDANCE') || action.includes('Attendance')) return 'warning';
+    if (action.includes('PAYMENT') || action.includes('Payment') || action.includes('Paid')) return 'success';
+    if (action.includes('DELETED') || action.includes('DEACTIVATED')) return 'error';
+    return 'info';
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">
+            Company & System Settings
+          </h1>
+          <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">
+            Configure organization policies, audit accountability trails, and database sync
+          </p>
+        </div>
+
+        {/* Section Navigation Tabs */}
+        <div className="flex items-center gap-1 p-1 bg-white border border-[#DFE6F1] rounded-lg shadow-xs self-start sm:self-auto">
+          <button
+            onClick={() => setActiveTab('general')}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+              activeTab === 'general'
+                ? 'bg-[#5038F5] text-white shadow-xs'
+                : 'text-[#7185A5] hover:text-[#111827]'
+            }`}
+          >
+            General & Shifts
+          </button>
+          <button
+            onClick={() => setActiveTab('audit')}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'audit'
+                ? 'bg-[#5038F5] text-white shadow-xs'
+                : 'text-[#7185A5] hover:text-[#111827]'
+            }`}
+          >
+            Audit Trail
+            <span
+              className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                activeTab === 'audit' ? 'bg-white/20 text-white' : 'bg-[#5038F5]/10 text-[#5038F5]'
+              }`}
+            >
+              {auditLogs.length}
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveTab('database')}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+              activeTab === 'database'
+                ? 'bg-[#5038F5] text-white shadow-xs'
+                : 'text-[#7185A5] hover:text-[#111827]'
+            }`}
+          >
+            Cloud Supabase
+          </button>
+          <button
+            onClick={() => setActiveTab('access')}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+              activeTab === 'access'
+                ? 'bg-[#5038F5] text-white shadow-xs'
+                : 'text-[#7185A5] hover:text-[#111827]'
+            }`}
+          >
+            Roles & Reset
+          </button>
+        </div>
+      </div>
+
+      {/* ---------------------------------------------------- */}
+      {/* TAB 1: GENERAL & SHIFT SETTINGS */}
+      {/* ---------------------------------------------------- */}
+      {activeTab === 'general' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 space-y-6">
+            <Card padding="md">
+              <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2 mb-4">
+                <Building2 className="w-4 h-4 text-[#5038F5]" />
+                Company Profile & Legal Details
+              </h3>
+
+              <form onSubmit={handleSaveCompany} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-[#111827] mb-1">
+                      Company Name
+                    </label>
+                    <input
+                      type="text"
+                      value={companyName}
+                      onChange={e => setCompanyName(e.target.value)}
+                      className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-[#111827] mb-1">
+                      Company Email
+                    </label>
+                    <input
+                      type="email"
+                      value={companyEmail}
+                      onChange={e => setCompanyEmail(e.target.value)}
+                      className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-[#111827] mb-1">
+                      Support / Office Phone
+                    </label>
+                    <input
+                      type="text"
+                      value={companyPhone}
+                      onChange={e => setCompanyPhone(e.target.value)}
+                      className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-[#111827] mb-1">
+                      GSTIN / Tax Identification
+                    </label>
+                    <input
+                      type="text"
+                      value={companyGstin}
+                      onChange={e => setCompanyGstin(e.target.value)}
+                      className="w-full text-xs font-mono px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-[#111827] mb-1">
+                    Registered Office Address
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={companyAddress}
+                    onChange={e => setCompanyAddress(e.target.value)}
+                    className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                  />
+                </div>
+
+                {/* Accounting Parameters */}
+                <div className="pt-3 border-t border-[#DFE6F1]">
+                  <h4 className="text-xs font-bold text-[#111827] mb-3">
+                    Financial & Currency Rules
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
+                        Default Currency
+                      </label>
+                      <select
+                        value={defaultCurrency}
+                        onChange={e => setDefaultCurrency(e.target.value)}
+                        className="w-full text-xs px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                      >
+                        <option value="INR">INR (₹ - Indian Rupee)</option>
+                        <option value="USD">USD ($ - US Dollar)</option>
+                        <option value="EUR">EUR (€ - Euro)</option>
+                        <option value="GBP">GBP (£ - British Pound)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
+                        FY Start Month
+                      </label>
+                      <select
+                        value={financialYearStartMonth}
+                        onChange={e => setFinancialYearStartMonth(Number(e.target.value))}
+                        className="w-full text-xs px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                      >
+                        <option value={4}>April (India FY)</option>
+                        <option value={1}>January (Calendar)</option>
+                        <option value={7}>July</option>
+                        <option value={10}>October</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
+                        Invoice Prefix
+                      </label>
+                      <input
+                        type="text"
+                        value={invoicePrefix}
+                        onChange={e => setInvoicePrefix(e.target.value)}
+                        className="w-full text-xs font-mono px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
+                        Default GST Tax (%)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={taxRatePercentage}
+                        onChange={e => setTaxRatePercentage(parseFloat(e.target.value) || 0)}
+                        className="w-full text-xs font-mono px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Work Hours & Attendance Configuration */}
+                <div className="pt-3 border-t border-[#DFE6F1]">
+                  <h4 className="text-xs font-bold text-[#111827] mb-3">
+                    Work Hours & Attendance Schedule
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
+                        Timezone
+                      </label>
+                      <select
+                        value={companyTimezone}
+                        onChange={e => setCompanyTimezone(e.target.value)}
+                        className="w-full text-xs px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                      >
+                        <option value="Asia/Kolkata">Asia/Kolkata (IST - UTC+5:30)</option>
+                        <option value="Europe/London">Europe/London (GMT/BST)</option>
+                        <option value="America/New_York">America/New_York (EST)</option>
+                        <option value="Asia/Dubai">Asia/Dubai (GST)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
+                        Work Start Time
+                      </label>
+                      <input
+                        type="time"
+                        value={workStartTime}
+                        onChange={e => setWorkStartTime(e.target.value)}
+                        className="w-full text-xs font-mono px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
+                        Work End Time
+                      </label>
+                      <input
+                        type="time"
+                        value={workEndTime}
+                        onChange={e => setWorkEndTime(e.target.value)}
+                        className="w-full text-xs font-mono px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
+                        Daily Expected Hours
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="4"
+                        max="12"
+                        value={expectedDailyHours}
+                        onChange={e => setExpectedDailyHours(parseFloat(e.target.value) || 8)}
+                        className="w-full text-xs font-mono px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <Button type="submit" variant="primary" size="md">
+                    Save Changes
+                  </Button>
+                </div>
+              </form>
+            </Card>
+
+            {/* Employee Invitation Generator */}
+            <Card padding="md">
+              <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2 mb-2">
+                <Users className="w-4 h-4 text-[#5038F5]" />
+                Employee Account Invitation Link Generator
+              </h3>
+              <p className="text-xs text-[#7185A5] mb-4">
+                Generate authenticated activation links for new staff members to claim their employee portal account.
+              </p>
+
+              <form onSubmit={handleGenerateInvite} className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
+                      Target Employee
+                    </label>
+                    <select
+                      value={inviteEmpId}
+                      onChange={e => setInviteEmpId(e.target.value)}
+                      className="w-full text-xs px-2.5 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                    >
+                      {employees.map(emp => (
+                        <option key={emp.id} value={emp.id}>
+                          {emp.fullName} ({emp.id} - {emp.department})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
+                      Recipient Work Email
+                    </label>
+                    <input
+                      type="email"
+                      placeholder="employee@hybridmonks.com"
+                      value={inviteEmail}
+                      onChange={e => setInviteEmail(e.target.value)}
+                      className="w-full text-xs px-2.5 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <Button type="submit" variant="secondary" size="sm">
+                    Generate Invitation Token
+                  </Button>
+                </div>
+              </form>
+
+              {generatedInviteLink && (
+                <div className="mt-4 p-3 rounded-lg bg-[#5038F5]/5 border border-[#5038F5]/20">
+                  <span className="text-[11px] font-semibold text-[#5038F5] block mb-1">
+                    Direct Activation URL (Active for 14 Days):
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={generatedInviteLink}
+                      className="w-full text-xs font-mono px-2 py-1.5 bg-white rounded border border-[#DFE6F1] select-all"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        navigator.clipboard.writeText(generatedInviteLink);
+                        showToast('success', 'Invitation link copied to clipboard');
+                      }}
+                    >
+                      Copy
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </Card>
+          </div>
+
+          {/* Right Column: Mini Audit Feed & Role Switcher */}
+          <div className="space-y-6">
+            <Card padding="md">
+              <div className="flex items-center justify-between pb-3 border-b border-[#DFE6F1] mb-3">
+                <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-[#5038F5]" />
+                  Recent Audit Actions
+                </h3>
+                <button
+                  onClick={() => setActiveTab('audit')}
+                  className="text-xs font-semibold text-[#5038F5] hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  View All ({auditLogs.length}) <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="space-y-2.5 max-h-80 overflow-y-auto">
+                {auditLogs.slice(0, 5).map(log => (
+                  <div
+                    key={log.id}
+                    onClick={() => {
+                      setSelectedAuditLog(log);
+                      setActiveTab('audit');
+                    }}
+                    className="p-2.5 rounded-lg bg-[#F7F9FC] border border-[#DFE6F1] hover:border-[#5038F5] transition-colors cursor-pointer text-xs"
+                  >
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <Badge variant={getActionBadgeVariant(log.action)} size="sm">
+                        {log.action.replace(/_/g, ' ')}
+                      </Badge>
+                      <span className="text-[10px] text-[#7185A5]">
+                        {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#111827] font-medium line-clamp-2">
+                      {log.details}
+                    </p>
+                    <div className="text-[10px] text-[#7185A5] mt-1 flex items-center justify-between">
+                      <span>By: {log.userName}</span>
+                      <span className="font-mono text-[9px] text-[#5038F5] hover:underline">
+                        Inspect Diff &rarr;
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+
+            {/* Quick RBAC Switcher */}
+            <Card padding="md">
+              <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2 mb-2">
+                <ShieldCheck className="w-4 h-4 text-[#5038F5]" />
+                Active Session Role
+              </h3>
+              <p className="text-xs text-[#7185A5] mb-3">
+                Current active test profile:
+              </p>
+              <div className="p-2.5 rounded-lg bg-[#5038F5]/5 border border-[#5038F5]/20 flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-[#111827] block">{currentUser.name}</span>
+                  <span className="text-[10px] text-[#7185A5]">{currentUser.designation}</span>
+                </div>
+                <Badge variant="purple" size="sm">
+                  {currentUser.role.toUpperCase()}
+                </Badge>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* ---------------------------------------------------- */}
+      {/* TAB 2: AUDIT LOGS & ACCOUNTABILITY CONSOLE */}
+      {/* ---------------------------------------------------- */}
+      {activeTab === 'audit' && (
+        <div className="space-y-6">
+          {/* Summary KPIs for Audit Trail */}
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+            <Card padding="sm">
+              <span className="text-xs font-semibold text-[#7185A5]">Total Audit Events</span>
+              <div className="text-2xl font-mono font-bold text-[#111827] mt-1">
+                {auditLogs.length}
+              </div>
+              <p className="text-[11px] text-[#7185A5] mt-0.5">Chronological record count</p>
+            </Card>
+            <Card padding="sm">
+              <span className="text-xs font-semibold text-[#7185A5]">Salary Disbursements</span>
+              <div className="text-2xl font-mono font-bold text-[#5038F5] mt-1">
+                {auditLogs.filter(l => l.action.includes('SALARY') || l.entityType === 'salary').length}
+              </div>
+              <p className="text-[11px] text-[#7185A5] mt-0.5">Logged payroll mutations</p>
+            </Card>
+            <Card padding="sm">
+              <span className="text-xs font-semibold text-[#7185A5]">Attendance Corrections</span>
+              <div className="text-2xl font-mono font-bold text-[#B45309] mt-1">
+                {auditLogs.filter(l => l.action.includes('ATTENDANCE') || l.entityType === 'attendance').length}
+              </div>
+              <p className="text-[11px] text-[#7185A5] mt-0.5">Manual supervisor adjustments</p>
+            </Card>
+            <Card padding="sm">
+              <span className="text-xs font-semibold text-[#7185A5]">Invoicing & Ledger</span>
+              <div className="text-2xl font-mono font-bold text-[#047857] mt-1">
+                {auditLogs.filter(l => l.entityType === 'invoice' || l.entityType === 'transaction').length}
+              </div>
+              <p className="text-[11px] text-[#7185A5] mt-0.5">Payment receipts & billing</p>
+            </Card>
+          </div>
+
+          {/* Filter & Action Strip */}
+          <Card padding="sm">
+            <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1">
+                {/* Search */}
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 text-[#7185A5] absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="Search by actor, employee, description, or entity ID..."
+                    value={auditSearch}
+                    onChange={e => setAuditSearch(e.target.value)}
+                    className="w-full text-xs pl-9 pr-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                  />
+                </div>
+
+                {/* Entity Filter */}
+                <select
+                  value={auditEntityFilter}
+                  onChange={e => setAuditEntityFilter(e.target.value)}
+                  className="text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                >
+                  <option value="all">All Modules</option>
+                  <option value="salary">Salary & Payroll</option>
+                  <option value="attendance">Attendance & Clock</option>
+                  <option value="invoice">Invoices & Billing</option>
+                  <option value="employee">Employees Roster</option>
+                  <option value="settings">System Settings</option>
+                </select>
+
+                {/* Action Filter */}
+                <select
+                  value={auditActionFilter}
+                  onChange={e => setAuditActionFilter(e.target.value)}
+                  className="text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                >
+                  <option value="all">All Action Types</option>
+                  {distinctActions.map(action => (
+                    <option key={action} value={action}>
+                      {action.replace(/_/g, ' ')}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  icon={<Download className="w-3.5 h-3.5" />}
+                  onClick={handleExportAuditCSV}
+                >
+                  Export Audit Trail (CSV)
+                </Button>
+              </div>
+            </div>
+          </Card>
+
+          {/* Audit Logs Table */}
+          <Card padding="none" className="overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-[#F7F9FC] border-b border-[#DFE6F1] text-[11px] font-semibold text-[#7185A5]">
+                  <tr>
+                    <th className="px-4 py-3">Timestamp</th>
+                    <th className="px-4 py-3">Actor / User</th>
+                    <th className="px-4 py-3">Action</th>
+                    <th className="px-4 py-3">Target Entity</th>
+                    <th className="px-4 py-3">Audit Details</th>
+                    <th className="px-4 py-3 text-right">State Diff</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#DFE6F1]">
+                  {filteredAuditLogs.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center text-[#7185A5]">
+                        No audit records match the current filters.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredAuditLogs.map(log => (
+                      <tr key={log.id} className="hover:bg-[#F7F9FC]/75 transition-colors">
+                        {/* Timestamp */}
+                        <td className="px-4 py-3 whitespace-nowrap text-[#7185A5]">
+                          <div className="font-mono text-[#111827] font-medium">
+                            {formatDate(log.timestamp.split('T')[0])}
+                          </div>
+                          <div className="text-[10px] text-[#7185A5]">
+                            {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </div>
+                        </td>
+
+                        {/* Actor */}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <div className="w-6 h-6 rounded-full bg-[#5038F5]/10 text-[#5038F5] flex items-center justify-center font-bold text-[10px] shrink-0">
+                              {log.userName.charAt(0)}
+                            </div>
+                            <div className="min-w-0">
+                              <span className="font-semibold text-[#111827] block truncate">
+                                {log.userName}
+                              </span>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <Badge
+                                  variant={
+                                    log.userRole === 'admin'
+                                      ? 'purple'
+                                      : log.userRole === 'manager'
+                                      ? 'info'
+                                      : 'neutral'
+                                  }
+                                  size="sm"
+                                >
+                                  {log.userRole.toUpperCase()}
+                                </Badge>
+                                {log.userEmail && (
+                                  <span className="text-[10px] text-[#7185A5] truncate hidden sm:inline">
+                                    {log.userEmail}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Action Badge */}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <Badge variant={getActionBadgeVariant(log.action)} size="sm">
+                            {log.action.replace(/_/g, ' ')}
+                          </Badge>
+                        </td>
+
+                        {/* Target Entity */}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className="capitalize font-medium text-[#111827] block">
+                            {log.entityType}
+                          </span>
+                          {log.entityId && (
+                            <span className="font-mono text-[10px] text-[#7185A5]">
+                              {log.entityId}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Details */}
+                        <td className="px-4 py-3 max-w-md">
+                          <p className="text-xs text-[#111827] line-clamp-2">
+                            {log.details}
+                          </p>
+                        </td>
+
+                        {/* State Diff Trigger */}
+                        <td className="px-4 py-3 text-right whitespace-nowrap">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            icon={<Eye className="w-3.5 h-3.5" />}
+                            onClick={() => setSelectedAuditLog(log)}
+                          >
+                            Inspect Diff
+                          </Button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ---------------------------------------------------- */}
+      {/* TAB 3: CLOUD SUPABASE & SQL MIGRATION */}
+      {/* ---------------------------------------------------- */}
+      {activeTab === 'database' && (
+        <div className="space-y-6">
+          <Card padding="md">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#DFE6F1]">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#5038F5]/10 text-[#5038F5] flex items-center justify-center">
+                  <Database className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-[#111827]">
+                    Supabase PostgreSQL Production Architecture
+                  </h3>
+                  <p className="text-xs text-[#7185A5]">
+                    Relational schema with the new <code className="font-mono text-[#5038F5]">audit_logs</code> table, <code className="font-mono text-[#5038F5]">log_audit_event</code> procedure, and RLS policies
+                  </p>
+                </div>
+              </div>
+
+              <Button
+                variant="primary"
+                size="sm"
+                icon={copiedSchema ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                onClick={handleCopySchema}
+              >
+                {copiedSchema ? 'SQL Copied!' : 'Copy Migration SQL'}
+              </Button>
+            </div>
+
+            {/* Connection Credentials Form */}
+            <form onSubmit={handleSaveDatabase} className="mt-4 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-[#111827] mb-1">
+                    Supabase Project URL
+                  </label>
+                  <input
+                    type="url"
+                    placeholder="https://xyzcompany.supabase.co"
+                    value={supabaseUrl}
+                    onChange={e => setSupabaseUrl(e.target.value)}
+                    className="w-full text-xs font-mono px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#111827] mb-1">
+                    Supabase Anonymous Key (anon / public)
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    value={supabaseAnonKey}
+                    onChange={e => setSupabaseAnonKey(e.target.value)}
+                    className="w-full text-xs font-mono px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button type="submit" variant="secondary" size="sm">
+                  Save Credentials
+                </Button>
+              </div>
+            </form>
+
+            {/* SQL Snippet Viewer */}
+            <div className="mt-6">
+              <div className="flex items-center justify-between pb-2 mb-2 text-xs font-semibold text-[#111827]">
+                <div className="flex items-center gap-1.5">
+                  <Code className="w-4 h-4 text-[#5038F5]" />
+                  PostgreSQL / Supabase Migration (Includes audit_logs Table & Functions)
+                </div>
+                <span className="text-[11px] text-[#7185A5]">Ready for Supabase SQL Editor</span>
+              </div>
+              <pre className="p-4 bg-[#111827] text-[#DFE6F1] rounded-xl text-xs font-mono overflow-x-auto max-h-96 leading-relaxed selection:bg-[#5038F5]">
+                {schemaSnippet}
+              </pre>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ---------------------------------------------------- */}
+      {/* TAB 4: ROLES & SEED RESET */}
+      {/* ---------------------------------------------------- */}
+      {activeTab === 'access' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* User Role Switcher */}
+          <Card padding="md">
+            <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2 mb-2">
+              <ShieldCheck className="w-4 h-4 text-[#5038F5]" />
+              Role-Based Access Simulation
+            </h3>
+            <p className="text-xs text-[#7185A5] mb-4">
+              Switch between company profiles to evaluate role boundaries and views:
+            </p>
+
+            <div className="space-y-2">
+              {profiles.map(p => (
+                <div
+                  key={p.id}
+                  onClick={() => switchUserRole(p.role)}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                    currentUser.role === p.role
+                      ? 'border-[#5038F5] bg-[#5038F5]/5 shadow-xs'
+                      : 'border-[#DFE6F1] hover:bg-[#F7F9FC]'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[#111827]">{p.name}</span>
+                    <Badge
+                      variant={
+                        p.role === 'admin'
+                          ? 'purple'
+                          : p.role === 'manager'
+                          ? 'info'
+                          : 'neutral'
+                      }
+                      size="sm"
+                    >
+                      {p.role.toUpperCase()}
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-[#7185A5] mt-1">{p.designation}</p>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Reset Factory Seed Data */}
+          <Card padding="md">
+            <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2 mb-2">
+              <RefreshCw className="w-4 h-4 text-[#B45309]" />
+              Seed Database Reset
+            </h3>
+            <p className="text-xs text-[#7185A5] mb-4">
+              Restore the initial demo records for Hybrid Monks (including historical salary payments, attendance records, audit logs, and client invoices).
+            </p>
+            <div className="p-4 rounded-xl bg-[#E11D48]/5 border border-[#E11D48]/20 mb-4">
+              <div className="flex items-center gap-2 font-semibold text-xs text-[#E11D48]">
+                <AlertTriangle className="w-4 h-4" />
+                Destructive Action
+              </div>
+              <p className="text-[11px] text-[#475569] mt-1">
+                This will overwrite any uncommitted local modifications and reload pristine factory data.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="md"
+              className="w-full text-[#E11D48] hover:bg-[#E11D48]/5"
+              onClick={() => setIsResetConfirmOpen(true)}
+            >
+              Reset to Factory Seed Data
+            </Button>
+          </Card>
+        </div>
+      )}
+
+      {/* ---------------------------------------------------- */}
+      {/* AUDIT DIFF & ACCOUNTABILITY INSPECTION MODAL */}
+      {/* ---------------------------------------------------- */}
+      {selectedAuditLog && (
+        <Modal
+          isOpen={!!selectedAuditLog}
+          onClose={() => setSelectedAuditLog(null)}
+          title={`Audit Log Record: ${selectedAuditLog.id}`}
+          description={`Logged action on ${formatDate(selectedAuditLog.timestamp.split('T')[0])} at ${new Date(selectedAuditLog.timestamp).toLocaleTimeString()}`}
+          maxWidth="lg"
+        >
+          <div className="space-y-4">
+            {/* Actor Attribution Header */}
+            <div className="p-3 rounded-xl bg-[#F7F9FC] border border-[#DFE6F1] grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div>
+                <span className="text-[10px] text-[#7185A5] block">Actor</span>
+                <span className="font-semibold text-[#111827]">{selectedAuditLog.userName}</span>
+              </div>
+              <div>
+                <span className="text-[10px] text-[#7185A5] block">Role Privilege</span>
+                <Badge
+                  variant={
+                    selectedAuditLog.userRole === 'admin'
+                      ? 'purple'
+                      : selectedAuditLog.userRole === 'manager'
+                      ? 'info'
+                      : 'neutral'
+                  }
+                  size="sm"
+                >
+                  {selectedAuditLog.userRole.toUpperCase()}
+                </Badge>
+              </div>
+              <div>
+                <span className="text-[10px] text-[#7185A5] block">Action Type</span>
+                <Badge variant={getActionBadgeVariant(selectedAuditLog.action)} size="sm">
+                  {selectedAuditLog.action.replace(/_/g, ' ')}
+                </Badge>
+              </div>
+              <div>
+                <span className="text-[10px] text-[#7185A5] block">Network Station</span>
+                <span className="font-mono text-[11px] text-[#475569]">
+                  {selectedAuditLog.ipAddress || 'Internal Console'}
+                </span>
+              </div>
+            </div>
+
+            {/* Description Summary */}
+            <div className="p-3 rounded-xl bg-white border border-[#DFE6F1]">
+              <span className="text-[11px] font-semibold text-[#7185A5] block mb-1">
+                Summary Details:
+              </span>
+              <p className="text-xs text-[#111827] leading-relaxed">
+                {selectedAuditLog.details}
+              </p>
+              {selectedAuditLog.entityId && (
+                <div className="mt-2 text-[11px] text-[#7185A5] flex items-center gap-1.5 font-mono">
+                  <span>Target Identifier:</span>
+                  <span className="px-1.5 py-0.5 rounded bg-[#F7F9FC] border border-[#DFE6F1] text-[#111827]">
+                    {selectedAuditLog.entityId}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* State Diff Comparison: Previous State vs New State */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Previous State */}
+              <div className="p-3 rounded-xl bg-[#F7F9FC] border border-[#DFE6F1]">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-[#7185A5] pb-2 border-b border-[#DFE6F1] mb-2">
+                  <Clock className="w-3.5 h-3.5" />
+                  Previous Record State (Before Mutation)
+                </div>
+                {selectedAuditLog.previousState && Object.keys(selectedAuditLog.previousState).length > 0 ? (
+                  <pre className="text-[11px] font-mono text-[#475569] overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-48">
+                    {JSON.stringify(selectedAuditLog.previousState, null, 2)}
+                  </pre>
+                ) : (
+                  <div className="py-6 text-center text-xs text-[#7185A5] italic">
+                    No prior state (Initial record creation or automated action).
+                  </div>
+                )}
+              </div>
+
+              {/* New State */}
+              <div className="p-3 rounded-xl bg-[#5038F5]/5 border border-[#5038F5]/20">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-[#5038F5] pb-2 border-b border-[#5038F5]/20 mb-2">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  New Record State (After Action)
+                </div>
+                {selectedAuditLog.newState && Object.keys(selectedAuditLog.newState).length > 0 ? (
+                  <pre className="text-[11px] font-mono text-[#111827] overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-48">
+                    {JSON.stringify(selectedAuditLog.newState, null, 2)}
+                  </pre>
+                ) : (
+                  <div className="py-6 text-center text-xs text-[#7185A5] italic">
+                    Record deleted or cleared.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <Button variant="secondary" size="sm" onClick={() => setSelectedAuditLog(null)}>
+                Close Inspector
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Confirm Reset Dialog */}
+      <ConfirmDialog
+        isOpen={isResetConfirmOpen}
+        onClose={() => setIsResetConfirmOpen(false)}
+        onConfirm={() => {
+          resetData();
+          setIsResetConfirmOpen(false);
+        }}
+        title="Reset Company Database"
+        message="This will reset all employees, invoices, transactions, salaries, and audit logs back to the initial Hybrid Monks seed data. Are you sure you want to proceed?"
+        confirmLabel="Reset Data"
+        isDestructive={true}
+      />
+    </div>
+  );
+};
