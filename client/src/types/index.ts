@@ -10,27 +10,6 @@ export interface UserProfile {
   employeeId?: string; // Links to Employee record
 }
 
-export interface AuthUser {
-  id: string;
-  name: string;
-  email: string;
-  role: UserRole;
-  employeeId?: string;
-  isApproved: boolean;
-  avatarUrl?: string;
-  designation?: string;
-  mustChangePassword?: boolean;
-  lastLogin?: string;
-  accountStatus?: 'Active' | 'Needs Password Change' | 'Disabled';
-  createdAt: string;
-}
-
-export interface Session {
-  token: string;
-  user: AuthUser;
-  expiresAt: string;
-}
-
 export type TransactionType = 'income' | 'expense';
 
 export type IncomeCategory =
@@ -257,17 +236,6 @@ export interface AttendanceRecord {
   notes?: string;
 }
 
-export interface EmployeeInvitation {
-  id: string;
-  employeeId: string;
-  email: string;
-  token: string;
-  role: UserRole;
-  createdAt: string;
-  expiresAt: string;
-  isUsed: boolean;
-}
-
 export interface CompanySettings {
   companyName: string;
   companyLogoText: string;
@@ -285,7 +253,6 @@ export interface CompanySettings {
   workEndTime: string; // default '18:30'
   expectedDailyHours: number; // default 8.0
   weeklyWorkingDays: number; // default 5
-  allowSelfRegistration: boolean;
 }
 
 export type AuditActionType =

@@ -5,15 +5,11 @@ import { Card } from '../common/Card';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
 import { Modal } from '../common/Modal';
-import { ConfirmDialog } from '../common/ConfirmDialog';
+import { UsersPanel } from './UsersPanel';
 import {
   Settings as SettingsIcon,
   Building2,
-  Users,
   ShieldCheck,
-  RefreshCw,
-  AlertTriangle,
-  Server,
   Search,
   Filter,
   Download,
@@ -27,22 +23,16 @@ import {
 } from 'lucide-react';
 import { formatDate, exportToCSV } from '../../utils/formatters';
 
-type SettingsTab = 'general' | 'audit' | 'access';
+type SettingsTab = 'general' | 'audit' | 'users';
 
 export const SettingsView: React.FC = () => {
   const {
     settings,
     updateSettings,
-    resetData,
     currentUser,
-    profiles,
-    switchUserRole,
     auditLogs,
     activityLogs,
     showToast,
-    employees,
-    invitations,
-    createEmployeeInvitation,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
@@ -64,14 +54,6 @@ export const SettingsView: React.FC = () => {
   const [workEndTime, setWorkEndTime] = useState(settings.workEndTime || '18:30');
   const [expectedDailyHours, setExpectedDailyHours] = useState(settings.expectedDailyHours || 8.0);
   const [weeklyWorkingDays, setWeeklyWorkingDays] = useState(settings.weeklyWorkingDays || 5);
-
-  // Invite state
-  const [inviteEmpId, setInviteEmpId] = useState(employees[0]?.id || '');
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [generatedInviteLink, setGeneratedInviteLink] = useState('');
-
-  // Reset confirmation
-  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
 
   // Audit Logs inspection modal state
   const [selectedAuditLog, setSelectedAuditLog] = useState<AuditLog | null>(null);
@@ -101,15 +83,6 @@ export const SettingsView: React.FC = () => {
       weeklyWorkingDays: Number(weeklyWorkingDays) || 5,
     });
     showToast('success', 'Company profile and schedule policies updated successfully');
-  };
-
-  const handleGenerateInvite = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inviteEmail.trim()) return;
-    const inv = createEmployeeInvitation(inviteEmpId, inviteEmail.trim(), 'employee');
-    const link = `${window.location.origin}?invite=${inv.token}`;
-    setGeneratedInviteLink(link);
-    showToast('success', 'Invitation link generated successfully');
   };
 
   // Filtered audit logs
@@ -190,7 +163,7 @@ export const SettingsView: React.FC = () => {
             Company & System Settings
           </h1>
           <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">
-            Configure organization policies and audit accountability trails
+            Configure organization policies, audit accountability trails, and user access
           </p>
         </div>
 
@@ -224,14 +197,14 @@ export const SettingsView: React.FC = () => {
             </span>
           </button>
           <button
-            onClick={() => setActiveTab('access')}
+            onClick={() => setActiveTab('users')}
             className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-              activeTab === 'access'
+              activeTab === 'users'
                 ? 'bg-[#5038F5] text-white shadow-xs'
                 : 'text-[#7185A5] hover:text-[#111827]'
             }`}
           >
-            Roles & Reset
+            Users
           </button>
         </div>
       </div>
@@ -444,86 +417,9 @@ export const SettingsView: React.FC = () => {
               </form>
             </Card>
 
-            {/* Employee Invitation Generator */}
-            <Card padding="md">
-              <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2 mb-2">
-                <Users className="w-4 h-4 text-[#5038F5]" />
-                Employee Account Invitation Link Generator
-              </h3>
-              <p className="text-xs text-[#7185A5] mb-4">
-                Generate authenticated activation links for new staff members to claim their employee portal account.
-              </p>
-
-              <form onSubmit={handleGenerateInvite} className="space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
-                      Target Employee
-                    </label>
-                    <select
-                      value={inviteEmpId}
-                      onChange={e => setInviteEmpId(e.target.value)}
-                      className="w-full text-xs px-2.5 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                    >
-                      {employees.map(emp => (
-                        <option key={emp.id} value={emp.id}>
-                          {emp.fullName} ({emp.id} - {emp.department})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
-                      Recipient Work Email
-                    </label>
-                    <input
-                      type="email"
-                      placeholder="employee@hybridmonks.com"
-                      value={inviteEmail}
-                      onChange={e => setInviteEmail(e.target.value)}
-                      className="w-full text-xs px-2.5 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="flex justify-end">
-                  <Button type="submit" variant="secondary" size="sm">
-                    Generate Invitation Token
-                  </Button>
-                </div>
-              </form>
-
-              {generatedInviteLink && (
-                <div className="mt-4 p-3 rounded-lg bg-[#5038F5]/5 border border-[#5038F5]/20">
-                  <span className="text-[11px] font-semibold text-[#5038F5] block mb-1">
-                    Direct Activation URL (Active for 14 Days):
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      readOnly
-                      value={generatedInviteLink}
-                      className="w-full text-xs font-mono px-2 py-1.5 bg-white rounded border border-[#DFE6F1] select-all"
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        navigator.clipboard.writeText(generatedInviteLink);
-                        showToast('success', 'Invitation link copied to clipboard');
-                      }}
-                    >
-                      Copy
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </Card>
           </div>
 
-          {/* Right Column: Mini Audit Feed & Role Switcher */}
+          {/* Right Column: Mini Audit Feed & Signed-in User */}
           <div className="space-y-6">
             <Card padding="md">
               <div className="flex items-center justify-between pb-3 border-b border-[#DFE6F1] mb-3">
@@ -571,14 +467,14 @@ export const SettingsView: React.FC = () => {
               </div>
             </Card>
 
-            {/* Quick RBAC Switcher */}
+            {/* Signed-in user */}
             <Card padding="md">
               <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2 mb-2">
                 <ShieldCheck className="w-4 h-4 text-[#5038F5]" />
-                Active Session Role
+                Signed-in Account
               </h3>
               <p className="text-xs text-[#7185A5] mb-3">
-                Current active test profile:
+                You are signed in as:
               </p>
               <div className="p-2.5 rounded-lg bg-[#5038F5]/5 border border-[#5038F5]/20 flex items-center justify-between">
                 <div>
@@ -804,81 +700,9 @@ export const SettingsView: React.FC = () => {
       )}
 
       {/* ---------------------------------------------------- */}
-      {/* TAB 4: ROLES & SEED RESET */}
+      {/* TAB 3: USERS (accounts, roles, credentials) */}
       {/* ---------------------------------------------------- */}
-      {activeTab === 'access' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* User Role Switcher */}
-          <Card padding="md">
-            <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2 mb-2">
-              <ShieldCheck className="w-4 h-4 text-[#5038F5]" />
-              Role-Based Access Simulation
-            </h3>
-            <p className="text-xs text-[#7185A5] mb-4">
-              Switch between company profiles to evaluate role boundaries and views:
-            </p>
-
-            <div className="space-y-2">
-              {profiles.map(p => (
-                <div
-                  key={p.id}
-                  onClick={() => switchUserRole(p.role)}
-                  className={`p-3 rounded-xl border transition-all cursor-pointer ${
-                    currentUser.role === p.role
-                      ? 'border-[#5038F5] bg-[#5038F5]/5 shadow-xs'
-                      : 'border-[#DFE6F1] hover:bg-[#F7F9FC]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-[#111827]">{p.name}</span>
-                    <Badge
-                      variant={
-                        p.role === 'admin'
-                          ? 'purple'
-                          : p.role === 'manager'
-                          ? 'info'
-                          : 'neutral'
-                      }
-                      size="sm"
-                    >
-                      {p.role.toUpperCase()}
-                    </Badge>
-                  </div>
-                  <p className="text-[11px] text-[#7185A5] mt-1">{p.designation}</p>
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          {/* Reset Factory Seed Data */}
-          <Card padding="md">
-            <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2 mb-2">
-              <RefreshCw className="w-4 h-4 text-[#B45309]" />
-              Seed Database Reset
-            </h3>
-            <p className="text-xs text-[#7185A5] mb-4">
-              Restore the initial demo records for Hybrid Monks (including historical salary payments, attendance records, audit logs, and client invoices).
-            </p>
-            <div className="p-4 rounded-xl bg-[#E11D48]/5 border border-[#E11D48]/20 mb-4">
-              <div className="flex items-center gap-2 font-semibold text-xs text-[#E11D48]">
-                <AlertTriangle className="w-4 h-4" />
-                Destructive Action
-              </div>
-              <p className="text-[11px] text-[#475569] mt-1">
-                This will overwrite any uncommitted local modifications and reload pristine factory data.
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              size="md"
-              className="w-full text-[#E11D48] hover:bg-[#E11D48]/5"
-              onClick={() => setIsResetConfirmOpen(true)}
-            >
-              Reset to Factory Seed Data
-            </Button>
-          </Card>
-        </div>
-      )}
+      {activeTab === 'users' && <UsersPanel />}
 
       {/* ---------------------------------------------------- */}
       {/* AUDIT DIFF & ACCOUNTABILITY INSPECTION MODAL */}
@@ -991,19 +815,6 @@ export const SettingsView: React.FC = () => {
         </Modal>
       )}
 
-      {/* Confirm Reset Dialog */}
-      <ConfirmDialog
-        isOpen={isResetConfirmOpen}
-        onClose={() => setIsResetConfirmOpen(false)}
-        onConfirm={() => {
-          resetData();
-          setIsResetConfirmOpen(false);
-        }}
-        title="Reset Company Database"
-        message="This will reset all employees, invoices, transactions, salaries, and audit logs back to the initial Hybrid Monks seed data. Are you sure you want to proceed?"
-        confirmLabel="Reset Data"
-        isDestructive={true}
-      />
     </div>
   );
 };

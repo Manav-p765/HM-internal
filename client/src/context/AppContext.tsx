@@ -13,17 +13,9 @@ import {
   AuditLog,
   AuditActionType,
   AttendanceRecord,
-  Session,
-  AuthUser,
-  EmployeeInvitation,
-  UserRole,
-  LeaveRequest,
-  LeaveType,
-  LeaveStatus,
-  DayType,
-  HalfDayPeriod,
 } from '../types';
 import { StorageService } from '../services/storage';
+import { useAuth } from './AuthContext';
 
 interface Toast {
   id: string;
@@ -33,17 +25,8 @@ interface Toast {
 }
 
 interface AppContextType {
-  // Session & Authentication
-  session: Session | null;
+  // Signed-in user (from the server session via AuthContext, mapped to the shape the views use)
   currentUser: UserProfile;
-  profiles: UserProfile[];
-  login: (email: string, password: string) => { success: boolean; error?: string };
-  signup: (name: string, email: string, password: string, invitationToken?: string) => { success: boolean; error?: string; message?: string };
-  forgotPassword: (email: string) => { success: boolean; token?: string; error?: string };
-  resetPassword: (token: string, newPassword: string) => { success: boolean; error?: string };
-  updateUserPassword: (newPassword: string) => { success: boolean; error?: string };
-  logout: () => void;
-  switchUserRole: (role: UserRole) => void;
 
   // Active navigation tab
   activeTab: ActiveTab;
@@ -53,15 +36,11 @@ interface AppContextType {
   settings: CompanySettings;
   updateSettings: (newSettings: CompanySettings) => void;
 
-  // Employees & Credentials
+  // Employees
   employees: Employee[];
   addEmployee: (emp: Omit<Employee, 'id' | 'createdAt'>) => Employee;
   updateEmployee: (emp: Employee) => void;
   deactivateEmployee: (id: string) => void;
-  reactivateEmployee: (id: string) => void;
-  createEmployeeAccount: (employeeId: string) => { success: boolean; credentials?: { fullName: string; workEmail: string; generatedPassword: string; accountStatus: string }; error?: string };
-  resetEmployeePassword: (employeeId: string) => { success: boolean; credentials?: { fullName: string; workEmail: string; generatedPassword: string; accountStatus: string }; error?: string };
-  toggleEmployeeAccountStatus: (employeeId: string, active: boolean) => { success: boolean; error?: string };
 
   // Transactions & Accounting
   transactions: Transaction[];
@@ -92,45 +71,10 @@ interface AppContextType {
   punchOut: () => { success: boolean; error?: string };
   correctAttendance: (id: string, punchIn: string, punchOut: string | undefined, reason: string) => { success: boolean; error?: string };
 
-  // Leave Management
-  leaves: LeaveRequest[];
-  myLeaves: LeaveRequest[];
-  applyLeave: (data: {
-    leaveType: LeaveType;
-    startDate: string;
-    endDate: string;
-    dayType: DayType;
-    halfDayPeriod?: HalfDayPeriod;
-    reason: string;
-  }) => { success: boolean; error?: string };
-  reviewLeaveRequest: (
-    requestId: string,
-    status: 'Approved' | 'Rejected',
-    reviewerComment?: string,
-    rejectionReason?: string
-  ) => { success: boolean; error?: string };
-  cancelLeaveRequest: (requestId: string) => { success: boolean; error?: string };
-  updateLeaveRequest: (
-    requestId: string,
-    updates: {
-      leaveType?: LeaveType;
-      startDate?: string;
-      endDate?: string;
-      dayType?: DayType;
-      halfDayPeriod?: HalfDayPeriod;
-      reason?: string;
-    }
-  ) => { success: boolean; error?: string };
-
-  // Invitations
-  invitations: EmployeeInvitation[];
-  createEmployeeInvitation: (employeeId: string, email: string, role?: UserRole) => EmployeeInvitation;
-
   // Audit Logs & Accountability
   auditLogs: AuditLog[];
   activityLogs: ActivityLog[];
   logAuditAction: (entry: Parameters<typeof StorageService.logAuditAction>[0]) => AuditLog;
-  resetData: () => void;
 
   // Toasts
   toasts: Toast[];
@@ -149,7 +93,12 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [session, setSession] = useState<Session | null>(StorageService.getActiveSession());
+  // AppProvider is only mounted for a signed-in user (see App.tsx).
+  const { user } = useAuth();
+  if (!user) {
+    throw new Error('AppProvider requires a signed-in user');
+  }
+
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [settings, setSettingsState] = useState<CompanySettings>(StorageService.getSettings());
   const [employees, setEmployees] = useState<Employee[]>(StorageService.getEmployees());
@@ -158,8 +107,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [salaries, setSalaries] = useState<SalaryRecord[]>(StorageService.getSalaries());
   const [salarySlips, setSalarySlips] = useState<SalarySlip[]>(StorageService.getSalarySlips());
   const [attendance, setAttendance] = useState<AttendanceRecord[]>(StorageService.getAttendance());
-  const [leaves, setLeaves] = useState<LeaveRequest[]>(StorageService.getLeaveRequests());
-  const [invitations, setInvitations] = useState<EmployeeInvitation[]>(StorageService.getInvitations());
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(StorageService.getActivityLogs());
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(StorageService.getAuditLogs());
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -169,8 +116,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [isAddInvoiceOpen, setIsAddInvoiceOpen] = useState(false);
   const [isAddEmployeeOpen, setIsAddEmployeeOpen] = useState(false);
 
-  const profiles = useMemo(() => StorageService.getProfiles(), []);
-
   const refreshData = () => {
     setSettingsState(StorageService.getSettings());
     setEmployees(StorageService.getEmployees());
@@ -179,8 +124,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setSalaries(StorageService.getSalaries());
     setSalarySlips(StorageService.getSalarySlips());
     setAttendance(StorageService.getAttendance());
-    setLeaves(StorageService.getLeaveRequests());
-    setInvitations(StorageService.getInvitations());
     setActivityLogs(StorageService.getActivityLogs());
     setAuditLogs(StorageService.getAuditLogs());
   };
@@ -197,28 +140,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
-  // Derived current user
+  // The server session only knows id/email/role (+ employee name). Until employee records move to the
+  // API, the rest of the profile comes from the locally stored employee with the same work email.
   const currentUser: UserProfile = useMemo(() => {
-    if (session) {
-      return {
-        id: session.user.id,
-        name: session.user.name,
-        email: session.user.email,
-        role: session.user.role,
-        avatarUrl: session.user.avatarUrl || '/src/assets/images/avatar_admin_alex_1791591972177.jpg',
-        designation: session.user.designation || (session.user.role === 'admin' ? 'Administrator' : 'Team Member'),
-        employeeId: session.user.employeeId,
-      };
-    }
-    return StorageService.getActiveUser();
-  }, [session]);
+    const employee = employees.find(e => e.workEmail.toLowerCase() === user.email.toLowerCase());
+    const roleTitle = { admin: 'Administrator', manager: 'Manager', employee: 'Team Member' }[user.role];
+    return {
+      id: user.id,
+      name: user.name || employee?.fullName || user.email.split('@')[0],
+      email: user.email,
+      role: user.role,
+      avatarUrl: employee?.avatarUrl || '',
+      designation: employee?.designation || roleTitle,
+      employeeId: employee?.id,
+    };
+  }, [user, employees]);
 
-  const myLeaves = useMemo(() => {
-    if (!currentUser.employeeId) {
-      return leaves.filter(l => l.employeeEmail.toLowerCase() === currentUser.email.toLowerCase());
-    }
-    return leaves.filter(l => l.employeeId === currentUser.employeeId);
-  }, [currentUser, leaves]);
+  // Audit entries written by the storage layer are attributed to the signed-in user.
+  StorageService.currentActor = {
+    id: currentUser.id,
+    name: currentUser.name,
+    email: currentUser.email,
+    role: currentUser.role,
+  };
 
   // Adjust active tab when role changes
   useEffect(() => {
@@ -247,77 +191,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
   }, [currentUser.role]);
-
-  // Authentication Handlers
-  const login = (email: string, password: string) => {
-    const res = StorageService.login(email, password);
-    if (res.success && res.session) {
-      setSession(res.session);
-      refreshData();
-      showToast('success', `Welcome back, ${res.session.user.name}!`);
-      return { success: true };
-    }
-    return { success: false, error: res.error || 'Authentication failed' };
-  };
-
-  const signup = (name: string, email: string, password: string, invitationToken?: string) => {
-    const res = StorageService.signup(name, email, password, invitationToken);
-    if (res.success) {
-      if (res.session) {
-        setSession(res.session);
-        refreshData();
-      }
-      return { success: true, message: res.message };
-    }
-    return { success: false, error: res.error };
-  };
-
-  const forgotPassword = (email: string) => {
-    const res = StorageService.forgotPassword(email);
-    return res;
-  };
-
-  const resetPassword = (token: string, newPassword: string) => {
-    const res = StorageService.resetPassword(token, newPassword);
-    if (res.success) {
-      showToast('success', 'Your password has been reset successfully. Please log in.');
-    }
-    return res;
-  };
-
-  const updateUserPassword = (newPassword: string) => {
-    const res = StorageService.updateUserPassword(currentUser.id, newPassword);
-    if (res.success) {
-      setSession(StorageService.getActiveSession());
-      refreshData();
-      showToast('success', 'Your password has been set successfully. Welcome to your dashboard!');
-      return { success: true };
-    }
-    showToast('error', res.error || 'Failed to update password');
-    return res;
-  };
-
-  const logout = () => {
-    StorageService.logout();
-    setSession(null);
-    showToast('info', 'You have been signed out.');
-  };
-
-  const switchUserRole = (role: UserRole) => {
-    const users = StorageService.getAuthUsers();
-    const matched = users.find(u => u.role === role);
-    if (matched) {
-      const newSession: Session = {
-        token: `sess_${Date.now()}_${matched.id}`,
-        user: matched,
-        expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
-      };
-      StorageService.setActiveSession(newSession);
-      setSession(newSession);
-      refreshData();
-      showToast('info', `Switched active role to ${role.toUpperCase()} (${matched.name})`);
-    }
-  };
 
   // Attendance Handlers
   const todayAttendance = useMemo(() => {
@@ -389,14 +262,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!currentUser.employeeId) return [];
     return salarySlips.filter(s => s.employeeId === currentUser.employeeId && s.isPublished);
   }, [currentUser.employeeId, salarySlips]);
-
-  // Invitations
-  const createEmployeeInvitation = (employeeId: string, email: string, role: UserRole = 'employee') => {
-    const invite = StorageService.createEmployeeInvitation(employeeId, email, role);
-    refreshData();
-    showToast('success', `Account invitation generated for ${email}`);
-    return invite;
-  };
 
   // Existing methods preserved exactly
   const updateSettings = (newSettings: CompanySettings) => {
@@ -521,25 +386,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return log;
   };
 
-  const resetData = () => {
-    StorageService.resetToDefaultSeed();
-    setSession(StorageService.getActiveSession());
-    refreshData();
-    showToast('info', 'Database reset to initial Hybrid Monks seed data');
-  };
-
   return (
     <AppContext.Provider
       value={{
-        session,
         currentUser,
-        profiles,
-        login,
-        signup,
-        forgotPassword,
-        resetPassword,
-        logout,
-        switchUserRole,
         activeTab,
         setActiveTab,
         settings,
@@ -569,12 +419,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         punchIn,
         punchOut,
         correctAttendance,
-        invitations,
-        createEmployeeInvitation,
         auditLogs,
         activityLogs,
         logAuditAction,
-        resetData,
         toasts,
         showToast,
         dismissToast,

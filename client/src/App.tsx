@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopNav } from './components/layout/TopNav';
 import { ToastContainer } from './components/common/ToastContainer';
@@ -22,6 +23,8 @@ import { EmployeeDashboardView } from './components/dashboard/EmployeeDashboardV
 import { EmployeeSalarySlipsView } from './components/salary/EmployeeSalarySlipsView';
 import { EmployeeProfileView } from './components/profile/EmployeeProfileView';
 import { AuthPage } from './components/auth/AuthPage';
+import { ResetPasswordPage } from './components/auth/ResetPasswordPage';
+import { ChangePasswordPage } from './components/auth/ChangePasswordPage';
 import { ShieldAlert } from 'lucide-react';
 import { Button } from './components/common/Button';
 
@@ -182,25 +185,59 @@ const MainLayout: React.FC = () => {
   );
 };
 
+// Decides between the signed-out screens, the forced password change and the app itself.
 const AppContent: React.FC = () => {
-  const { session } = useApp();
+  const { status, user } = useAuth();
 
-  if (!session) {
+  // No router yet: the emailed reset link (/reset-password?token=...) is recognised by its path.
+  const [resetToken, setResetToken] = useState<string | null>(() =>
+    window.location.pathname === '/reset-password'
+      ? new URLSearchParams(window.location.search).get('token') ?? ''
+      : null
+  );
+  const [loginNotice, setLoginNotice] = useState<string | undefined>();
+
+  if (resetToken !== null) {
     return (
-      <>
-        <AuthPage />
-        <ToastContainer />
-      </>
+      <ResetPasswordPage
+        token={resetToken}
+        onDone={notice => {
+          window.history.replaceState(null, '', '/');
+          setLoginNotice(notice);
+          setResetToken(null);
+        }}
+      />
     );
   }
 
-  return <MainLayout />;
+  if (status === 'loading') {
+    return (
+      <div className="min-h-screen bg-[#F7F9FC] flex items-center justify-center text-xs text-[#7185A5]">
+        Loading...
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthPage notice={loginNotice} />;
+  }
+
+  if (user.mustChangePassword) {
+    return <ChangePasswordPage />;
+  }
+
+  // Keyed by user so nothing from a previous sign-in survives in memory.
+  return (
+    <AppProvider key={user.id}>
+      <MainLayout />
+    </AppProvider>
+  );
 };
 
 export default function App() {
   return (
-    <AppProvider>
+    <AuthProvider>
       <AppContent />
-    </AppProvider>
+    </AuthProvider>
   );
 }

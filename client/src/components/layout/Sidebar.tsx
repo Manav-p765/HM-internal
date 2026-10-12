@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useApp } from '../../context/AppContext';
-import { ActiveTab, UserRole } from '../../types';
+import { useAuth } from '../../context/AuthContext';
+import { ActiveTab } from '../../types';
 import {
   LayoutDashboard,
   WalletCards,
@@ -11,8 +12,6 @@ import {
   BarChart3,
   Contact,
   Settings,
-  ChevronDown,
-  ShieldCheck,
   Building2,
   LogOut,
   X,
@@ -33,13 +32,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onMobileClose }) =
     activeTab,
     setActiveTab,
     currentUser,
-    profiles,
-    switchUserRole,
     settings,
-    logout,
   } = useApp();
-
-  const [roleMenuOpen, setRoleMenuOpen] = useState(false);
+  const { logout } = useAuth();
 
   // Define navigation items based on Role
   const getNavItems = () => {
@@ -231,24 +226,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onMobileClose }) =
           })}
         </div>
 
-        {/* User Profile & Role Switcher */}
+        {/* Signed-in user */}
         <div className="p-3 border-t border-[#DFE6F1] bg-[#F7F9FC]/40 relative">
-          <div
-            onClick={() => setRoleMenuOpen(!roleMenuOpen)}
-            className="flex items-center gap-3 p-2 rounded-lg hover:bg-white border border-transparent hover:border-[#DFE6F1] transition-all cursor-pointer"
-            role="button"
-            tabIndex={0}
-          >
+          <div className="flex items-center gap-3 p-2 rounded-lg">
             <div className="relative w-9 h-9 rounded-full overflow-hidden bg-[#5038F5]/10 border border-[#DFE6F1] shrink-0">
-              <img
-                src={currentUser.avatarUrl}
-                alt={currentUser.name}
-                referrerPolicy="no-referrer"
-                className="w-full h-full object-cover"
-                onError={e => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                }}
-              />
+              {currentUser.avatarUrl && (
+                <img
+                  src={currentUser.avatarUrl}
+                  alt={currentUser.name}
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover"
+                  onError={e => {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+              )}
               <span className="w-full h-full flex items-center justify-center text-xs font-bold text-[#5038F5]">
                 {currentUser.name.charAt(0)}
               </span>
@@ -258,7 +250,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onMobileClose }) =
                 <span className="text-xs font-semibold text-[#111827] truncate">
                   {currentUser.name}
                 </span>
-                <ChevronDown className="w-3.5 h-3.5 text-[#7185A5] shrink-0" />
               </div>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <Badge
@@ -277,42 +268,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onMobileClose }) =
             </div>
           </div>
 
-          {/* Quick Role Switcher Menu */}
-          {roleMenuOpen && (
-            <div className="absolute bottom-20 left-3 right-3 bg-white rounded-xl border border-[#DFE6F1] shadow-xl p-2 z-50 animate-in fade-in zoom-in-95 duration-100">
-              <div className="px-2.5 py-1.5 text-[11px] font-semibold text-[#7185A5] uppercase tracking-wider flex items-center gap-1.5 border-b border-[#DFE6F1] mb-1">
-                <ShieldCheck className="w-3.5 h-3.5 text-[#5038F5]" />
-                Switch Test Role
-              </div>
-              {profiles.map(p => (
-                <button
-                  key={p.id}
-                  onClick={() => {
-                    switchUserRole(p.role);
-                    setRoleMenuOpen(false);
-                  }}
-                  className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs transition-colors cursor-pointer text-left ${
-                    currentUser.role === p.role
-                      ? 'bg-[#5038F5]/10 text-[#5038F5] font-semibold'
-                      : 'text-[#475569] hover:bg-[#F7F9FC] hover:text-[#111827]'
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <p className="font-medium truncate">{p.name}</p>
-                    <p className="text-[10px] text-[#7185A5] truncate">{p.designation}</p>
-                  </div>
-                  <span className="text-[10px] uppercase font-bold ml-1 shrink-0 px-1.5 py-0.5 rounded bg-black/5">
-                    {p.role}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-
           {/* Logout Action */}
           <div className="mt-2 pt-2 border-t border-[#DFE6F1]">
             <button
-              onClick={logout}
+              onClick={() => logout()}
               className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs font-semibold text-[#E11D48] hover:bg-[#E11D48]/10 rounded-lg transition-colors cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
