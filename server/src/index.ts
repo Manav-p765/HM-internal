@@ -51,8 +51,8 @@ app.use('/api', api);
 
 if (config.isProduction) {
   app.use(express.static(clientDist, { index: false }));
-  // SPA fallback: every non-/api GET gets index.html.
-  app.get(/^(?!\/api(\/|$)).*/, (_req, res) => {
+  // SPA fallback: every GET outside /api and /assets gets index.html (missing assets stay 404).
+  app.get(/^(?!\/(api|assets)(\/|$)).*/, (_req, res) => {
     res.sendFile(path.join(clientDist, 'index.html'));
   });
 }
