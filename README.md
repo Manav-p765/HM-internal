@@ -34,6 +34,30 @@ docker run -d --name hm-internal-pg -e POSTGRES_USER=hm -e POSTGRES_PASSWORD=hm_
 
 Seed logins (dev only, all share the password `devpass123`):
 `admin@example.test`, `manager@example.test`, `employee1@example.test`, `employee2@example.test`.
+The seed also has one employee without a login (EMP-004) for trying "Add user".
+
+## Accounts and sign-in
+
+- Invite-only: there is no signup. An admin adds a user in **Settings > Users**; the server generates a
+  temporary password and emails it. The user must choose a new password at first sign-in.
+- In development, with `SMTP_HOST` empty, emails (including the temporary password and reset links)
+  are printed to the server console instead of being sent.
+- Forgot password sends a one-time link that expires after 1 hour.
+- Roles (`admin`, `manager`, `employee`) are enforced by the server. `/api/users` is admin only.
+- The first admin in production is created from the terminal (the password is typed at a hidden prompt):
+
+  ```sh
+  NODE_ENV=production npm run create-admin -w server -- --email you@hybridmonks.com
+  ```
+
+## Tests
+
+```sh
+npm test          # server auth tests (vitest + supertest)
+```
+
+The tests use the database in `DATABASE_URL` but run inside their own Postgres schema (`hm_test`),
+which is dropped and re-created on every run, so dev data is not touched. Postgres must be running.
 
 ## Scripts (run from the repo root)
 
@@ -45,13 +69,18 @@ Seed logins (dev only, all share the password `devpass123`):
 | `npm run lint` | Type-checks client and server |
 | `npm run db:migrate` | Applies pending SQL migrations (tracked in `schema_migrations`) |
 | `npm run db:seed` | Loads `server/db/seed.dev.sql` |
+| `npm test` | Runs the server test suite |
+| `npm run create-admin -w server -- --email …` | Creates an admin account from the terminal |
 
 ## Production
 
 ```sh
 npm ci && npm run build
 NODE_ENV=production npm run db:migrate
+NODE_ENV=production npm run create-admin -w server -- --email you@hybridmonks.com   # first deploy only
 NODE_ENV=production npm start
 ```
 
 The server serves the API under `/api` and the built client for every other path.
+Production needs `APP_URL`, a 32+ character `SESSION_SECRET`, and `SMTP_HOST` + `SMTP_FROM`; the server
+exits at startup if any of them is missing. It expects to sit behind a TLS-terminating reverse proxy.

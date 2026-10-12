@@ -21,7 +21,7 @@ try {
   await withTransaction(async client => {
     if (reset) {
       await client.query(
-        'TRUNCATE transactions, salaries, invoice_items, invoices, auth_tokens, users, employees, sessions',
+        'TRUNCATE audit_logs, transactions, salaries, invoice_items, invoices, auth_tokens, users, employees, sessions',
       );
     } else {
       const { rows } = await client.query<{ count: string }>('SELECT count(*) FROM users');

@@ -12,11 +12,12 @@ UPDATE company_settings SET
   invoice_prefix  = 'INV-DEV-',
   currency        = 'INR';
 
--- Employees (the admin has no employee record)
+-- Employees (the admin has no employee record; EMP-004 has no login yet, for trying "Add user")
 INSERT INTO employees (id, employee_code, full_name, work_email, phone, department, designation, joining_date, status, monthly_salary, payment_method) VALUES
   ('00000000-0000-4000-a000-000000000101', 'EMP-001', 'Morgan Manager (Fake)', 'manager@example.test',   '+00 00000 00001', 'Operations',  'Operations Lead',   '2024-04-01', 'active', 120000.00, 'Bank Transfer'),
   ('00000000-0000-4000-a000-000000000102', 'EMP-002', 'Erin Employee (Fake)',  'employee1@example.test', '+00 00000 00002', 'Engineering', 'Frontend Engineer', '2024-07-15', 'active',  90000.00, 'Bank Transfer'),
-  ('00000000-0000-4000-a000-000000000103', 'EMP-003', 'Eli Employee (Fake)',   'employee2@example.test', '+00 00000 00003', 'Design',      'Product Designer',  '2025-01-06', 'active',  70000.00, 'UPI');
+  ('00000000-0000-4000-a000-000000000103', 'EMP-003', 'Eli Employee (Fake)',   'employee2@example.test', '+00 00000 00003', 'Design',      'Product Designer',  '2025-01-06', 'active',  70000.00, 'UPI'),
+  ('00000000-0000-4000-a000-000000000104', 'EMP-004', 'Nia Newhire (Fake)',    'newhire@example.test',   '+00 00000 00004', 'Marketing',   'Marketing Associate', '2026-10-01', 'active',  55000.00, 'Bank Transfer');
 
 -- Users. password_hash = bcrypt('devpass123', cost 10)
 INSERT INTO users (id, email, password_hash, role, employee_id, status) VALUES

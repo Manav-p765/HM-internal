@@ -5,7 +5,6 @@ import { pool } from './db.js';
 
 const PgStore = connectPgSimple(session);
 
-// Data we will keep in the session once auth routes exist.
 declare module 'express-session' {
   interface SessionData {
     userId?: string;
@@ -14,7 +13,11 @@ declare module 'express-session' {
 
 export const sessionMiddleware = session({
   name: 'hm.sid',
-  store: new PgStore({ pool, tableName: 'sessions' }), // table created by 001_init.sql
+  store: new PgStore({
+    pool,
+    tableName: 'sessions', // table created by 001_init.sql
+    pruneSessionInterval: config.isTest ? false : 15 * 60,
+  }),
   secret: config.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,

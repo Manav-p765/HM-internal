@@ -5,7 +5,11 @@ import { config } from './config.js';
 // NUMERIC already comes back as a string, which is what we want for money.
 pg.types.setTypeParser(pg.types.builtins.DATE, value => value);
 
-export const pool = new pg.Pool({ connectionString: config.DATABASE_URL });
+export const pool = new pg.Pool({
+  connectionString: config.DATABASE_URL,
+  // DB_SCHEMA (tests) puts our tables in a separate schema; public stays visible for citext.
+  options: config.DB_SCHEMA ? `-c search_path=${config.DB_SCHEMA},public` : undefined,
+});
 
 pool.on('error', err => {
   console.error('Unexpected Postgres pool error', err);

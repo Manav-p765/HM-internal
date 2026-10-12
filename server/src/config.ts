@@ -13,12 +13,19 @@ const schema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  // Optional Postgres schema to run in (used by the test suite: DB_SCHEMA=hm_test).
+  DB_SCHEMA: z
+    .string()
+    .regex(/^[a-z_][a-z0-9_]*$/)
+    .optional(),
   SESSION_SECRET: isProduction
     ? z.string().min(32, 'SESSION_SECRET must be at least 32 characters in production')
     : z.string().min(1, 'SESSION_SECRET is required'),
-  APP_URL: z.string().default('http://localhost:3000'),
+  APP_URL: isProduction
+    ? z.url('APP_URL must be set to the public URL in production')
+    : z.url().default('http://localhost:3000'),
   SMTP_HOST: z.string().optional(),
-  SMTP_PORT: z.coerce.number().int().positive().optional(),
+  SMTP_PORT: z.preprocess(v => (v === '' ? undefined : v), z.coerce.number().int().positive().default(587)),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().optional(),
@@ -33,7 +40,13 @@ if (!parsed.success) {
   process.exit(1);
 }
 
+const env = parsed.data;
+
 export const config = {
-  ...parsed.data,
-  isProduction: parsed.data.NODE_ENV === 'production',
+  ...env,
+  isProduction: env.NODE_ENV === 'production',
+  isTest: env.NODE_ENV === 'test',
+  appOrigin: new URL(env.APP_URL).origin,
+  // Cost 12 everywhere except the test suite, where hashing speed matters more than strength.
+  bcryptCost: env.NODE_ENV === 'test' ? 4 : 12,
 };
