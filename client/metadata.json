@@ -1,6 +1,0 @@
-{
-  "name": "Monks Internal Management",
-  "description": "Internal management application for Hybrid Monks to manage company accounting, employee records, invoices, salary tracking, and financial reports.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

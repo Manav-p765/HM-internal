@@ -58,7 +58,6 @@ const INITIAL_SETTINGS: CompanySettings = {
   expectedDailyHours: 8.0,
   weeklyWorkingDays: 5,
   allowSelfRegistration: false,
-  backendType: 'local-persistent',
 };
 
 // Seed Auth Users (Passwords default to standard demo credentials)

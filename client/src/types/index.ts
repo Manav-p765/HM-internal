@@ -286,9 +286,6 @@ export interface CompanySettings {
   expectedDailyHours: number; // default 8.0
   weeklyWorkingDays: number; // default 5
   allowSelfRegistration: boolean;
-  supabaseUrl?: string;
-  supabaseAnonKey?: string;
-  backendType: 'local-persistent' | 'supabase';
 }
 
 export type AuditActionType =
