@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router';
+import { TaskKpis } from '../work/TaskKpis';
 import { useApp } from '../../context/AppContext';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
@@ -184,6 +185,9 @@ export const EmployeeDashboardView: React.FC = () => {
           </div>
         </div>
       </Card>
+
+      {/* My tasks (from the API) */}
+      <TaskKpis title="My tasks" linkTo="/my/tasks" />
 
       {/* 4 PERSONAL SUMMARY METRICS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

@@ -21,6 +21,8 @@ import {
   Receipt,
   User,
   CheckCircle2,
+  FolderKanban,
+  ListChecks,
 } from 'lucide-react';
 import { Badge } from '../common/Badge';
 
@@ -35,6 +37,8 @@ function getNavItems(role: UserRole): NavItem[] {
   if (role === 'employee') {
     return [
       { to: '/dashboard', label: 'My Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
+      { to: '/my/tasks', label: 'My Tasks', icon: <ListChecks className="w-4 h-4" /> },
+      { to: '/my/projects', label: 'My Projects', icon: <FolderKanban className="w-4 h-4" /> },
       { to: '/salary/slips', label: 'My Salary Slips', icon: <Receipt className="w-4 h-4" /> },
       { to: '/team', label: 'Team Directory', icon: <Contact className="w-4 h-4" /> },
       { to: '/profile', label: 'My Profile', icon: <User className="w-4 h-4" /> },
@@ -43,6 +47,8 @@ function getNavItems(role: UserRole): NavItem[] {
   if (role === 'manager') {
     return [
       { to: '/dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
+      { to: '/projects', label: 'Projects', icon: <FolderKanban className="w-4 h-4" /> },
+      { to: '/tasks', label: 'Tasks', icon: <ListChecks className="w-4 h-4" /> },
       { to: '/employees', label: 'Employees', icon: <Users className="w-4 h-4" /> },
       { to: '/team', label: 'Team Directory', icon: <Contact className="w-4 h-4" /> },
       { to: '/invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
@@ -52,6 +58,8 @@ function getNavItems(role: UserRole): NavItem[] {
   }
   return [
     { to: '/dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
+    { to: '/projects', label: 'Projects', icon: <FolderKanban className="w-4 h-4" /> },
+    { to: '/tasks', label: 'Tasks', icon: <ListChecks className="w-4 h-4" /> },
     { to: '/accounting', label: 'Accounting', icon: <WalletCards className="w-4 h-4" /> },
     { to: '/invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
     { to: '/clients', label: 'Clients', icon: <Building2 className="w-4 h-4" /> },

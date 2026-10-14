@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router';
+import { TaskKpis } from '../work/TaskKpis';
 import { employeesApi } from '../../api/employees';
 import { useApiData } from '../../api/useApiData';
 import { DEPARTMENTS } from '../../types';
@@ -199,6 +200,9 @@ export const DashboardView: React.FC = () => {
           ))}
         </div>
       </div>
+
+      {/* Task KPIs (from the API) */}
+      <TaskKpis title="Tasks across all projects" linkTo="/tasks" />
 
       {/* 6 Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

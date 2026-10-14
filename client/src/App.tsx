@@ -40,6 +40,12 @@ const TeamDirectoryView = named(() => import('./components/directory/TeamDirecto
 const SettingsView = named(() => import('./components/settings/SettingsView'), 'SettingsView');
 const EmployeeProfileView = named(() => import('./components/profile/EmployeeProfileView'), 'EmployeeProfileView');
 const ClientsView = named(() => import('./components/clients/ClientsView'), 'ClientsView');
+const ProjectsView = named(() => import('./components/projects/ProjectsView'), 'ProjectsView');
+const EmployeeProjectsView = named(() => import('./components/projects/ProjectsView'), 'EmployeeProjectsView');
+const TasksView = named(() => import('./components/tasks/TasksView'), 'TasksView');
+const EmployeeTasksView = named(() => import('./components/tasks/TasksView'), 'EmployeeTasksView');
+const PortalProjectsView = named(() => import('./components/portal/PortalProjectsView'), 'PortalProjectsView');
+const PortalProjectTasksView = named(() => import('./components/portal/PortalProjectsView'), 'PortalProjectTasksView');
 const ClientPortalDashboard = named(() => import('./components/portal/ClientPortalDashboard'), 'ClientPortalDashboard');
 const ClientPortalProfile = named(() => import('./components/portal/ClientPortalProfile'), 'ClientPortalProfile');
 // Deferred (no routes yet): attendance/AdminAttendanceView, attendance/EmployeeAttendanceView, leaves.
@@ -122,6 +128,8 @@ export default function App() {
 
           <Route path="/portal" element={<ClientPortal />}>
             <Route index element={<ClientPortalDashboard />} />
+            <Route path="projects" element={<PortalProjectsView />} />
+            <Route path="projects/:id" element={<PortalProjectTasksView />} />
             <Route path="profile" element={<ClientPortalProfile />} />
             <Route path="*" element={<Navigate to="/portal" replace />} />
           </Route>
@@ -141,6 +149,17 @@ export default function App() {
               <Route path="/reports" element={<ReportsView />} />
               <Route path="/clients" element={<ClientsView />} />
               <Route path="/clients/:id" element={<ClientsView />} />
+              <Route path="/projects" element={<ProjectsView />} />
+              <Route path="/projects/:id" element={<ProjectsView />} />
+              <Route path="/tasks" element={<TasksView />} />
+              <Route path="/tasks/:id" element={<TasksView />} />
+            </Route>
+
+            <Route element={<RequireRole roles={['employee']} />}>
+              <Route path="/my/tasks" element={<EmployeeTasksView />} />
+              <Route path="/my/tasks/:id" element={<EmployeeTasksView />} />
+              <Route path="/my/projects" element={<EmployeeProjectsView />} />
+              <Route path="/my/projects/:id" element={<EmployeeProjectsView />} />
             </Route>
 
             <Route element={<RequireRole roles={['admin']} />}>
