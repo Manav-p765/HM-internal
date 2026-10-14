@@ -23,6 +23,7 @@ import {
   CheckCircle2,
   FolderKanban,
   ListChecks,
+  CalendarDays,
 } from 'lucide-react';
 import { Badge } from '../common/Badge';
 
@@ -39,6 +40,8 @@ function getNavItems(role: UserRole): NavItem[] {
       { to: '/dashboard', label: 'My Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
       { to: '/my/tasks', label: 'My Tasks', icon: <ListChecks className="w-4 h-4" /> },
       { to: '/my/projects', label: 'My Projects', icon: <FolderKanban className="w-4 h-4" /> },
+      { to: '/my/attendance', label: 'My Attendance', icon: <Clock className="w-4 h-4" /> },
+      { to: '/my/leaves', label: 'My Leaves', icon: <CalendarDays className="w-4 h-4" /> },
       { to: '/salary/slips', label: 'My Salary Slips', icon: <Receipt className="w-4 h-4" /> },
       { to: '/team', label: 'Team Directory', icon: <Contact className="w-4 h-4" /> },
       { to: '/profile', label: 'My Profile', icon: <User className="w-4 h-4" /> },
@@ -50,6 +53,8 @@ function getNavItems(role: UserRole): NavItem[] {
       { to: '/projects', label: 'Projects', icon: <FolderKanban className="w-4 h-4" /> },
       { to: '/tasks', label: 'Tasks', icon: <ListChecks className="w-4 h-4" /> },
       { to: '/employees', label: 'Employees', icon: <Users className="w-4 h-4" /> },
+      { to: '/attendance', label: 'Attendance', icon: <Clock className="w-4 h-4" /> },
+      { to: '/leaves', label: 'Leaves', icon: <CalendarDays className="w-4 h-4" /> },
       { to: '/team', label: 'Team Directory', icon: <Contact className="w-4 h-4" /> },
       { to: '/invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
       { to: '/clients', label: 'Clients', icon: <Building2 className="w-4 h-4" /> },
@@ -64,6 +69,8 @@ function getNavItems(role: UserRole): NavItem[] {
     { to: '/invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
     { to: '/clients', label: 'Clients', icon: <Building2 className="w-4 h-4" /> },
     { to: '/employees', label: 'Employees', icon: <Users className="w-4 h-4" /> },
+    { to: '/attendance', label: 'Attendance', icon: <Clock className="w-4 h-4" /> },
+    { to: '/leaves', label: 'Leaves', icon: <CalendarDays className="w-4 h-4" /> },
     // 'end' so /salary/slips (own payslips) doesn't also light up Salary Management
     { to: '/salary', label: 'Salary Management', icon: <Banknote className="w-4 h-4" />, end: true },
     { to: '/reports', label: 'Reports', icon: <BarChart3 className="w-4 h-4" /> },
@@ -81,7 +88,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onMobileClose }) =
   const { currentUser, settings } = useApp();
   const { logout } = useAuth();
 
-  // Attendance and Leaves are deferred: their views stay in the codebase but have no nav item or route.
   // Hiding items by role is cosmetic; RequireRole and the server are the real guards.
   const navItems = getNavItems(currentUser.role);
 

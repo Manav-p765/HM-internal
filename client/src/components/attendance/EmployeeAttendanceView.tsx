@@ -1,69 +1,75 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import { attendanceApi } from '../../api/attendance';
+import { useApiData } from '../../api/useApiData';
+import { errorMessage } from '../../api/client';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
 import { EmptyState } from '../common/EmptyState';
-import {
-  Clock,
-  Calendar,
-  Play,
-  Square,
-  CheckCircle2,
-  Filter,
-  Download,
-} from 'lucide-react';
-import { formatDate, formatMonthYear, exportToCSV } from '../../utils/formatters';
+import { LoadError } from '../common/LoadError';
+import { Calendar, CheckCircle2, Clock, Download, Square } from 'lucide-react';
+import { exportToCSV, formatDate, formatMinutes, formatMonthYear, formatTimeIst } from '../../utils/formatters';
+import { AttendanceRecord } from '../../types/attendance';
+
+// The 12 months up to and including `month` (YYYY-MM), newest first. Calendar arithmetic only.
+function previousMonths(month: string, count = 12): string[] {
+  let [year, m] = month.split('-').map(Number);
+  const months: string[] = [];
+  for (let i = 0; i < count; i++) {
+    months.push(`${year}-${String(m).padStart(2, '0')}`);
+    m -= 1;
+    if (m === 0) {
+      m = 12;
+      year -= 1;
+    }
+  }
+  return months;
+}
+
+function recordStatus(r: AttendanceRecord): { label: string; variant: 'success' | 'purple' | 'error' } {
+  if (r.punchOut) return { label: 'Present', variant: 'success' };
+  if (r.workedMinutes === null) return { label: 'Not closed', variant: 'error' };
+  return { label: 'Working', variant: 'purple' };
+}
 
 export const EmployeeAttendanceView: React.FC = () => {
-  const {
-    currentUser,
-    attendance,
-    todayAttendance,
-    punchIn,
-    punchOut,
-    settings,
-  } = useApp();
+  const { showToast } = useApp();
+  // undefined = the current month as the server sees it (IST).
+  const [selectedMonth, setSelectedMonth] = useState<string | undefined>(undefined);
+  const { data, error, isLoading, reload } = useApiData(() => attendanceApi.myMonth(selectedMonth), [selectedMonth]);
+  const today = useApiData(() => attendanceApi.today(), []);
+  const [isPunchingOut, setIsPunchingOut] = useState(false);
 
-  const now = new Date();
-  const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthStr);
+  const month = data?.month ?? selectedMonth ?? '';
+  const months = useMemo(() => (data ? previousMonths(data.today.slice(0, 7)) : []), [data?.today]);
+  const todayRecord = today.data?.record ?? null;
 
-  // Filter personal records
-  const myRecords = useMemo(() => {
-    if (!currentUser.employeeId) return [];
-    return attendance.filter(a => a.employeeId === currentUser.employeeId);
-  }, [currentUser.employeeId, attendance]);
-
-  // List of available months
-  const availableMonths = useMemo(() => {
-    const set = new Set<string>();
-    set.add(currentMonthStr);
-    myRecords.forEach(r => set.add(r.date.substring(0, 7)));
-    return Array.from(set).sort().reverse();
-  }, [myRecords, currentMonthStr]);
-
-  // Filter by selected month
-  const monthFiltered = useMemo(() => {
-    return myRecords.filter(r => r.date.startsWith(selectedMonth));
-  }, [myRecords, selectedMonth]);
-
-  // Stats
-  const daysPresent = monthFiltered.filter(r => r.status === 'Present' || r.status === 'Working' || r.status === 'Late').length;
-  const totalMinutes = monthFiltered.reduce((sum, r) => sum + r.durationMinutes, 0);
-  const lateDays = monthFiltered.filter(r => r.status === 'Late').length;
+  const handlePunchOut = async () => {
+    setIsPunchingOut(true);
+    try {
+      const record = await attendanceApi.punchOut();
+      showToast('success', `Punched out at ${formatTimeIst(record.punchOut)}. Worked ${formatMinutes(record.workedMinutes)} today.`);
+      await Promise.all([today.reload(), reload()]);
+    } catch (err) {
+      showToast('error', errorMessage(err));
+    } finally {
+      setIsPunchingOut(false);
+    }
+  };
 
   const handleExportCSV = () => {
-    const headers = ['Date', 'Punch In', 'Punch Out', 'Duration (Hours)', 'Status', 'Notes'];
-    const rows = monthFiltered.map(r => [
-      r.date,
-      new Date(r.punchIn).toLocaleTimeString(),
-      r.punchOut ? new Date(r.punchOut).toLocaleTimeString() : 'In Progress',
-      (r.durationMinutes / 60).toFixed(2),
-      r.status,
-      r.notes || '',
+    if (!data) return;
+    const headers = ['Date', 'Punch In (IST)', 'Punch Out (IST)', 'Worked', 'Status', 'Notes'];
+    const rows = data.records.map(r => [
+      r.workDate,
+      formatTimeIst(r.punchIn),
+      r.punchOut ? formatTimeIst(r.punchOut) : 'Open',
+      formatMinutes(r.workedMinutes),
+      recordStatus(r).label,
+      r.note ?? '',
     ]);
-    exportToCSV(`my_attendance_${selectedMonth}`, headers, rows);
+    exportToCSV(`my_attendance_${month}`, headers, rows);
   };
 
   return (
@@ -71,121 +77,90 @@ export const EmployeeAttendanceView: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">
-            My Attendance History
-          </h1>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">My Attendance History</h1>
           <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">
-            Verified shift logs, punch timestamps, and workday durations
+            You are punched in automatically when you sign in. Times are shown in IST.
           </p>
         </div>
 
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            icon={<Download className="w-3.5 h-3.5" />}
-            onClick={handleExportCSV}
-          >
+          <Button variant="outline" size="sm" icon={<Download className="w-3.5 h-3.5" />} onClick={handleExportCSV} disabled={!data}>
             Export CSV
           </Button>
-
-          {!todayAttendance && (
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<Play className="w-3.5 h-3.5" />}
-              onClick={punchIn}
-            >
-              Punch In
-            </Button>
-          )}
-
-          {todayAttendance && !todayAttendance.punchOut && (
-            <Button
-              variant="danger"
-              size="sm"
-              icon={<Square className="w-3.5 h-3.5 fill-current" />}
-              onClick={punchOut}
-            >
+          {todayRecord && !todayRecord.punchOut && (
+            <Button variant="danger" size="sm" icon={<Square className="w-3.5 h-3.5 fill-current" />} onClick={handlePunchOut} disabled={isPunchingOut}>
               Punch Out
             </Button>
+          )}
+          {todayRecord?.punchOut && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#047857]/10 text-[#047857] text-xs font-semibold">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Punched out {formatTimeIst(todayRecord.punchOut)}
+            </span>
           )}
         </div>
       </div>
 
-      {/* KPI Cards */}
+      {/* KPI cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card padding="md">
-          <span className="text-xs font-semibold text-[#7185A5] block">
-            Days Present ({formatMonthYear(selectedMonth)})
-          </span>
+          <span className="text-xs font-semibold text-[#7185A5] block">Days Present ({month ? formatMonthYear(month) : '—'})</span>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-mono font-bold text-[#047857]">
-              {daysPresent}
-            </span>
+            <span className="text-2xl font-mono font-bold text-[#047857]">{data?.summary.daysPresent ?? '—'}</span>
             <span className="text-xs text-[#7185A5]">working days</span>
           </div>
         </Card>
-
         <Card padding="md">
-          <span className="text-xs font-semibold text-[#7185A5] block">
-            Total Working Hours
-          </span>
+          <span className="text-xs font-semibold text-[#7185A5] block">Total Working Hours</span>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-mono font-bold text-[#5038F5]">
-              {Math.floor(totalMinutes / 60)}h {totalMinutes % 60}m
-            </span>
-            <span className="text-xs text-[#7185A5]">elapsed</span>
+            <span className="text-2xl font-mono font-bold text-[#5038F5]">{data ? formatMinutes(data.summary.totalMinutes) : '—'}</span>
+            <span className="text-xs text-[#7185A5]">from server punches</span>
           </div>
         </Card>
-
         <Card padding="md">
-          <span className="text-xs font-semibold text-[#7185A5] block">
-            Late Arrivals
-          </span>
+          <span className="text-xs font-semibold text-[#7185A5] block">Incomplete Days</span>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className={`text-2xl font-mono font-bold ${lateDays > 0 ? 'text-[#B45309]' : 'text-[#7185A5]'}`}>
-              {lateDays}
+            <span className={`text-2xl font-mono font-bold ${data?.summary.incomplete ? 'text-[#E11D48]' : 'text-[#7185A5]'}`}>
+              {data?.summary.incomplete ?? '—'}
             </span>
-            <span className="text-xs text-[#7185A5]">past {settings.workStartTime || '09:30'}</span>
+            <span className="text-xs text-[#7185A5]">never punched out</span>
           </div>
         </Card>
       </div>
 
-      {/* Month Filter Selector */}
+      {/* Month selector */}
       <Card padding="sm">
         <div className="flex items-center gap-2">
           <Calendar className="w-4 h-4 text-[#5038F5]" />
           <span className="text-xs font-semibold text-[#111827]">Filter Month:</span>
           <select
-            value={selectedMonth}
+            value={month}
             onChange={e => setSelectedMonth(e.target.value)}
             className="text-xs font-medium px-3 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
           >
-            {availableMonths.map(m => (
+            {months.map(m => (
               <option key={m} value={m}>
-                {formatMonthYear(m)} ({m})
+                {formatMonthYear(m)}
               </option>
             ))}
           </select>
         </div>
       </Card>
 
-      {/* Attendance History Table */}
+      {/* History table */}
       <Card padding="none" className="overflow-hidden">
-        {monthFiltered.length === 0 ? (
-          <EmptyState
-            icon={<Clock className="w-6 h-6" />}
-            title="No records for this month"
-            description={`You have no recorded attendance for ${formatMonthYear(selectedMonth)}.`}
-          />
+        {error ? (
+          <LoadError message={error} onRetry={reload} />
+        ) : isLoading && !data ? (
+          <div className="py-10 text-center text-xs text-[#7185A5]">Loading attendance…</div>
+        ) : data!.records.length === 0 ? (
+          <EmptyState icon={<Clock className="w-6 h-6" />} title="No records for this month" description={`You have no recorded attendance for ${formatMonthYear(month)}.`} />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-[#F7F9FC] border-b border-[#DFE6F1] text-[#7185A5] font-semibold">
                 <tr>
                   <th className="py-3 px-4">Date</th>
-                  <th className="py-3 px-4">Punch In (UTC Server)</th>
+                  <th className="py-3 px-4">Punch In (IST)</th>
                   <th className="py-3 px-4">Punch Out</th>
                   <th className="py-3 px-4">Duration</th>
                   <th className="py-3 px-4 text-center">Status</th>
@@ -193,44 +168,21 @@ export const EmployeeAttendanceView: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#DFE6F1]">
-                {monthFiltered.map(r => (
-                  <tr key={r.id} className="hover:bg-[#F7F9FC]/60 transition-colors">
-                    <td className="py-3 px-4 font-semibold text-[#111827]">
-                      {formatDate(r.date)}
-                    </td>
-                    <td className="py-3 px-4 text-[#475569] font-mono">
-                      {new Date(r.punchIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                    </td>
-                    <td className="py-3 px-4 text-[#475569] font-mono">
-                      {r.punchOut ? (
-                        new Date(r.punchOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                      ) : (
-                        <span className="text-[#047857] font-sans font-semibold">In Progress</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 font-mono font-medium text-[#111827]">
-                      {r.durationMinutes ? `${Math.floor(r.durationMinutes / 60)}h ${r.durationMinutes % 60}m` : '—'}
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      <Badge
-                        variant={
-                          r.status === 'Present'
-                            ? 'success'
-                            : r.status === 'Working'
-                            ? 'purple'
-                            : r.status === 'Late'
-                            ? 'warning'
-                            : 'neutral'
-                        }
-                      >
-                        {r.status}
-                      </Badge>
-                    </td>
-                    <td className="py-3 px-4 text-[#7185A5]">
-                      {r.isManualCorrection ? `Corrected: ${r.correctionReason}` : r.notes || '—'}
-                    </td>
-                  </tr>
-                ))}
+                {data!.records.map(r => {
+                  const status = recordStatus(r);
+                  return (
+                    <tr key={r.id} className="hover:bg-[#F7F9FC]/60 transition-colors">
+                      <td className="py-3 px-4 font-semibold text-[#111827]">{formatDate(r.workDate)}</td>
+                      <td className="py-3 px-4 text-[#475569] font-mono">{formatTimeIst(r.punchIn)}</td>
+                      <td className="py-3 px-4 text-[#475569] font-mono">{r.punchOut ? formatTimeIst(r.punchOut) : '—'}</td>
+                      <td className="py-3 px-4 font-mono font-medium text-[#111827]">{formatMinutes(r.workedMinutes)}</td>
+                      <td className="py-3 px-4 text-center">
+                        <Badge variant={status.variant}>{status.label}</Badge>
+                      </td>
+                      <td className="py-3 px-4 text-[#7185A5]">{r.corrected ? `Corrected: ${r.note ?? ''}` : r.note || '—'}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

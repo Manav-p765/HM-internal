@@ -28,6 +28,9 @@ function removeLegacyAuthStorage() {
       'monks_salary_slips_v1',
       'monks_attendance_v1',
       'monks_leaves_v1',
+      // Attendance and leaves moved to the API (/api/attendance, /api/leaves).
+      'monks_attendance_v2',
+      'monks_leaves_v2',
     ];
     legacy.forEach(key => localStorage.removeItem(key));
     Object.keys(localStorage)

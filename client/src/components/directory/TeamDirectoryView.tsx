@@ -3,6 +3,9 @@ import { useNavigate } from 'react-router';
 import { useApp } from '../../context/AppContext';
 import { employeesApi } from '../../api/employees';
 import { useApiData } from '../../api/useApiData';
+import { teamApi } from '../../api/team';
+import { AVAILABILITY_LABEL } from '../../types/attendance';
+import { AvailabilityDot } from '../attendance/AvailabilityBadge';
 import { Department, EMPLOYMENT_STATUS_LABEL } from '../../types';
 import { Card } from '../common/Card';
 import { Badge } from '../common/Badge';
@@ -19,6 +22,12 @@ export const TeamDirectoryView: React.FC = () => {
   const navigate = useNavigate();
   const directory = useApiData(() => employeesApi.directory(), []);
   const employees = directory.data ?? [];
+  // Today's status per person (status only). Best effort: the directory still works without it.
+  const availability = useApiData(() => teamApi.availability(), []);
+  const statusById = useMemo(
+    () => new Map((availability.data ?? []).map(a => [a.employeeId, a.status] as const)),
+    [availability.data],
+  );
 
   const [search, setSearch] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState<'all' | Department>('all');
@@ -122,10 +131,18 @@ export const TeamDirectoryView: React.FC = () => {
             <div>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <Avatar name={emp.fullName} url={emp.avatarUrl} size="lg" />
+                  <div className="relative shrink-0">
+                    <Avatar name={emp.fullName} url={emp.avatarUrl} size="lg" />
+                    {statusById.has(emp.id) && <AvailabilityDot status={statusById.get(emp.id)!} className="absolute -bottom-0.5 -right-0.5" />}
+                  </div>
                   <div>
                     <h3 className="text-sm font-bold text-[#111827]">{emp.fullName}</h3>
                     <p className="text-xs text-[#7185A5]">{emp.designation}</p>
+                    {statusById.has(emp.id) && (
+                      <p className="text-[11px] text-[#7185A5] mt-0.5" data-testid="directory-status">
+                        {AVAILABILITY_LABEL[statusById.get(emp.id)!]}
+                      </p>
+                    )}
                   </div>
                 </div>
 

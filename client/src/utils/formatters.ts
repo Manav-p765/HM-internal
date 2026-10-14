@@ -98,3 +98,34 @@ export function exportToCSV(filename: string, headers: string[], rows: (string |
 export function roundToTwoDecimals(num: number): number {
   return Math.round((Number(num) || 0) * 100) / 100;
 }
+
+// Times are shown in the company time zone (IST), whatever the browser's zone is.
+export function formatTimeIst(iso?: string | null): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
+}
+
+// The IST clock time (HH:MM) of an ISO timestamp, for <input type="time">.
+export function timeInputIst(iso?: string | null): string {
+  if (!iso) return '';
+  return new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(11, 16);
+}
+
+export function formatMinutes(minutes: number | null | undefined): string {
+  if (minutes === null || minutes === undefined) return '—';
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+// Weekdays (Mon-Fri) between two YYYY-MM-DD dates inclusive. A preview only: the server computes total_days.
+export function countWeekdays(start: string, end: string): number {
+  if (!start || !end || end < start) return 0;
+  let count = 0;
+  const cursor = new Date(`${start}T00:00:00Z`);
+  const last = new Date(`${end}T00:00:00Z`);
+  while (cursor <= last) {
+    const day = cursor.getUTCDay();
+    if (day !== 0 && day !== 6) count++;
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return count;
+}

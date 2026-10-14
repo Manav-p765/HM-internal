@@ -256,68 +256,7 @@ export interface SalarySlip {
   notes?: string;
 }
 
-export type AttendanceStatus =
-  | 'Present'
-  | 'Working'
-  | 'Late'
-  | 'Half Day'
-  | 'Incomplete'
-  | 'Absent'
-  | 'On Leave';
-
-export type LeaveType =
-  | 'Casual Leave'
-  | 'Sick Leave'
-  | 'Earned Leave'
-  | 'Unpaid Leave'
-  | 'Other';
-
-export type LeaveStatus = 'Pending' | 'Approved' | 'Rejected' | 'Cancelled';
-
-export type DayType = 'Full Day' | 'Half Day';
-
-export type HalfDayPeriod = 'First Half' | 'Second Half';
-
-export interface LeaveRequest {
-  id: string;
-  employeeId: string;
-  employeeName: string;
-  employeeEmail: string;
-  department: Department;
-  leaveType: LeaveType;
-  startDate: string; // YYYY-MM-DD
-  endDate: string; // YYYY-MM-DD
-  dayType: DayType;
-  halfDayPeriod?: HalfDayPeriod;
-  totalDays: number;
-  reason: string;
-  status: LeaveStatus;
-  appliedAt: string; // ISO string
-  reviewedBy?: string;
-  reviewedByRole?: UserRole;
-  reviewedAt?: string; // ISO string
-  reviewerComment?: string;
-  rejectionReason?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface AttendanceRecord {
-  id: string;
-  employeeId: string;
-  employeeName: string;
-  department: Department;
-  date: string; // YYYY-MM-DD
-  punchIn: string; // ISO string UTC
-  punchOut?: string; // ISO string UTC
-  durationMinutes: number; // Calculated elapsed duration in minutes
-  status: AttendanceStatus;
-  isManualCorrection?: boolean;
-  correctionReason?: string;
-  correctedBy?: string;
-  correctedAt?: string;
-  notes?: string;
-}
+// Attendance and leave types live in types/attendance.ts (API shapes).
 
 export interface CompanySettings {
   companyName: string;

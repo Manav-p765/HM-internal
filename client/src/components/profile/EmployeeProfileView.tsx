@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { employeesApi } from '../../api/employees';
+import { attendanceApi } from '../../api/attendance';
 import { ApiError, errorMessage } from '../../api/client';
 import { useApiData } from '../../api/useApiData';
 import { EMPLOYMENT_STATUS_LABEL } from '../../types';
@@ -21,7 +22,7 @@ const inputClass =
 // The signed-in user's own employee record (GET /api/employees/me). Staff may change only their
 // phone number and avatar; everything else is maintained by an admin.
 export const EmployeeProfileView: React.FC = () => {
-  const { currentUser, attendance, showToast } = useApp();
+  const { currentUser, showToast } = useApp();
   const profile = useApiData(() => employeesApi.me(), []);
   const me = profile.data;
 
@@ -31,11 +32,9 @@ export const EmployeeProfileView: React.FC = () => {
   const [fieldErrors, setFieldErrors] = useState<{ phone?: string; avatarUrl?: string }>({});
   const [isSaving, setIsSaving] = useState(false);
 
-  // Attendance is still local (deferred module).
-  const totalShiftsLogged = useMemo(
-    () => (me ? attendance.filter(a => a.employeeId === me.id).length : 0),
-    [attendance, me],
-  );
+  // Own attendance is an employee-role route; other roles have no automatic punch-in.
+  const isEmployee = currentUser.role === 'employee';
+  const month = useApiData(() => (isEmployee ? attendanceApi.myMonth() : Promise.resolve(null)), [isEmployee]);
 
   const startEdit = () => {
     setPhone(me?.phone ?? '');
@@ -206,10 +205,12 @@ export const EmployeeProfileView: React.FC = () => {
                   <span className="text-[11px] text-[#7185A5] block">Designation</span>
                   <span className="font-medium text-[#111827] mt-0.5 block">{me.designation}</span>
                 </div>
-                <div className="p-3 rounded-lg bg-[#F7F9FC] border border-[#DFE6F1]">
-                  <span className="text-[11px] text-[#7185A5] block">Total Shifts Completed</span>
-                  <span className="font-mono font-bold text-[#047857] mt-0.5 block">{totalShiftsLogged} working days</span>
-                </div>
+                {month.data && (
+                  <div className="p-3 rounded-lg bg-[#F7F9FC] border border-[#DFE6F1]">
+                    <span className="text-[11px] text-[#7185A5] block">Days Present This Month</span>
+                    <span className="font-mono font-bold text-[#047857] mt-0.5 block">{month.data.summary.daysPresent} working days</span>
+                  </div>
+                )}
               </div>
             )}
           </Card>

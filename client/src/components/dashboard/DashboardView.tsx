@@ -23,8 +23,13 @@ import {
   UserCheck,
   CheckCircle2,
   FileText,
+  CalendarDays,
+  CalendarCheck,
 } from 'lucide-react';
-import { formatCurrency, formatDate } from '../../utils/formatters';
+import { formatCurrency, formatDate, formatMinutes, formatTimeIst } from '../../utils/formatters';
+import { attendanceApi } from '../../api/attendance';
+import { leavesApi } from '../../api/leaves';
+import { LEAVE_TYPE_LABEL } from '../../types/attendance';
 
 type DateFilterOption = 'this_month' | 'last_month' | 'this_year' | 'all_time';
 
@@ -33,7 +38,6 @@ export const DashboardView: React.FC = () => {
     transactions,
     invoices,
     salaries,
-    attendance,
     settings,
     setIsAddTransactionOpen,
     setIsAddInvoiceOpen,
@@ -42,6 +46,10 @@ export const DashboardView: React.FC = () => {
   const navigate = useNavigate();
   // Admin/manager dashboard: roster from the API (up to 200 for the department breakdown).
   const roster = useApiData(() => employeesApi.list({ limit: 200 }), []);
+  // Today's attendance (IST, from the server) and pending leave requests.
+  const attendanceToday = useApiData(() => attendanceApi.roster(), []);
+  const pendingLeaves = useApiData(() => leavesApi.list({ status: 'pending', limit: 5 }), []);
+  const onLeaveToday = attendanceToday.data?.employees.filter(e => e.status === 'on_leave') ?? [];
   const employees = roster.data?.employees ?? [];
 
   const [dateFilter, setDateFilter] = useState<DateFilterOption>('this_month');
@@ -114,22 +122,19 @@ export const DashboardView: React.FC = () => {
   const totalEmployeesCount = roster.data?.summary.total ?? 0;
   const activeEmployeesCount = roster.data?.summary.active ?? 0;
 
-  // Operational metrics for Manager role
-  const todayStr = new Date().toISOString().split('T')[0];
-  const todayAttendanceRecords = useMemo(() => {
-    return attendance.filter(a => a.date === todayStr);
-  }, [attendance, todayStr]);
-
-  const currentlyWorkingCount = todayAttendanceRecords.filter(r => !r.punchOut).length;
-  const presentTodayCount = todayAttendanceRecords.filter(
-    r => r.punchOut || r.status === 'Working' || r.status === 'Late'
-  ).length;
+  // Operational metrics for Manager role (today's roster from the server)
+  const todayAttendanceRecords = useMemo(
+    () => (attendanceToday.data?.employees ?? []).filter(e => e.record),
+    [attendanceToday.data],
+  );
+  const currentlyWorkingCount = attendanceToday.data?.summary.currentlyWorking ?? 0;
+  const presentTodayCount = attendanceToday.data?.summary.present ?? 0;
+  // People on approved full-day leave are not expected in.
+  const expectedTodayCount = Math.max(0, (attendanceToday.data?.summary.total ?? 0) - onLeaveToday.length);
   const pendingInvoicesCount = invoices.filter(
     i => i.status === 'Sent' || i.status === 'Partially Paid' || i.status === 'Overdue'
   ).length;
-  const attendanceRate = Math.round(
-    (presentTodayCount / Math.max(1, activeEmployeesCount)) * 100
-  );
+  const attendanceRate = Math.round((presentTodayCount / Math.max(1, expectedTodayCount)) * 100);
 
   // Monthly Income vs Expenses breakdown for the last 6 months
   const monthlyBarData = useMemo(() => {
@@ -204,6 +209,53 @@ export const DashboardView: React.FC = () => {
       {/* Task KPIs (from the API) */}
       <TaskKpis title="Tasks across all projects" linkTo="/tasks" />
 
+      {/* Pending leave requests */}
+      {pendingLeaves.data && pendingLeaves.data.summary.pending > 0 && (
+        <Card padding="sm" className="bg-[#B45309]/5 border-[#B45309]/20">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2" data-testid="pending-leaves-banner">
+            <div className="flex items-center gap-2 text-xs text-[#111827]">
+              <CalendarDays className="w-4 h-4 text-[#B45309] shrink-0" />
+              <span>
+                <span className="font-semibold">
+                  {pendingLeaves.data.summary.pending} leave request{pendingLeaves.data.summary.pending === 1 ? '' : 's'}
+                </span>{' '}
+                waiting for review: {pendingLeaves.data.leaves.map(l => l.employeeName).slice(0, 3).join(', ')}
+              </span>
+            </div>
+            <button onClick={() => navigate('/leaves')} className="text-xs font-semibold text-[#5038F5] hover:underline cursor-pointer self-start sm:self-auto">
+              Review leaves &rarr;
+            </button>
+          </div>
+        </Card>
+      )}
+
+      {/* On approved leave today */}
+      <Card padding="md">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3" data-testid="on-leave-card">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-[#5038F5]/10 text-[#5038F5] flex items-center justify-center">
+              <CalendarCheck className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="text-xs font-semibold text-[#7185A5] block">On Approved Leave Today</span>
+              <span className="text-2xl font-mono font-bold text-[#5038F5]">{attendanceToday.data ? onLeaveToday.length : '—'}</span>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {onLeaveToday.map(e => (
+              <span key={e.employeeId} className="text-[11px] px-2 py-1 rounded-md bg-white border border-[#DFE6F1] font-medium text-[#111827]">
+                {e.fullName}
+                {e.leave && <span className="text-[#7185A5]"> · {LEAVE_TYPE_LABEL[e.leave.leaveType]}</span>}
+              </span>
+            ))}
+            {attendanceToday.data && onLeaveToday.length === 0 && <span className="text-xs text-[#7185A5]">Nobody is on leave today.</span>}
+            <button onClick={() => navigate('/attendance')} className="text-[11px] font-semibold text-[#5038F5] hover:underline cursor-pointer ml-2">
+              Attendance &rarr;
+            </button>
+          </div>
+        </div>
+      </Card>
+
       {/* 6 Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {isManager ? (
@@ -236,7 +288,7 @@ export const DashboardView: React.FC = () => {
               </div>
               <div className="mt-2">
                 <span className="text-2xl font-mono font-bold text-[#047857]">
-                  {presentTodayCount} <span className="text-base text-[#7185A5] font-normal">/ {activeEmployeesCount}</span>
+                  {presentTodayCount} <span className="text-base text-[#7185A5] font-normal">/ {expectedTodayCount}</span>
                 </span>
                 <p className="text-[11px] text-[#7185A5] mt-1">
                   Team members punched in for today's shift
@@ -445,7 +497,9 @@ export const DashboardView: React.FC = () => {
                 Live shift monitoring and compliance tracking for active staff members
               </p>
             </div>
-            {/* "Open Full Attendance Roster" link removed while attendance pages are deferred */}
+            <button onClick={() => navigate('/attendance')} className="text-xs font-semibold text-[#5038F5] hover:underline cursor-pointer">
+              Open attendance &rarr;
+            </button>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
@@ -461,7 +515,7 @@ export const DashboardView: React.FC = () => {
                 />
               </div>
               <p className="text-[11px] text-[#7185A5] mt-2">
-                {presentTodayCount} out of {activeEmployeesCount} team members present today
+                {presentTodayCount} out of {expectedTodayCount} expected team members present today
               </p>
             </div>
 
@@ -587,36 +641,21 @@ export const DashboardView: React.FC = () => {
                   No team members clocked in yet today.
                 </div>
               ) : (
-                todayAttendanceRecords.slice(0, 5).map(record => (
-                  <div key={record.id} className="py-3 flex items-center justify-between gap-3">
+                todayAttendanceRecords.slice(0, 5).map(entry => (
+                  <div key={entry.employeeId} className="py-3 flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="text-xs font-semibold text-[#111827] truncate">
-                        {record.employeeName}
-                      </div>
+                      <div className="text-xs font-semibold text-[#111827] truncate">{entry.fullName}</div>
                       <div className="text-[11px] text-[#7185A5] mt-0.5 flex items-center gap-1.5">
-                        <span>{record.department}</span>
+                        <span>{entry.department}</span>
                         <span>·</span>
-                        <span>In: {new Date(record.punchIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span>In: {formatTimeIst(entry.record!.punchIn)}</span>
                       </div>
                     </div>
                     <div className="text-right shrink-0">
-                      <Badge
-                        variant={
-                          record.status === 'Working'
-                            ? 'purple'
-                            : record.status === 'Present'
-                            ? 'success'
-                            : record.status === 'Late'
-                            ? 'warning'
-                            : 'neutral'
-                        }
-                        size="sm"
-                      >
-                        {record.status}
+                      <Badge variant={entry.record!.punchOut ? 'success' : 'purple'} size="sm">
+                        {entry.record!.punchOut ? 'Punched out' : 'Working'}
                       </Badge>
-                      <div className="text-[10px] text-[#7185A5] mt-0.5">
-                        {Math.floor(record.durationMinutes / 60)}h {record.durationMinutes % 60}m
-                      </div>
+                      <div className="text-[10px] text-[#7185A5] mt-0.5">{formatMinutes(entry.record!.workedMinutes)}</div>
                     </div>
                   </div>
                 ))

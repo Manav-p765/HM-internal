@@ -23,6 +23,7 @@ import {
   RequireStaff,
 } from './routes/guards';
 import { ClientPortalLayout } from './components/portal/ClientPortalLayout';
+import { usePresence } from './api/usePresence';
 
 // Pages are split into their own chunks and loaded on first visit.
 const named = <T, K extends keyof T>(load: () => Promise<T>, name: K) =>
@@ -48,7 +49,11 @@ const PortalProjectsView = named(() => import('./components/portal/PortalProject
 const PortalProjectTasksView = named(() => import('./components/portal/PortalProjectsView'), 'PortalProjectTasksView');
 const ClientPortalDashboard = named(() => import('./components/portal/ClientPortalDashboard'), 'ClientPortalDashboard');
 const ClientPortalProfile = named(() => import('./components/portal/ClientPortalProfile'), 'ClientPortalProfile');
-// Deferred (no routes yet): attendance/AdminAttendanceView, attendance/EmployeeAttendanceView, leaves.
+const PortalTeamView = named(() => import('./components/portal/PortalTeamView'), 'PortalTeamView');
+const AdminAttendanceView = named(() => import('./components/attendance/AdminAttendanceView'), 'AdminAttendanceView');
+const EmployeeAttendanceView = named(() => import('./components/attendance/EmployeeAttendanceView'), 'EmployeeAttendanceView');
+const LeaveManagementView = named(() => import('./components/leaves/LeaveManagementView'), 'LeaveManagementView');
+const EmployeeLeaveView = named(() => import('./components/leaves/EmployeeLeaveView'), 'EmployeeLeaveView');
 
 // Dashboard differs by role: staff get their personal workspace.
 const Dashboard: React.FC = () => {
@@ -59,6 +64,9 @@ const Dashboard: React.FC = () => {
 const MainLayout: React.FC = () => {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [globalSearch, setGlobalSearch] = useState('');
+  const { currentUser } = useApp();
+  // Presence heartbeats: employee-role users only, while the tab is visible.
+  usePresence(currentUser.role === 'employee');
 
   return (
     <div className="min-h-screen bg-[#F7F9FC] flex">
@@ -130,6 +138,7 @@ export default function App() {
             <Route index element={<ClientPortalDashboard />} />
             <Route path="projects" element={<PortalProjectsView />} />
             <Route path="projects/:id" element={<PortalProjectTasksView />} />
+            <Route path="team" element={<PortalTeamView />} />
             <Route path="profile" element={<ClientPortalProfile />} />
             <Route path="*" element={<Navigate to="/portal" replace />} />
           </Route>
@@ -153,6 +162,8 @@ export default function App() {
               <Route path="/projects/:id" element={<ProjectsView />} />
               <Route path="/tasks" element={<TasksView />} />
               <Route path="/tasks/:id" element={<TasksView />} />
+              <Route path="/attendance" element={<AdminAttendanceView />} />
+              <Route path="/leaves" element={<LeaveManagementView />} />
             </Route>
 
             <Route element={<RequireRole roles={['employee']} />}>
@@ -160,6 +171,8 @@ export default function App() {
               <Route path="/my/tasks/:id" element={<EmployeeTasksView />} />
               <Route path="/my/projects" element={<EmployeeProjectsView />} />
               <Route path="/my/projects/:id" element={<EmployeeProjectsView />} />
+              <Route path="/my/attendance" element={<EmployeeAttendanceView />} />
+              <Route path="/my/leaves" element={<EmployeeLeaveView />} />
             </Route>
 
             <Route element={<RequireRole roles={['admin']} />}>

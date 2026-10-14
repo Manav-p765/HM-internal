@@ -1,6 +1,6 @@
 import React, { Suspense, useState } from 'react';
 import { NavLink, Outlet } from 'react-router';
-import { Building2, FolderKanban, LayoutDashboard, LogOut, Menu, X } from 'lucide-react';
+import { Building2, FolderKanban, LayoutDashboard, LogOut, Menu, Users, X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { Badge } from '../common/Badge';
 import { Avatar } from '../common/Avatar';
@@ -11,6 +11,7 @@ import { PageLoading } from '../../routes/guards';
 const NAV = [
   { to: '/portal', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" />, end: true },
   { to: '/portal/projects', label: 'My Projects', icon: <FolderKanban className="w-4 h-4" />, end: false },
+  { to: '/portal/team', label: 'Team', icon: <Users className="w-4 h-4" />, end: false },
   { to: '/portal/profile', label: 'Company Profile', icon: <Building2 className="w-4 h-4" />, end: false },
 ];
 

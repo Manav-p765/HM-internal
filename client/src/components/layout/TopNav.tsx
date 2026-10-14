@@ -37,9 +37,6 @@ export const TopNav: React.FC<TopNavProps> = ({
     setIsAddTransactionOpen,
     setIsAddInvoiceOpen,
     setIsAddEmployeeOpen,
-    todayAttendance,
-    punchIn,
-    punchOut,
   } = useApp();
 
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -53,36 +50,12 @@ export const TopNav: React.FC<TopNavProps> = ({
 
   // Context-aware Quick Action button
   const renderQuickAction = () => {
-    // Employee: Direct punch in/out or attendance shortcut
+    // Employee: punch-in is automatic at sign-in; punch-out lives on the dashboard and attendance page.
     if (currentUser.role === 'employee') {
-      if (!todayAttendance) {
-        return (
-          <Button
-            variant="primary"
-            size="sm"
-            icon={<Clock className="w-3.5 h-3.5" />}
-            onClick={() => punchIn()}
-          >
-            Punch In
-          </Button>
-        );
-      }
-      if (!todayAttendance.punchOut) {
-        return (
-          <Button
-            variant="outline"
-            size="sm"
-            icon={<Clock className="w-3.5 h-3.5 text-[#E11D48]" />}
-            onClick={() => punchOut()}
-          >
-            Punch Out
-          </Button>
-        );
-      }
+      if (pathname.startsWith('/my/attendance')) return null;
       return (
-        // Attendance pages are deferred, so this is a status chip rather than a link.
-        <Button variant="secondary" size="sm" disabled icon={<Clock className="w-3.5 h-3.5 text-[#047857]" />}>
-          Shift complete
+        <Button variant="outline" size="sm" icon={<Clock className="w-3.5 h-3.5" />} onClick={() => navigate('/my/attendance')}>
+          My Attendance
         </Button>
       );
     }

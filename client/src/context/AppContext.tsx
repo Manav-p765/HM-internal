@@ -11,7 +11,6 @@ import {
   ActivityLog,
   AuditLog,
   AuditActionType,
-  AttendanceRecord,
 } from '../types';
 import { StorageService } from '../services/storage';
 import { useAuth } from './AuthContext';
@@ -55,13 +54,6 @@ interface AppContextType {
   salarySlips: SalarySlip[];
   mySalarySlips: SalarySlip[];
 
-  // Attendance
-  attendance: AttendanceRecord[];
-  todayAttendance: AttendanceRecord | null;
-  punchIn: () => { success: boolean; error?: string };
-  punchOut: () => { success: boolean; error?: string };
-  correctAttendance: (id: string, punchIn: string, punchOut: string | undefined, reason: string) => { success: boolean; error?: string };
-
   // Audit Logs & Accountability
   auditLogs: AuditLog[];
   activityLogs: ActivityLog[];
@@ -95,7 +87,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [invoices, setInvoices] = useState<Invoice[]>(StorageService.getInvoices());
   const [salaries, setSalaries] = useState<SalaryRecord[]>(StorageService.getSalaries());
   const [salarySlips, setSalarySlips] = useState<SalarySlip[]>(StorageService.getSalarySlips());
-  const [attendance, setAttendance] = useState<AttendanceRecord[]>(StorageService.getAttendance());
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(StorageService.getActivityLogs());
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(StorageService.getAuditLogs());
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -111,7 +102,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setInvoices(StorageService.getInvoices());
     setSalaries(StorageService.getSalaries());
     setSalarySlips(StorageService.getSalarySlips());
-    setAttendance(StorageService.getAttendance());
     setActivityLogs(StorageService.getActivityLogs());
     setAuditLogs(StorageService.getAuditLogs());
   };
@@ -150,64 +140,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     name: currentUser.name,
     email: currentUser.email,
     role: currentUser.role,
-  };
-
-  // Attendance Handlers
-  const todayAttendance = useMemo(() => {
-    if (!currentUser.employeeId) return null;
-    return StorageService.getTodayAttendance(currentUser.employeeId);
-  }, [currentUser.employeeId, attendance]);
-
-  const punchIn = () => {
-    if (!currentUser.employeeId) {
-      showToast('error', 'Your user account is not linked to an employee record.');
-      return { success: false, error: 'No linked employee record' };
-    }
-    const res = StorageService.punchIn({
-      id: currentUser.employeeId,
-      fullName: currentUser.name,
-      department: currentUser.department || '',
-    });
-    if (res.success) {
-      refreshData();
-      showToast('success', `Punched in successfully at ${new Date().toLocaleTimeString()}! Have a great day.`);
-      return { success: true };
-    }
-    showToast('error', res.error || 'Failed to punch in');
-    return { success: false, error: res.error };
-  };
-
-  const punchOut = () => {
-    if (!currentUser.employeeId) {
-      showToast('error', 'Your user account is not linked to an employee record.');
-      return { success: false, error: 'No linked employee record' };
-    }
-    const res = StorageService.punchOut(currentUser.employeeId);
-    if (res.success && res.record) {
-      refreshData();
-      const h = Math.floor(res.record.durationMinutes / 60);
-      const m = res.record.durationMinutes % 60;
-      showToast('success', `Punched out successfully. Total workday duration: ${h}h ${m}m.`);
-      return { success: true };
-    }
-    showToast('error', res.error || 'Failed to punch out');
-    return { success: false, error: res.error };
-  };
-
-  const correctAttendance = (
-    id: string,
-    punchInTime: string,
-    punchOutTime: string | undefined,
-    reason: string
-  ) => {
-    const res = StorageService.correctAttendance(id, punchInTime, punchOutTime, reason, currentUser.name);
-    if (res.success) {
-      refreshData();
-      showToast('success', 'Attendance record corrected and logged in audit history.');
-      return { success: true };
-    }
-    showToast('error', res.error || 'Correction failed');
-    return { success: false, error: res.error };
   };
 
   // Salary Slip Handlers
@@ -361,11 +293,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         publishSalarySlip,
         salarySlips,
         mySalarySlips,
-        attendance,
-        todayAttendance,
-        punchIn,
-        punchOut,
-        correctAttendance,
         auditLogs,
         activityLogs,
         logAuditAction,
