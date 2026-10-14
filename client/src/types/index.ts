@@ -1,4 +1,5 @@
-export type UserRole = 'admin' | 'manager' | 'employee';
+export type UserRole = 'admin' | 'manager' | 'employee' | 'client';
+export type StaffRole = Exclude<UserRole, 'client'>;
 
 export interface UserProfile {
   id: string;
@@ -99,6 +100,48 @@ export interface Invoice {
   payments: InvoicePayment[];
   createdAt: string;
   updatedAt: string;
+}
+
+// ---- Client companies (shapes returned by /api/clients) ----
+
+export type ClientStatus = 'active' | 'inactive';
+
+// A portal login belonging to a client company.
+export interface PortalUser {
+  id: string;
+  email: string;
+  status: 'active' | 'disabled';
+  mustChangePassword: boolean;
+  lastLoginAt: string | null;
+  createdAt: string;
+}
+
+export interface Client {
+  id: string;
+  companyName: string;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  address: string | null;
+  gstin: string | null;
+  status: ClientStatus;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  portalUsers: number;
+  activePortalUsers: number;
+  users?: PortalUser[]; // detail (GET /api/clients/:id) only
+}
+
+// GET /api/clients/me: what a client user sees of their own company (no notes, no GSTIN).
+export interface MyClientCompany {
+  id: string;
+  companyName: string;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  address: string | null;
+  status: ClientStatus;
 }
 
 // ---- Employees (shapes returned by /api/employees) ----

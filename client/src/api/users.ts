@@ -10,6 +10,8 @@ export interface ManagedUser {
   lastLoginAt: string | null;
   createdAt: string;
   employee: { id: string; code: string; name: string } | null;
+  clientId: string | null;
+  client: { id: string; companyName: string; status: 'active' | 'inactive' } | null;
 }
 
 // An employee record that has no login yet.
@@ -26,7 +28,8 @@ export const usersApi = {
 
   employeeOptions: () => api<{ employees: EmployeeOption[] }>('/users/employee-options').then(r => r.employees),
 
-  create: (input: { email: string; role: UserRole; employeeId?: string | null }) =>
+  // role 'client' requires clientId; other roles must not send one. Managers may create client users only.
+  create: (input: { email: string; role: UserRole; employeeId?: string | null; clientId?: string | null }) =>
     api<{ user: ManagedUser }>('/users', { method: 'POST', body: input }).then(r => r.user),
 
   update: (id: string, changes: { role?: UserRole; status?: 'active' | 'disabled' }) =>

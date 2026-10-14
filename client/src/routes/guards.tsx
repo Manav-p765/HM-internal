@@ -45,6 +45,30 @@ export const RequireRole: React.FC<{ roles: UserRole[] }> = ({ roles }) => {
   return allowed ? <Outlet /> : <Navigate to="/dashboard" replace />;
 };
 
+// Where a signed-in user starts: client (portal) users and staff live in separate shells.
+export const homeFor = (role: string) => (role === 'client' ? '/portal' : '/dashboard');
+
+// Only return to a remembered page that belongs to the user's own shell.
+function safeReturnPath(from: string | undefined, role: string): string {
+  if (!from) return homeFor(role);
+  const isPortalPath = from === '/portal' || from.startsWith('/portal/');
+  return isPortalPath === (role === 'client') ? from : homeFor(role);
+}
+
+// Client users only (the portal). Staff who open a portal URL go to their dashboard.
+export const RequireClient: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
+  if (user && user.role !== 'client') return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+};
+
+// Staff only. A client typing any staff URL lands on the portal dashboard.
+export const RequireStaff: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
+  if (user?.role === 'client') return <Navigate to="/portal" replace />;
+  return <>{children}</>;
+};
+
 // Pages for signed-out visitors (login, forgot password). A signed-in user is sent on.
 export const RedirectIfSignedIn: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { status, user } = useAuth();
@@ -52,7 +76,7 @@ export const RedirectIfSignedIn: React.FC<{ children: React.ReactNode }> = ({ ch
   if (status === 'loading') return <PageLoading fullScreen />;
   if (user) {
     const from = (location.state as { from?: string } | null)?.from;
-    return <Navigate to={user.mustChangePassword ? '/change-password' : from || '/dashboard'} replace />;
+    return <Navigate to={user.mustChangePassword ? '/change-password' : safeReturnPath(from, user.role)} replace />;
   }
   return <>{children}</>;
 };
@@ -62,6 +86,6 @@ export const RequirePasswordChange: React.FC<{ children: React.ReactNode }> = ({
   const { status, user } = useAuth();
   if (status === 'loading') return <PageLoading fullScreen />;
   if (!user) return <Navigate to="/login" replace />;
-  if (!user.mustChangePassword) return <Navigate to="/dashboard" replace />;
+  if (!user.mustChangePassword) return <Navigate to={homeFor(user.role)} replace />;
   return <>{children}</>;
 };

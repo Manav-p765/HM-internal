@@ -7,6 +7,9 @@ export interface SessionUser {
   email: string;
   role: UserRole;
   employeeId: string | null;
+  // Client users only: their company.
+  clientId: string | null;
+  clientName: string | null;
   mustChangePassword: boolean;
   // From the linked employee record (null when the account isn't linked to one).
   name: string | null;

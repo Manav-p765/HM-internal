@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Mail, Send, UserPlus, Users } from 'lucide-react';
+import { Send, UserPlus, Users } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { usersApi, ManagedUser, EmployeeOption } from '../../api/users';
+import { usersApi, ManagedUser } from '../../api/users';
+import { AddUserModal } from '../users/AddUserModal';
 import { errorMessage } from '../../api/client';
-import { UserRole } from '../../types';
+import { StaffRole, UserRole } from '../../types';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
@@ -11,11 +12,12 @@ import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { EmptyState } from '../common/EmptyState';
 
-const ROLES: { value: UserRole; label: string }[] = [
+// Role changes are between staff roles only; a client user stays a client (their company link can't be changed).
+const STAFF_ROLES: { value: StaffRole; label: string }[] = [
   { value: 'employee', label: 'Employee' },
   { value: 'manager', label: 'Manager' },
   { value: 'admin', label: 'Admin' },
-];
+]
 
 const formatDateTime = (iso: string) =>
   new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -63,7 +65,7 @@ export const UsersPanel: React.FC = () => {
     }
   };
 
-  const changeRole = (user: ManagedUser, role: UserRole) =>
+  const changeRole = (user: ManagedUser, role: StaffRole) =>
     runAction(user, () => usersApi.update(user.id, { role }), `${user.email} is now ${role === 'admin' ? 'an admin' : `a ${role}`}`);
 
   const enable = (user: ManagedUser) =>
@@ -115,7 +117,7 @@ export const UsersPanel: React.FC = () => {
               <thead className="bg-[#F7F9FC] text-[11px] font-semibold text-[#7185A5] uppercase tracking-wider">
                 <tr>
                   <th className="px-4 py-3">User</th>
-                  <th className="px-4 py-3">Linked employee</th>
+                  <th className="px-4 py-3">Linked to</th>
                   <th className="px-4 py-3">Role</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Last sign-in</th>
@@ -133,7 +135,12 @@ export const UsersPanel: React.FC = () => {
                         {isSelf && <span className="ml-2 text-[10px] text-[#7185A5]">(you)</span>}
                       </td>
                       <td className="px-4 py-3 text-[#475569]">
-                        {user.employee ? (
+                        {user.client ? (
+                          <>
+                            {user.client.companyName}
+                            <span className="ml-1.5 text-[10px] text-[#7185A5]">client portal</span>
+                          </>
+                        ) : user.employee ? (
                           <>
                             {user.employee.name}
                             <span className="ml-1.5 font-mono text-[10px] text-[#7185A5]">{user.employee.code}</span>
@@ -143,20 +150,24 @@ export const UsersPanel: React.FC = () => {
                         )}
                       </td>
                       <td className="px-4 py-3">
+                        {user.role === 'client' ? (
+                          <Badge variant="info" size="sm">Client</Badge>
+                        ) : (
                         <select
                           aria-label={`Role for ${user.email}`}
                           value={user.role}
                           disabled={isSelf || isBusy}
                           title={isSelf ? 'You cannot change your own role' : undefined}
-                          onChange={e => changeRole(user, e.target.value as UserRole)}
+                          onChange={e => changeRole(user, e.target.value as StaffRole)}
                           className="text-xs px-2 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5] disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
                         >
-                          {ROLES.map(r => (
+                          {STAFF_ROLES.map(r => (
                             <option key={r.value} value={r.value}>
                               {r.label}
                             </option>
                           ))}
                         </select>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         {user.status === 'disabled' ? (
@@ -230,118 +241,5 @@ export const UsersPanel: React.FC = () => {
         isDestructive={pendingAction?.kind === 'disable'}
       />
     </div>
-  );
-};
-
-interface AddUserModalProps {
-  onClose: () => void;
-  onCreated: (user: ManagedUser) => void;
-}
-
-const AddUserModal: React.FC<AddUserModalProps> = ({ onClose, onCreated }) => {
-  const [email, setEmail] = useState('');
-  const [role, setRole] = useState<UserRole>('employee');
-  const [employeeId, setEmployeeId] = useState('');
-  const [employeeOptions, setEmployeeOptions] = useState<EmployeeOption[]>([]);
-  const [error, setError] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
-
-  useEffect(() => {
-    // The link is optional, so a failure to load the list only leaves the dropdown empty.
-    usersApi.employeeOptions().then(setEmployeeOptions).catch(() => setEmployeeOptions([]));
-  }, []);
-
-  const selectEmployee = (id: string) => {
-    setEmployeeId(id);
-    const employee = employeeOptions.find(e => e.id === id);
-    if (employee && !email.trim()) setEmail(employee.workEmail);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setIsSaving(true);
-    try {
-      onCreated(await usersApi.create({ email: email.trim(), role, employeeId: employeeId || null }));
-    } catch (err) {
-      setError(errorMessage(err));
-      setIsSaving(false);
-    }
-  };
-
-  const fieldClass =
-    'w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]';
-
-  return (
-    <Modal
-      isOpen
-      onClose={onClose}
-      title="Add user"
-      description="A temporary password is generated and emailed to this address."
-      maxWidth="sm"
-    >
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {error && (
-          <div role="alert" className="p-3 rounded-lg bg-[#E11D48]/10 border border-[#E11D48]/20 text-xs text-[#E11D48]">
-            {error}
-          </div>
-        )}
-
-        <div>
-          <label htmlFor="add-user-employee" className="block text-xs font-semibold text-[#111827] mb-1">
-            Linked employee <span className="font-normal text-[#7185A5]">(optional)</span>
-          </label>
-          <select id="add-user-employee" value={employeeId} onChange={e => selectEmployee(e.target.value)} className={fieldClass}>
-            <option value="">Not linked to an employee record</option>
-            {employeeOptions.map(employee => (
-              <option key={employee.id} value={employee.id}>
-                {employee.name} ({employee.code})
-              </option>
-            ))}
-          </select>
-          <p className="text-[11px] text-[#7185A5] mt-1">Only employees without a login are listed.</p>
-        </div>
-
-        <div>
-          <label htmlFor="add-user-email" className="block text-xs font-semibold text-[#111827] mb-1">
-            Work email
-          </label>
-          <div className="relative">
-            <Mail className="w-4 h-4 text-[#7185A5] absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              id="add-user-email"
-              type="email"
-              required
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              placeholder="name@hybridmonks.com"
-              className={`${fieldClass} pl-9`}
-            />
-          </div>
-        </div>
-
-        <div>
-          <label htmlFor="add-user-role" className="block text-xs font-semibold text-[#111827] mb-1">
-            Role
-          </label>
-          <select id="add-user-role" value={role} onChange={e => setRole(e.target.value as UserRole)} className={fieldClass}>
-            {ROLES.map(r => (
-              <option key={r.value} value={r.value}>
-                {r.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={isSaving}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" size="sm" disabled={isSaving}>
-            {isSaving ? 'Creating...' : 'Create user and email credentials'}
-          </Button>
-        </div>
-      </form>
-    </Modal>
   );
 };

@@ -131,7 +131,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Straight from the server session; name, designation, department and avatar come from the linked
   // employee record (null when the account isn't linked to one).
   const currentUser: UserProfile = useMemo(() => {
-    const roleTitle = { admin: 'Administrator', manager: 'Manager', employee: 'Team Member' }[user.role];
+    const roleTitle = { admin: 'Administrator', manager: 'Manager', employee: 'Team Member', client: 'Client' }[user.role];
     return {
       id: user.id,
       name: user.name || user.email.split('@')[0],

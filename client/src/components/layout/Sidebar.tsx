@@ -46,6 +46,7 @@ function getNavItems(role: UserRole): NavItem[] {
       { to: '/employees', label: 'Employees', icon: <Users className="w-4 h-4" /> },
       { to: '/team', label: 'Team Directory', icon: <Contact className="w-4 h-4" /> },
       { to: '/invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
+      { to: '/clients', label: 'Clients', icon: <Building2 className="w-4 h-4" /> },
       { to: '/reports', label: 'Reports', icon: <BarChart3 className="w-4 h-4" /> },
     ];
   }
@@ -53,6 +54,7 @@ function getNavItems(role: UserRole): NavItem[] {
     { to: '/dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
     { to: '/accounting', label: 'Accounting', icon: <WalletCards className="w-4 h-4" /> },
     { to: '/invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
+    { to: '/clients', label: 'Clients', icon: <Building2 className="w-4 h-4" /> },
     { to: '/employees', label: 'Employees', icon: <Users className="w-4 h-4" /> },
     // 'end' so /salary/slips (own payslips) doesn't also light up Salary Management
     { to: '/salary', label: 'Salary Management', icon: <Banknote className="w-4 h-4" />, end: true },

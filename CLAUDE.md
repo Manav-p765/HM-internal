@@ -64,6 +64,8 @@ The app started as a client-only prototype storing everything in localStorage. A
 - `RequireAuth` (→ `/login` with `state.from`, → `/change-password` while `mustChangePassword`), `RequireRole roles={[...]}` (→ `/dashboard` + toast), `RedirectIfSignedIn` for `/login` and `/forgot-password`.
 - Detail views are routes that open a modal over the list (`/employees/:id`, `/invoices/:id`); the modal loads its own record so deep links work.
 - Sidebar items are role-filtered `NavLink`s in `components/layout/Sidebar.tsx` (cosmetic; the server is the guard). Attendance and leaves have no routes yet (code kept, deferred).
+- **Two shells:** staff use `MainLayout` (wrapped in `RequireStaff` + `AppProvider`); `client` users use `/portal` (`ClientPortalLayout`, wrapped in `RequireClient`, no `AppProvider`, so no staff/localStorage data is ever loaded for them). A client opening any staff URL lands on `/portal`; staff opening `/portal` land on `/dashboard`. Login return paths are only honoured within the user's own shell (`safeReturnPath` in `routes/guards.tsx`).
+- Creating logins: `components/users/AddUserModal.tsx` (shared by Settings > Users and the client detail panel; managers only get the client role).
 - `currentUser` (AppContext) comes from the session (`/api/auth/me`, which includes the linked employee's name, designation, department, avatarUrl); `currentUser.employeeId` is the employee uuid.
 
 ### Auth and sessions (`server/src/middleware/auth.ts`, `server/src/session.ts`)

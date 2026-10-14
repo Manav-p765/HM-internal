@@ -13,7 +13,16 @@ import { ToastContainer } from './components/common/ToastContainer';
 import { AuthPage } from './components/auth/AuthPage';
 import { ResetPasswordPage } from './components/auth/ResetPasswordPage';
 import { ChangePasswordPage } from './components/auth/ChangePasswordPage';
-import { PageLoading, RedirectIfSignedIn, RequireAuth, RequirePasswordChange, RequireRole } from './routes/guards';
+import {
+  PageLoading,
+  RedirectIfSignedIn,
+  RequireAuth,
+  RequireClient,
+  RequirePasswordChange,
+  RequireRole,
+  RequireStaff,
+} from './routes/guards';
+import { ClientPortalLayout } from './components/portal/ClientPortalLayout';
 
 // Pages are split into their own chunks and loaded on first visit.
 const named = <T, K extends keyof T>(load: () => Promise<T>, name: K) =>
@@ -30,6 +39,9 @@ const ReportsView = named(() => import('./components/reports/ReportsView'), 'Rep
 const TeamDirectoryView = named(() => import('./components/directory/TeamDirectoryView'), 'TeamDirectoryView');
 const SettingsView = named(() => import('./components/settings/SettingsView'), 'SettingsView');
 const EmployeeProfileView = named(() => import('./components/profile/EmployeeProfileView'), 'EmployeeProfileView');
+const ClientsView = named(() => import('./components/clients/ClientsView'), 'ClientsView');
+const ClientPortalDashboard = named(() => import('./components/portal/ClientPortalDashboard'), 'ClientPortalDashboard');
+const ClientPortalProfile = named(() => import('./components/portal/ClientPortalProfile'), 'ClientPortalProfile');
 // Deferred (no routes yet): attendance/AdminAttendanceView, attendance/EmployeeAttendanceView, leaves.
 
 // Dashboard differs by role: staff get their personal workspace.
@@ -74,17 +86,29 @@ const MainLayout: React.FC = () => {
   );
 };
 
-// Everything behind sign-in. Keyed by user so nothing from a previous sign-in survives in memory.
+// The staff app. Keyed by user so nothing from a previous sign-in survives in memory.
+// Client users never get here (RequireStaff sends them to the portal), so staff data is never loaded for them.
 const SignedInApp: React.FC = () => {
   const { user } = useAuth();
   return (
     <RequireAuth>
-      <AppProvider key={user?.id}>
-        <MainLayout />
-      </AppProvider>
+      <RequireStaff>
+        <AppProvider key={user?.id}>
+          <MainLayout />
+        </AppProvider>
+      </RequireStaff>
     </RequireAuth>
   );
 };
+
+// The client portal shell.
+const ClientPortal: React.FC = () => (
+  <RequireAuth>
+    <RequireClient>
+      <ClientPortalLayout />
+    </RequireClient>
+  </RequireAuth>
+);
 
 export default function App() {
   return (
@@ -95,6 +119,12 @@ export default function App() {
           <Route path="/forgot-password" element={<RedirectIfSignedIn><AuthPage mode="forgot" /></RedirectIfSignedIn>} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/change-password" element={<RequirePasswordChange><ChangePasswordPage /></RequirePasswordChange>} />
+
+          <Route path="/portal" element={<ClientPortal />}>
+            <Route index element={<ClientPortalDashboard />} />
+            <Route path="profile" element={<ClientPortalProfile />} />
+            <Route path="*" element={<Navigate to="/portal" replace />} />
+          </Route>
 
           <Route element={<SignedInApp />}>
             <Route index element={<Navigate to="/dashboard" replace />} />
@@ -109,6 +139,8 @@ export default function App() {
               <Route path="/invoices" element={<InvoicesView />} />
               <Route path="/invoices/:id" element={<InvoicesView />} />
               <Route path="/reports" element={<ReportsView />} />
+              <Route path="/clients" element={<ClientsView />} />
+              <Route path="/clients/:id" element={<ClientsView />} />
             </Route>
 
             <Route element={<RequireRole roles={['admin']} />}>
