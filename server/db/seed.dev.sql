@@ -26,6 +26,16 @@ INSERT INTO users (id, email, password_hash, role, employee_id, status) VALUES
   ('00000000-0000-4000-a000-000000000003', 'employee1@example.test', '$2b$10$1Oz/QhsWJBXzDI5l1KQLIuIHO1qX3AskdqHU.NvBn1n1JHcXSaGWW', 'employee', '00000000-0000-4000-a000-000000000102', 'active'),
   ('00000000-0000-4000-a000-000000000004', 'employee2@example.test', '$2b$10$1Oz/QhsWJBXzDI5l1KQLIuIHO1qX3AskdqHU.NvBn1n1JHcXSaGWW', 'employee', '00000000-0000-4000-a000-000000000103', 'active');
 
+-- Client companies and their portal logins (role 'client'; same dev password devpass123)
+INSERT INTO clients (id, company_name, contact_name, contact_email, contact_phone, address, gstin, notes) VALUES
+  ('00000000-0000-4000-a000-000000000501', 'Acme Corp (Fake)',  'Wile E. Fake',  'billing@acme.example.test',    '+00 00000 00501', '42 Sample Road, Faketown',  '00BBBBB0000B0Z0', 'Dev seed client with one portal login'),
+  ('00000000-0000-4000-a000-000000000502', 'Globex Ltd (Fake)', 'Hank Placeholder', 'accounts@globex.example.test', '+00 00000 00502', '7 Demo Lane, Mockville', '00CCCCC0000C0Z0', 'Dev seed client with two portal logins');
+
+INSERT INTO users (id, email, password_hash, role, client_id, status) VALUES
+  ('00000000-0000-4000-a000-000000000601', 'client.acme@example.test',    '$2b$10$1Oz/QhsWJBXzDI5l1KQLIuIHO1qX3AskdqHU.NvBn1n1JHcXSaGWW', 'client', '00000000-0000-4000-a000-000000000501', 'active'),
+  ('00000000-0000-4000-a000-000000000602', 'client.globex1@example.test', '$2b$10$1Oz/QhsWJBXzDI5l1KQLIuIHO1qX3AskdqHU.NvBn1n1JHcXSaGWW', 'client', '00000000-0000-4000-a000-000000000502', 'active'),
+  ('00000000-0000-4000-a000-000000000603', 'client.globex2@example.test', '$2b$10$1Oz/QhsWJBXzDI5l1KQLIuIHO1qX3AskdqHU.NvBn1n1JHcXSaGWW', 'client', '00000000-0000-4000-a000-000000000502', 'active');
+
 -- Invoices: one paid, one sent + partially paid, one draft
 INSERT INTO invoices (id, invoice_number, client_name, client_email, client_address, client_gstin, invoice_date, due_date, subtotal, tax_rate, tax_amount, total_amount, status, notes, created_by) VALUES
   ('00000000-0000-4000-a000-000000000201', 'INV-DEV-001', 'Acme Corp (Fake)',   'billing@acme.example.test',   '42 Sample Road, Faketown', '00BBBBB0000B0Z0', '2026-08-01', '2026-08-16', 100000.00, 18, 18000.00, 118000.00, 'paid',  NULL,                 '00000000-0000-4000-a000-000000000001'),

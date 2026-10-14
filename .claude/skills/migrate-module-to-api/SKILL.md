@@ -13,7 +13,7 @@ Argument: the domain to move (e.g. `invoices`, `transactions`, `salaries`, `atte
 | Layer | Reference file |
 |---|---|
 | Server route | `server/src/routes/employees.ts` |
-| Auth / roles | `server/src/middleware/auth.ts` (`requireAuth`, `requireRole`, `deleteUserSessions`) |
+| Auth / roles | `server/src/middleware/access.ts` (`createRouter`, `mountRouter`, `STAFF`, `clientScope`) and `server/src/middleware/auth.ts` (`deleteUserSessions`) |
 | Errors / validation | `server/src/middleware/errors.ts` (`HttpError`, `parseBody`) |
 | Audit | `server/src/services/audit.ts` (`audit()`, the `AuditAction` union) |
 | Tests | `server/test/employees.test.ts` (role matrix + behaviour) |
@@ -35,7 +35,7 @@ Only if a column or table is genuinely missing. Use `/create-migration`: next nu
 
 ## 3. Server route: `server/src/routes/<module>.ts`
 
-- **Every route declares its roles.** `requireAuth` on the router, plus an explicit `requireRole(...)` on each route, including "any signed-in staff" routes. Deny by default: a route with no role list is a bug. Never use `requireSession` (that is only for `/auth/me`, `/auth/logout`, `/auth/change-password`).
+- **Every route declares its roles.** Build the router with `createRouter()` and give each route its access: `router.get('/', ['admin', 'manager'], handler)` (or `STAFF` for any staff). Deny by default: there is no way to add a route without one, and `server/test/route-matrix.test.ts` fails if a route bypasses it. Mount with `mountRouter(api, '/<module>', router)` in `app.ts`. `'session'` access is only for `/auth/me`, `/auth/logout`, `/auth/change-password`.
 - If client-role scoping exists (`req.user.clientId`), every route must also state what a client may see, and the route-matrix test must stay green.
 - Data owned by the caller (`/me`-style routes) is selected by `req.user.employeeId` / `req.user.clientId`, never by an id from the body or URL.
 - Validate every body with a zod schema through `parseBody(schema, req.body)` (trim strings, bound lengths, `z.enum` for statuses, dates as `YYYY-MM-DD`). Query strings: `schema.safeParse(req.query)`. Ids: `z.uuid()`, invalid → 404. Use `.strict()` where extra fields must be rejected (as `PATCH /employees/me` does).
@@ -47,7 +47,7 @@ Only if a column or table is genuinely missing. Use `/create-migration`: next nu
 - Responses wrap the payload (`{ invoices, total, limit, offset }`, `{ invoice }`); 201 on create. Lists take `search`, filters, `limit` (default 50, max 200) and `offset`.
 - **Soft delete where data has history:** `POST /:id/deactivate` and `/:id/reactivate`, no `DELETE` route. Deactivation also handles linked logins (disable + `deleteUserSessions`) where relevant.
 - **`audit()` after every mutation**: `await audit(req, { action: '<module>.<verb>', entityType, entityId, metadata })`. Add the action strings to the `AuditAction` union. Metadata holds changed **field names**, never values for secrets or money (no salaries, passwords, tokens).
-- Mount it in `server/src/app.ts` next to the existing routers.
+- Mount it in `server/src/app.ts` with `mountRouter()` next to the existing routers, and keep `npm test` green (the route matrix covers it automatically).
 
 ## 4. Tests: `server/test/<module>.test.ts` (run in the `hm_test` schema)
 

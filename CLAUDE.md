@@ -25,7 +25,8 @@ npm run create-admin -w server -- --email you@example.com   # create an admin (h
 
 - Never edit an applied migration; always add a new numbered one (a hook blocks edits to existing files in `server/db/migrations/`).
 - Money is `NUMERIC(14,2)` in Postgres and travels as a string, never a JS float.
-- Roles are enforced on the server (`requireAuth` + `requireRole` on every route); UI checks are cosmetic only.
+- **Every route declares its roles** (deny by default): routes are added only through `createRouter()` from `server/src/middleware/access.ts` — `router.get(path, access, ...handlers)` where `access` is `'public'`, `'session'` (only `/auth/me`, `/auth/logout`, `/auth/change-password`) or a role list such as `['admin', 'manager']` or `STAFF` — and routers are mounted with `mountRouter()`. `server/test/route-matrix.test.ts` walks every registered route and fails if one bypasses this, if a client session can reach anything outside its allowlist, or if a non-public route answers an anonymous caller. UI checks are cosmetic only.
+- **Client scoping:** a `client` user sees only their own company. Client-scoped queries take the company from `clientScope(req)` (= `req.user.clientId`), never from the body, query string or URL. Clients never see finance (invoices, salary, ledger, reports), employee records or other clients. Adding a client-visible route means adding it to the allowlist in `route-matrix.test.ts` on purpose.
 - No passwords, temporary passwords or tokens in logs, API responses or audit metadata. The only exception is the dev mail printout in `server/src/services/mail.ts`.
 - Do not add new npm libraries without asking first.
 - Don't edit `.env` or `package-lock.json` (also blocked by a hook).
@@ -48,7 +49,7 @@ npm run create-admin -w server -- --email you@example.com   # create an admin (h
 
 The app started as a client-only prototype storing everything in localStorage. Auth, user management and **employees** are now server-side; the other domains (invoices, transactions, salaries, salary slips, attendance, leaves, settings, activity/audit logs) still live in `client/src/services/storage.ts` (`StorageService`) and are wired through `client/src/context/AppContext.tsx`. Each phase moves one domain to the server. **Employees is the reference pattern** to copy:
 
-- **Server route**: `server/src/routes/employees.ts` — `requireAuth` on the whole router, `requireRole(...)` per route, zod schemas validated via `parseBody()` (unknown keys are stripped; use `.strict()` where extra fields must be rejected), ids parsed with `z.uuid()` (invalid → 404), `HttpError(status, message, CODE)` for failures, `withTransaction()` for multi-statement writes with `FOR UPDATE` locking, `audit(req, {...})` after successful mutations (field names, never values like salaries). Unique violations (`23505`) become 409s. Static paths (`/directory`, `/me`) are declared before `/:id`. Mounted in `server/src/app.ts`.
+- **Server route**: `server/src/routes/employees.ts` — `createRouter()` with an explicit access list on every route, zod schemas validated via `parseBody()` (unknown keys are stripped; use `.strict()` where extra fields must be rejected), ids parsed with `z.uuid()` (invalid → 404), `HttpError(status, message, CODE)` for failures, `withTransaction()` for multi-statement writes with `FOR UPDATE` locking, `audit(req, {...})` after successful mutations (field names, never values like salaries). Unique violations (`23505`) become 409s. Static paths (`/directory`, `/me`) are declared before `/:id`. Mounted in `server/src/app.ts`.
 - **Role-scoped fields**: fields only admins may see (salary: `monthlySalary`, `paymentMethod`) are deleted from the response object for other roles, not nulled (`forViewer()` in `routes/employees.ts`).
 - **Never deleted**: records are deactivated/reactivated; there is no DELETE route. Codes like `EMP-001` are assigned by the server (max+1 under `pg_advisory_xact_lock`).
 - **API shapes are the client types**: `client/src/types/index.ts` mirrors the JSON (camelCase, lowercase status values like `'on_leave'` with a `*_LABEL` map for display, money as decimal strings). Don't map to old prototype shapes.
@@ -68,8 +69,8 @@ The app started as a client-only prototype storing everything in localStorage. A
 ### Auth and sessions (`server/src/middleware/auth.ts`, `server/src/session.ts`)
 
 - Cookie sessions stored in Postgres (`sessions` table via connect-pg-simple). The user is reloaded from the DB on every request, so disabling a user or changing a role takes effect immediately; `deleteUserSessions()` signs a user out everywhere.
-- `requireSession` = signed in. `requireAuth` = `requireSession` + the forced-password-change gate. Only `/auth/me`, `/auth/logout`, `/auth/change-password` use `requireSession` directly; **every other route must use `requireAuth`** and a `requireRole`.
-- Roles: `admin`, `manager`, `employee`, enforced only by the server.
+- `requireSession` = signed in. `requireAuth` = `requireSession` + the forced-password-change gate. Routes don't use these directly: `createRouter()` applies them from the declared access (`'session'` → `requireSession`; a role list → `requireAuth` + `requireRole`).
+- Roles: `admin`, `manager`, `employee`, `client` (portal users of a client company, `users.client_id`), enforced only by the server. A client user of an inactive company is treated as signed out (`loadSessionUser`) and can't log in. Managers may create and manage client users only.
 - `checkOrigin` (`server/src/middleware/security.ts`) rejects mutating requests from foreign origins (CSRF defence alongside SameSite=Lax). Rate limiters live there too and are skipped in tests.
 - Invite-only accounts: admins create users, the server emails a temporary password, `must_change_password` forces a change at first sign-in.
 

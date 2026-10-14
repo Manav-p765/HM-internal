@@ -16,7 +16,11 @@ export type AuditAction =
   | 'employee.created'
   | 'employee.updated'
   | 'employee.deactivated'
-  | 'employee.reactivated';
+  | 'employee.reactivated'
+  | 'client.created'
+  | 'client.updated'
+  | 'client.deactivated'
+  | 'client.reactivated';
 
 interface AuditEntry {
   action: AuditAction;

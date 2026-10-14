@@ -1,15 +1,16 @@
-import { Router, type Request } from 'express';
+import type { Request } from 'express';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { audit } from '../services/audit.js';
-import { deleteUserSessions, requireAuth, requireRole } from '../middleware/auth.js';
+import { deleteUserSessions } from '../middleware/auth.js';
+import { createRouter, STAFF } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
 
 // Employees are never deleted: deactivate / reactivate instead.
 // Salary fields (monthlySalary, paymentMethod) are only ever sent to admins.
-export const employeesRouter = Router();
-employeesRouter.use(requireAuth);
+// Every route declares its roles; client users are refused everywhere (they never see employee records).
+export const employeesRouter = createRouter();
 
 const STATUSES = ['active', 'on_leave', 'inactive'] as const;
 
@@ -141,7 +142,7 @@ const listQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
-employeesRouter.get('/', requireRole('admin', 'manager'), async (req, res) => {
+employeesRouter.get('/', ['admin', 'manager'], async (req, res) => {
   const parsed = listQuerySchema.safeParse(req.query);
   if (!parsed.success) throw new HttpError(400, parsed.error.issues[0].message, 'VALIDATION_ERROR');
   const { search, status, department, limit, offset } = parsed.data;
@@ -193,7 +194,7 @@ employeesRouter.get('/', requireRole('admin', 'manager'), async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/employees/directory  (any signed-in staff): no phone, no salary, no inactive people
 // ---------------------------------------------------------------------------
-employeesRouter.get('/directory', async (_req, res) => {
+employeesRouter.get('/directory', STAFF, async (_req, res) => {
   const employees = await query(
     `SELECT e.id, e.full_name AS "fullName", e.designation, e.department, e.work_email AS "workEmail",
             e.avatar_url AS "avatarUrl", e.status
@@ -217,7 +218,7 @@ function ownEmployeeId(req: Request): string {
   return id;
 }
 
-employeesRouter.get('/me', async (req, res) => {
+employeesRouter.get('/me', STAFF, async (req, res) => {
   const [employee] = await query(`SELECT ${ME_COLUMNS} FROM employees e WHERE e.id = $1`, [ownEmployeeId(req)]);
   if (!employee) throw new HttpError(404, 'Your account is not linked to an employee record', 'NOT_LINKED');
   res.json({ employee });
@@ -229,7 +230,7 @@ const updateMeSchema = z
   .strict()
   .refine(body => Object.keys(body).length > 0, 'Nothing to update');
 
-employeesRouter.patch('/me', async (req, res) => {
+employeesRouter.patch('/me', STAFF, async (req, res) => {
   const id = ownEmployeeId(req);
   const body = parseBody(updateMeSchema, req.body);
   const fields = Object.keys(body) as (keyof typeof body)[];
@@ -249,7 +250,7 @@ employeesRouter.patch('/me', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/employees/:id  (admin, manager)
 // ---------------------------------------------------------------------------
-employeesRouter.get('/:id', requireRole('admin', 'manager'), async (req, res) => {
+employeesRouter.get('/:id', ['admin', 'manager'], async (req, res) => {
   const employee = await getEmployee(parseId(req.params.id));
   if (!employee) throw new HttpError(404, 'Employee not found', 'NOT_FOUND');
   res.json({ employee: forViewer(employee, req) });
@@ -258,7 +259,7 @@ employeesRouter.get('/:id', requireRole('admin', 'manager'), async (req, res) =>
 // ---------------------------------------------------------------------------
 // POST /api/employees  (admin)  — employee_code is assigned here, never by the client
 // ---------------------------------------------------------------------------
-employeesRouter.post('/', requireRole('admin'), async (req, res) => {
+employeesRouter.post('/', ['admin'], async (req, res) => {
   const body = parseBody(createSchema, req.body);
 
   const id = await withTransaction(async client => {
@@ -305,7 +306,7 @@ employeesRouter.post('/', requireRole('admin'), async (req, res) => {
 // ---------------------------------------------------------------------------
 // PATCH /api/employees/:id  (admin)
 // ---------------------------------------------------------------------------
-employeesRouter.patch('/:id', requireRole('admin'), async (req, res) => {
+employeesRouter.patch('/:id', ['admin'], async (req, res) => {
   const id = parseId(req.params.id);
   const body = parseBody(updateSchema, req.body);
 
@@ -333,7 +334,7 @@ employeesRouter.patch('/:id', requireRole('admin'), async (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/employees/:id/deactivate  (admin): also disables the linked login and ends its sessions
 // ---------------------------------------------------------------------------
-employeesRouter.post('/:id/deactivate', requireRole('admin'), async (req, res) => {
+employeesRouter.post('/:id/deactivate', ['admin'], async (req, res) => {
   const id = parseId(req.params.id);
 
   const linkedUserId = await withTransaction(async client => {
@@ -382,7 +383,7 @@ employeesRouter.post('/:id/deactivate', requireRole('admin'), async (req, res) =
 // ---------------------------------------------------------------------------
 const reactivateSchema = z.object({ restoreLogin: z.boolean().default(false) });
 
-employeesRouter.post('/:id/reactivate', requireRole('admin'), async (req, res) => {
+employeesRouter.post('/:id/reactivate', ['admin'], async (req, res) => {
   const id = parseId(req.params.id);
   const { restoreLogin } = parseBody(reactivateSchema, req.body);
 

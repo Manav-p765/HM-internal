@@ -1,15 +1,17 @@
-import { Router } from 'express';
+import type { Request } from 'express';
+import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { audit } from '../services/audit.js';
 import { sendCredentialsEmail } from '../services/mail.js';
 import { generateTempPassword, hashPassword } from '../services/passwords.js';
-import { deleteUserSessions, requireAuth, requireRole } from '../middleware/auth.js';
+import { deleteUserSessions } from '../middleware/auth.js';
+import { createRouter } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
 
-// Admin-only user management. Passwords never appear in any response.
-export const usersRouter = Router();
-usersRouter.use(requireAuth, requireRole('admin'));
+// User management. Admins manage every account; managers may only create and manage client
+// (portal) users. Passwords never appear in any response: credentials go out by email.
+export const usersRouter = createRouter();
 
 const USER_SELECT = `
   SELECT u.id, u.email, u.role, u.status,
@@ -18,9 +20,14 @@ const USER_SELECT = `
          u.created_at AS "createdAt",
          CASE WHEN e.id IS NULL THEN NULL
               ELSE json_build_object('id', e.id, 'code', e.employee_code, 'name', e.full_name)
-         END AS employee
+         END AS employee,
+         u.client_id AS "clientId",
+         CASE WHEN c.id IS NULL THEN NULL
+              ELSE json_build_object('id', c.id, 'companyName', c.company_name, 'status', c.status)
+         END AS client
     FROM users u
-    LEFT JOIN employees e ON e.id = u.employee_id`;
+    LEFT JOIN employees e ON e.id = u.employee_id
+    LEFT JOIN clients c ON c.id = u.client_id`;
 
 async function getUser(id: string) {
   const [user] = await query(`${USER_SELECT} WHERE u.id = $1`, [id]);
@@ -34,17 +41,35 @@ function parseId(raw: unknown): string {
   return result.data;
 }
 
+const FORBIDDEN = () => new HttpError(403, 'You do not have permission to do this', 'FORBIDDEN');
+
+// Managers may act on client users only.
+function assertMayManage(req: Request, targetRole: string): void {
+  if (req.user!.role === 'manager' && targetRole !== 'client') throw FORBIDDEN();
+}
+
+// A client user can only be created or (re)enabled while their company is active.
+async function assertClientActive(client: PoolClient, clientId: string): Promise<void> {
+  const company = (
+    await client.query<{ status: string }>('SELECT status FROM clients WHERE id = $1 FOR SHARE', [clientId])
+  ).rows[0];
+  if (!company) throw new HttpError(400, 'Client company not found', 'VALIDATION_ERROR', [{ path: 'clientId', message: 'Client company not found' }]);
+  if (company.status !== 'active') {
+    throw new HttpError(409, 'This client company is inactive. Reactivate it first.', 'CLIENT_INACTIVE');
+  }
+}
+
 // ---------------------------------------------------------------------------
-// GET /api/users
+// GET /api/users  (admin)
 // ---------------------------------------------------------------------------
-usersRouter.get('/', async (_req, res) => {
+usersRouter.get('/', ['admin'], async (_req, res) => {
   res.json({ users: await query(`${USER_SELECT} ORDER BY u.created_at, u.email`) });
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/users/employee-options  (employees that don't have a login yet, for the "Add user" form)
+// GET /api/users/employee-options  (admin): employees without a login, for the "Add user" form
 // ---------------------------------------------------------------------------
-usersRouter.get('/employee-options', async (_req, res) => {
+usersRouter.get('/employee-options', ['admin'], async (_req, res) => {
   const employees = await query(
     `SELECT e.id, e.employee_code AS code, e.full_name AS name, e.work_email AS "workEmail"
        FROM employees e
@@ -56,16 +81,27 @@ usersRouter.get('/employee-options', async (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/users  { email, role, employeeId? }
+// POST /api/users  (admin: any role; manager: client only)  { email, role, employeeId?, clientId? }
 // ---------------------------------------------------------------------------
-const createSchema = z.object({
-  email: z.string().trim().toLowerCase().max(254).pipe(z.email('Enter a valid email address')),
-  role: z.enum(['admin', 'manager', 'employee']),
-  employeeId: z.uuid().nullish(),
-});
+const createSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().max(254).pipe(z.email('Enter a valid email address')),
+    role: z.enum(['admin', 'manager', 'employee', 'client']),
+    employeeId: z.uuid().nullish(),
+    clientId: z.uuid().nullish(),
+  })
+  .superRefine((body, ctx) => {
+    if (body.role === 'client') {
+      if (!body.clientId) ctx.addIssue({ code: 'custom', path: ['clientId'], message: 'Choose the client company' });
+      if (body.employeeId) ctx.addIssue({ code: 'custom', path: ['employeeId'], message: 'Client users cannot be linked to an employee' });
+    } else if (body.clientId) {
+      ctx.addIssue({ code: 'custom', path: ['clientId'], message: 'Only client users belong to a client company' });
+    }
+  });
 
-usersRouter.post('/', async (req, res) => {
-  const { email, role, employeeId } = parseBody(createSchema, req.body);
+usersRouter.post('/', ['admin', 'manager'], async (req, res) => {
+  const { email, role, employeeId, clientId } = parseBody(createSchema, req.body);
+  assertMayManage(req, role);
 
   const [emailTaken] = await query('SELECT 1 FROM users WHERE email = $1', [email]);
   if (emailTaken) throw new HttpError(409, 'A user with this email already exists', 'EMAIL_TAKEN');
@@ -84,10 +120,11 @@ usersRouter.post('/', async (req, res) => {
 
   // The email is sent inside the transaction: if it can't be sent, the account is not created.
   const userId = await withTransaction(async client => {
+    if (role === 'client') await assertClientActive(client, clientId!);
     const inserted = await client.query<{ id: string }>(
-      `INSERT INTO users (email, password_hash, role, employee_id, must_change_password)
-       VALUES ($1, $2, $3, $4, true) RETURNING id`,
-      [email, passwordHash, role, employeeId ?? null],
+      `INSERT INTO users (email, password_hash, role, employee_id, client_id, must_change_password)
+       VALUES ($1, $2, $3, $4, $5, true) RETURNING id`,
+      [email, passwordHash, role, employeeId ?? null, role === 'client' ? clientId : null],
     );
     await sendCredentialsEmail(email, tempPassword);
     return inserted.rows[0].id;
@@ -97,22 +134,23 @@ usersRouter.post('/', async (req, res) => {
     action: 'user.created',
     entityType: 'user',
     entityId: userId,
-    metadata: { email, role, employeeId: employeeId ?? null },
+    metadata: { email, role, employeeId: employeeId ?? null, clientId: clientId ?? null },
   });
   res.status(201).json({ user: await getUser(userId) });
 });
 
 // ---------------------------------------------------------------------------
-// PATCH /api/users/:id  { role?, status? }
+// PATCH /api/users/:id  { role?, status? }  (admin; manager: status of client users only)
 // ---------------------------------------------------------------------------
+const STAFF_ROLES = ['admin', 'manager', 'employee'] as const;
 const updateSchema = z
   .object({
-    role: z.enum(['admin', 'manager', 'employee']).optional(),
+    role: z.enum(STAFF_ROLES).optional(),
     status: z.enum(['active', 'disabled']).optional(),
   })
   .refine(body => body.role !== undefined || body.status !== undefined, 'Nothing to update');
 
-usersRouter.patch('/:id', async (req, res) => {
+usersRouter.patch('/:id', ['admin', 'manager'], async (req, res) => {
   const id = parseId(req.params.id);
   const body = parseBody(updateSchema, req.body);
 
@@ -122,12 +160,18 @@ usersRouter.patch('/:id', async (req, res) => {
       `SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY id FOR UPDATE`,
     );
     const target = (
-      await client.query<{ id: string; role: string; status: string }>(
-        'SELECT id, role, status FROM users WHERE id = $1 FOR UPDATE',
+      await client.query<{ id: string; role: string; status: string; client_id: string | null }>(
+        'SELECT id, role, status, client_id FROM users WHERE id = $1 FOR UPDATE',
         [id],
       )
     ).rows[0];
     if (!target) throw new HttpError(404, 'User not found', 'NOT_FOUND');
+    assertMayManage(req, target.role);
+    if (body.role !== undefined && req.user!.role !== 'admin') throw FORBIDDEN();
+    // A client user's company link can't be expressed by a role change (and staff can't become clients).
+    if (body.role !== undefined && target.role === 'client') {
+      throw new HttpError(400, 'A client user cannot be changed to a staff role', 'ROLE_CHANGE_NOT_ALLOWED');
+    }
 
     const next = { role: body.role ?? target.role, status: body.status ?? target.status };
     const isActiveAdmin = target.role === 'admin' && target.status === 'active';
@@ -138,6 +182,9 @@ usersRouter.patch('/:id', async (req, res) => {
     }
     if (losesAdmin && target.id === req.user!.id) {
       throw new HttpError(400, 'You cannot disable or demote your own account', 'CANNOT_MODIFY_SELF');
+    }
+    if (target.client_id && next.status === 'active' && target.status !== 'active') {
+      await assertClientActive(client, target.client_id);
     }
 
     await client.query('UPDATE users SET role = $1, status = $2 WHERE id = $3', [next.role, next.status, id]);
@@ -165,9 +212,9 @@ usersRouter.patch('/:id', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/users/:id/resend-credentials
+// POST /api/users/:id/resend-credentials  (admin; manager: client users only)
 // ---------------------------------------------------------------------------
-usersRouter.post('/:id/resend-credentials', async (req, res) => {
+usersRouter.post('/:id/resend-credentials', ['admin', 'manager'], async (req, res) => {
   const id = parseId(req.params.id);
   if (id === req.user!.id) {
     throw new HttpError(400, 'Use "Change password" for your own account', 'CANNOT_MODIFY_SELF');
@@ -179,12 +226,17 @@ usersRouter.post('/:id/resend-credentials', async (req, res) => {
   // As with create: if the email can't be sent, the old password keeps working.
   await withTransaction(async client => {
     const target = (
-      await client.query<{ email: string; status: string }>('SELECT email, status FROM users WHERE id = $1 FOR UPDATE', [id])
+      await client.query<{ email: string; status: string; role: string; client_id: string | null }>(
+        'SELECT email, status, role, client_id FROM users WHERE id = $1 FOR UPDATE',
+        [id],
+      )
     ).rows[0];
     if (!target) throw new HttpError(404, 'User not found', 'NOT_FOUND');
+    assertMayManage(req, target.role);
     if (target.status !== 'active') {
       throw new HttpError(400, 'Enable this user before sending new credentials', 'USER_DISABLED');
     }
+    if (target.client_id) await assertClientActive(client, target.client_id);
     await client.query('UPDATE users SET password_hash = $1, must_change_password = true WHERE id = $2', [passwordHash, id]);
     await client.query(`DELETE FROM auth_tokens WHERE user_id = $1 AND used_at IS NULL`, [id]);
     await sendCredentialsEmail(target.email, tempPassword, true);

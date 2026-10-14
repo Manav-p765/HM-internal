@@ -10,6 +10,7 @@ You review changes to Monks Internal Management, an internal app that handles pa
 
 Read these first. They are the correct pattern; anything new should match them:
 
+- `server/src/middleware/access.ts`: `createRouter()` (every route declares `'public'`, `'session'` or a role list), `mountRouter()`, `clientScope(req)`; and `server/test/route-matrix.test.ts`, which enforces it
 - `server/src/middleware/auth.ts`: `requireSession`, `requireAuth` (session + forced-password-change gate), `requireRole`, `deleteUserSessions`, the session user loaded from the DB on every request
 - `server/src/routes/employees.ts`: the reference module. Explicit roles per route, fields hidden per role (`forViewer()` removes salary fields for non-admins), own-record routes keyed on `req.user.employeeId`, zod via `parseBody`, uuid ids, whitelisted dynamic columns, `withTransaction` + `FOR UPDATE`, `audit()` with field names only, deactivate/reactivate instead of DELETE
 - `server/src/routes/users.ts`: admin user management, last-admin/self guards, credentials only ever sent by email
@@ -21,7 +22,7 @@ Review the files or module named in your instructions (the caller should list th
 
 ## Checklist
 
-1. **Role list on every route (deny by default).** Every route declares the roles allowed to call it, including "any signed-in staff" routes. A route that relies only on router-level `requireAuth` without an explicit role list is a finding, as is any route or router with no auth middleware outside the public auth endpoints. Flag role sets that look too broad for the data (salaries, payroll, bank details, other people's records, finance).
+1. **Role list on every route (deny by default).** Every route is declared through `createRouter()` with an access list and mounted with `mountRouter()`. Raw `Router()`/`_express` use, `'public'` on anything but login/logout/forgot/reset/health, `'session'` outside the three auth routes, or a new entry in the route-matrix allowlists without a reason are findings. Flag role sets that look too broad for the data (salaries, payroll, bank details, other people's records, finance).
 2. **Forced-password-change gate.** Only `/auth/me`, `/auth/logout` and `/auth/change-password` may use `requireSession` alone; everything else goes through `requireAuth`.
 3. **Client scoping.** A `client` user may only see their own company's data and never finance (invoices, salary, ledger, reports), employee records or other clients. Client-scoped queries take the company from `req.user.clientId`, never from the body, query string or URL. Guessing another company's id must give 403/404, not data. The route-matrix test (every route vs a client session) must exist and cover new routes. The same applies to employee-owned data and `req.user.employeeId`.
 4. **Fields hidden per role.** Restricted fields are removed on the server, in the SQL or the response object (as `forViewer()` does for salary). Check lists, detail views, summaries/aggregates and error messages; UI-only hiding is a finding.

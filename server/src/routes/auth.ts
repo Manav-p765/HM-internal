@@ -1,4 +1,4 @@
-import { Router, type Request } from 'express';
+import type { Request } from 'express';
 import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { audit } from '../services/audit.js';
@@ -11,11 +11,12 @@ import {
   newPasswordSchema,
   verifyPassword,
 } from '../services/passwords.js';
-import { deleteUserSessions, destroySession, loadSessionUser, requireSession } from '../middleware/auth.js';
+import { deleteUserSessions, destroySession, loadSessionUser } from '../middleware/auth.js';
+import { createRouter } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
 import { forgotPasswordLimiter, loginLimiter, resetPasswordLimiter } from '../middleware/security.js';
 
-export const authRouter = Router();
+export const authRouter = createRouter();
 
 const RESET_TOKEN_TTL_MINUTES = 60;
 
@@ -31,12 +32,14 @@ const loginSchema = z.object({
   password: z.string().min(1).max(200),
 });
 
-authRouter.post('/login', loginLimiter, async (req, res) => {
+authRouter.post('/login', 'public', loginLimiter, async (req, res) => {
   const { email, password } = parseBody(loginSchema, req.body);
 
   // users.email is citext, so this match is case-insensitive.
-  const [user] = await query<{ id: string; password_hash: string | null; status: string }>(
-    'SELECT id, password_hash, status FROM users WHERE email = $1',
+  const [user] = await query<{ id: string; password_hash: string | null; status: string; client_status: string | null }>(
+    `SELECT u.id, u.password_hash, u.status, c.status AS client_status
+       FROM users u LEFT JOIN clients c ON c.id = u.client_id
+      WHERE u.email = $1`,
     [email],
   );
 
@@ -47,6 +50,7 @@ authRouter.post('/login', loginLimiter, async (req, res) => {
   if (!user) failure = 'unknown_email';
   else if (!user.password_hash || !passwordOk) failure = 'wrong_password';
   else if (user.status !== 'active') failure = 'disabled';
+  else if (user.client_status !== null && user.client_status !== 'active') failure = 'client_inactive';
 
   if (!user || failure) {
     await audit(req, {
@@ -70,7 +74,7 @@ authRouter.post('/login', loginLimiter, async (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/auth/logout
 // ---------------------------------------------------------------------------
-authRouter.post('/logout', async (req, res) => {
+authRouter.post('/logout', 'public', async (req, res) => {
   const userId = req.session.userId;
   if (userId) {
     await audit(req, { action: 'auth.logout', actorUserId: userId, entityType: 'user', entityId: userId });
@@ -83,7 +87,7 @@ authRouter.post('/logout', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/auth/me
 // ---------------------------------------------------------------------------
-authRouter.get('/me', requireSession, (req, res) => {
+authRouter.get('/me', 'session', (req, res) => {
   res.json({ user: req.user });
 });
 
@@ -95,7 +99,7 @@ const changePasswordSchema = z.object({
   newPassword: newPasswordSchema,
 });
 
-authRouter.post('/change-password', requireSession, async (req, res) => {
+authRouter.post('/change-password', 'session', async (req, res) => {
   const { currentPassword, newPassword } = parseBody(changePasswordSchema, req.body);
   const userId = req.user!.id;
 
@@ -126,11 +130,12 @@ authRouter.post('/change-password', requireSession, async (req, res) => {
 // ---------------------------------------------------------------------------
 const forgotPasswordSchema = z.object({ email: z.string().trim().min(1).max(254) });
 
-authRouter.post('/forgot-password', forgotPasswordLimiter, async (req, res) => {
+authRouter.post('/forgot-password', 'public', forgotPasswordLimiter, async (req, res) => {
   const { email } = parseBody(forgotPasswordSchema, req.body);
 
   const [user] = await query<{ id: string; email: string }>(
-    `SELECT id, email FROM users WHERE email = $1 AND status = 'active'`,
+    `SELECT u.id, u.email FROM users u LEFT JOIN clients c ON c.id = u.client_id
+      WHERE u.email = $1 AND u.status = 'active' AND (u.client_id IS NULL OR c.status = 'active')`,
     [email],
   );
 
@@ -169,7 +174,7 @@ const resetPasswordSchema = z.object({
   newPassword: newPasswordSchema,
 });
 
-authRouter.post('/reset-password', resetPasswordLimiter, async (req, res) => {
+authRouter.post('/reset-password', 'public', resetPasswordLimiter, async (req, res) => {
   const { token, newPassword } = parseBody(resetPasswordSchema, req.body);
   const passwordHash = await hashPassword(newPassword);
 

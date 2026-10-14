@@ -2,13 +2,16 @@ import type { Request, RequestHandler } from 'express';
 import { query } from '../db.js';
 import { HttpError } from './errors.js';
 
-export type Role = 'admin' | 'manager' | 'employee';
+export type Role = 'admin' | 'manager' | 'employee' | 'client';
 
 export interface SessionUser {
   id: string;
   email: string;
   role: Role;
   employeeId: string | null;
+  // Client users only: their company. Client-scoped routes read it via clientScope(req).
+  clientId: string | null;
+  clientName: string | null;
   mustChangePassword: boolean;
   // From the linked employee record (null when the account isn't linked to one).
   name: string | null;
@@ -28,11 +31,15 @@ declare global {
 export async function loadSessionUser(userId: string): Promise<SessionUser | null> {
   const rows = await query<SessionUser>(
     `SELECT u.id, u.email, u.role, u.employee_id AS "employeeId",
+            u.client_id AS "clientId", c.company_name AS "clientName",
             u.must_change_password AS "mustChangePassword", e.full_name AS name,
             e.designation, e.department, e.avatar_url AS "avatarUrl"
        FROM users u
        LEFT JOIN employees e ON e.id = u.employee_id
-      WHERE u.id = $1 AND u.status = 'active'`,
+       LEFT JOIN clients c ON c.id = u.client_id
+      WHERE u.id = $1 AND u.status = 'active'
+        -- A client user of an inactive company is treated as signed out, even if the user row is active.
+        AND (u.client_id IS NULL OR c.status = 'active')`,
     [userId],
   );
   return rows[0] ?? null;

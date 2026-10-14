@@ -89,7 +89,7 @@ describe('role matrix', () => {
     ['post', () => '/api/employees', VALID_EMPLOYEE, { admin: 201, manager: 403, employee: 403, anonymous: 401 }],
     ['patch', i => `/api/employees/${i.otherEmp}`, { designation: 'Lead' }, { admin: 200, manager: 403, employee: 403, anonymous: 401 }],
     ['post', i => `/api/employees/${i.otherEmp}/deactivate`, {}, { admin: 200, manager: 403, employee: 403, anonymous: 401 }],
-    ['delete', i => `/api/employees/${i.otherEmp}`, undefined, { admin: 404, manager: 404, employee: 404, anonymous: 401 }],
+    ['delete', i => `/api/employees/${i.otherEmp}`, undefined, { admin: 404, manager: 404, employee: 404, anonymous: 404 }],
   ];
 
   for (const [method, path, body, expected] of routes) {

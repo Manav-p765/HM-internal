@@ -61,6 +61,8 @@ describe('login', () => {
       email: 'admin@example.test',
       role: 'admin',
       employeeId: null,
+      clientId: null,
+      clientName: null,
       mustChangePassword: false,
       name: null,
       designation: null,
