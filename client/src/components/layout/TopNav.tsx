@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useLocation, useNavigate } from 'react-router';
 import { useApp } from '../../context/AppContext';
 import {
   Search,
@@ -25,8 +26,9 @@ export const TopNav: React.FC<TopNavProps> = ({
   searchQuery,
   setSearchQuery,
 }) => {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
   const {
-    activeTab,
     currentUser,
     invoices,
     salaries,
@@ -35,7 +37,6 @@ export const TopNav: React.FC<TopNavProps> = ({
     setIsAddTransactionOpen,
     setIsAddInvoiceOpen,
     setIsAddEmployeeOpen,
-    setActiveTab,
     todayAttendance,
     punchIn,
     punchOut,
@@ -79,18 +80,14 @@ export const TopNav: React.FC<TopNavProps> = ({
         );
       }
       return (
-        <Button
-          variant="secondary"
-          size="sm"
-          icon={<Clock className="w-3.5 h-3.5 text-[#047857]" />}
-          onClick={() => setActiveTab('my_attendance')}
-        >
-          My Attendance
+        // Attendance pages are deferred, so this is a status chip rather than a link.
+        <Button variant="secondary" size="sm" disabled icon={<Clock className="w-3.5 h-3.5 text-[#047857]" />}>
+          Shift complete
         </Button>
       );
     }
 
-    if (activeTab === 'invoices') {
+    if (pathname.startsWith('/invoices')) {
       return (
         <Button
           variant="primary"
@@ -103,14 +100,14 @@ export const TopNav: React.FC<TopNavProps> = ({
       );
     }
 
-    if (activeTab === 'employees' || activeTab === 'directory') {
+    if (pathname.startsWith('/employees') || pathname === '/team') {
       return (
         <Button
           variant="primary"
           size="sm"
           icon={<Plus className="w-4 h-4" />}
           onClick={() => {
-            setActiveTab('employees');
+            navigate('/employees');
             setIsAddEmployeeOpen(true);
           }}
         >
@@ -119,7 +116,8 @@ export const TopNav: React.FC<TopNavProps> = ({
       );
     }
 
-    if (activeTab === 'salary') {
+    // Recording transactions is admin-only (accounting); other pages have no quick action.
+    if (currentUser.role !== 'admin' || pathname.startsWith('/salary')) {
       return null;
     }
 
@@ -130,7 +128,7 @@ export const TopNav: React.FC<TopNavProps> = ({
         size="sm"
         icon={<Plus className="w-4 h-4" />}
         onClick={() => {
-          setActiveTab('accounting');
+          navigate('/accounting');
           setIsAddTransactionOpen(true);
         }}
       >
@@ -200,7 +198,7 @@ export const TopNav: React.FC<TopNavProps> = ({
                     </p>
                     <button
                       onClick={() => {
-                        setActiveTab('invoices');
+                        navigate('/invoices');
                         setNotificationsOpen(false);
                       }}
                       className="mt-1.5 text-[11px] font-medium text-[#5038F5] hover:underline flex items-center gap-1"
@@ -221,7 +219,7 @@ export const TopNav: React.FC<TopNavProps> = ({
                     </p>
                     <button
                       onClick={() => {
-                        setActiveTab('salary');
+                        navigate('/salary');
                         setNotificationsOpen(false);
                       }}
                       className="mt-1.5 text-[11px] font-medium text-[#5038F5] hover:underline flex items-center gap-1"

@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useNavigate, useParams } from 'react-router';
 import { useApp } from '../../context/AppContext';
 import { Invoice, InvoiceStatus } from '../../types';
 import { Card } from '../common/Card';
@@ -37,7 +38,11 @@ export const InvoicesView: React.FC = () => {
   } = useApp();
 
   const [invoiceToEdit, setInvoiceToEdit] = useState<Invoice | null>(null);
-  const [invoiceToView, setInvoiceToView] = useState<Invoice | null>(null);
+  // /invoices/:id opens the detail modal for that invoice.
+  const { id: viewId } = useParams();
+  const navigate = useNavigate();
+  const invoiceToView = viewId ? invoices.find(inv => inv.id === viewId) ?? null : null;
+  const setInvoiceToView = (inv: Invoice | null) => navigate(inv ? `/invoices/${inv.id}` : '/invoices');
   const [invoiceToPay, setInvoiceToPay] = useState<Invoice | null>(null);
   const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null);
 

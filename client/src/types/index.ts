@@ -307,21 +307,3 @@ export interface AuditLog {
 }
 
 export type ActivityLog = AuditLog;
-
-export type ActiveTab =
-  | 'dashboard'
-  | 'accounting'
-  | 'invoices'
-  | 'employees'
-  | 'salary'
-  | 'attendance'
-  | 'leaves'
-  | 'reports'
-  | 'directory'
-  | 'settings'
-  // Employee restricted views:
-  | 'my_dashboard'
-  | 'my_attendance'
-  | 'my_leaves'
-  | 'my_salary_slips'
-  | 'my_profile';

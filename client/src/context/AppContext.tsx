@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import {
-  ActiveTab,
   CompanySettings,
   Employee,
   Invoice,
@@ -27,10 +26,6 @@ interface Toast {
 interface AppContextType {
   // Signed-in user (from the server session via AuthContext, mapped to the shape the views use)
   currentUser: UserProfile;
-
-  // Active navigation tab
-  activeTab: ActiveTab;
-  setActiveTab: (tab: ActiveTab) => void;
 
   // Settings
   settings: CompanySettings;
@@ -99,7 +94,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     throw new Error('AppProvider requires a signed-in user');
   }
 
-  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [settings, setSettingsState] = useState<CompanySettings>(StorageService.getSettings());
   const [employees, setEmployees] = useState<Employee[]>(StorageService.getEmployees());
   const [transactions, setTransactions] = useState<Transaction[]>(StorageService.getTransactions());
@@ -163,34 +157,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     email: currentUser.email,
     role: currentUser.role,
   };
-
-  // Adjust active tab when role changes
-  useEffect(() => {
-    if (currentUser.role === 'employee') {
-      if (
-        activeTab === 'dashboard' ||
-        activeTab === 'accounting' ||
-        activeTab === 'invoices' ||
-        activeTab === 'employees' ||
-        activeTab === 'salary' ||
-        activeTab === 'leaves' ||
-        activeTab === 'reports' ||
-        activeTab === 'settings'
-      ) {
-        setActiveTab('my_dashboard');
-      }
-    } else {
-      if (
-        activeTab === 'my_dashboard' ||
-        activeTab === 'my_attendance' ||
-        activeTab === 'my_leaves' ||
-        activeTab === 'my_salary_slips' ||
-        activeTab === 'my_profile'
-      ) {
-        setActiveTab('dashboard');
-      }
-    }
-  }, [currentUser.role]);
 
   // Attendance Handlers
   const todayAttendance = useMemo(() => {
@@ -390,8 +356,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     <AppContext.Provider
       value={{
         currentUser,
-        activeTab,
-        setActiveTab,
         settings,
         updateSettings,
         employees,

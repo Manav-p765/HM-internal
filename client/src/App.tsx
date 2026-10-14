@@ -3,174 +3,64 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { Suspense, lazy, useState } from 'react';
+import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router';
 import { AppProvider, useApp } from './context/AppContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopNav } from './components/layout/TopNav';
 import { ToastContainer } from './components/common/ToastContainer';
-import { DashboardView } from './components/dashboard/DashboardView';
-import { AccountingView } from './components/accounting/AccountingView';
-import { InvoicesView } from './components/invoices/InvoicesView';
-import { EmployeesView } from './components/employees/EmployeesView';
-import { SalaryView } from './components/salary/SalaryView';
-import { ReportsView } from './components/reports/ReportsView';
-import { TeamDirectoryView } from './components/directory/TeamDirectoryView';
-import { SettingsView } from './components/settings/SettingsView';
-import { AdminAttendanceView } from './components/attendance/AdminAttendanceView';
-import { EmployeeAttendanceView } from './components/attendance/EmployeeAttendanceView';
-import { EmployeeDashboardView } from './components/dashboard/EmployeeDashboardView';
-import { EmployeeSalarySlipsView } from './components/salary/EmployeeSalarySlipsView';
-import { EmployeeProfileView } from './components/profile/EmployeeProfileView';
 import { AuthPage } from './components/auth/AuthPage';
 import { ResetPasswordPage } from './components/auth/ResetPasswordPage';
 import { ChangePasswordPage } from './components/auth/ChangePasswordPage';
-import { ShieldAlert } from 'lucide-react';
-import { Button } from './components/common/Button';
+import { PageLoading, RedirectIfSignedIn, RequireAuth, RequirePasswordChange, RequireRole } from './routes/guards';
+
+// Pages are split into their own chunks and loaded on first visit.
+const named = <T extends Record<string, React.ComponentType<any>>>(load: () => Promise<T>, name: keyof T) =>
+  lazy(() => load().then(module => ({ default: module[name] })));
+
+const DashboardView = named(() => import('./components/dashboard/DashboardView'), 'DashboardView');
+const EmployeeDashboardView = named(() => import('./components/dashboard/EmployeeDashboardView'), 'EmployeeDashboardView');
+const AccountingView = named(() => import('./components/accounting/AccountingView'), 'AccountingView');
+const InvoicesView = named(() => import('./components/invoices/InvoicesView'), 'InvoicesView');
+const EmployeesView = named(() => import('./components/employees/EmployeesView'), 'EmployeesView');
+const SalaryView = named(() => import('./components/salary/SalaryView'), 'SalaryView');
+const EmployeeSalarySlipsView = named(() => import('./components/salary/EmployeeSalarySlipsView'), 'EmployeeSalarySlipsView');
+const ReportsView = named(() => import('./components/reports/ReportsView'), 'ReportsView');
+const TeamDirectoryView = named(() => import('./components/directory/TeamDirectoryView'), 'TeamDirectoryView');
+const SettingsView = named(() => import('./components/settings/SettingsView'), 'SettingsView');
+const EmployeeProfileView = named(() => import('./components/profile/EmployeeProfileView'), 'EmployeeProfileView');
+// Deferred (no routes yet): attendance/AdminAttendanceView, attendance/EmployeeAttendanceView, leaves.
+
+// Dashboard differs by role: staff get their personal workspace.
+const Dashboard: React.FC = () => {
+  const { currentUser } = useApp();
+  return currentUser.role === 'employee' ? <EmployeeDashboardView /> : <DashboardView />;
+};
 
 const MainLayout: React.FC = () => {
-  const { activeTab, setActiveTab, currentUser } = useApp();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [globalSearch, setGlobalSearch] = useState('');
 
-  // Role permission guards and content view routing
-  const renderContent = () => {
-    // 1. Confidential Accounting & Financials: Admin only
-    if (activeTab === 'accounting' && currentUser.role !== 'admin') {
-      return (
-        <div className="flex flex-col items-center justify-center p-12 text-center bg-white rounded-xl border border-[#DFE6F1]">
-          <div className="w-12 h-12 rounded-xl bg-[#E11D48]/10 text-[#E11D48] flex items-center justify-center mb-3">
-            <ShieldAlert className="w-6 h-6" />
-          </div>
-          <h2 className="text-base font-bold text-[#111827]">Access Restricted</h2>
-          <p className="text-xs text-[#7185A5] max-w-sm mt-1 mb-4">
-            Company financial ledger, transaction tracking, and accounts are restricted to executive administrators.
-          </p>
-          <Button variant="primary" size="sm" onClick={() => setActiveTab(currentUser.role === 'employee' ? 'my_dashboard' : 'dashboard')}>
-            Return to Dashboard
-          </Button>
-        </div>
-      );
-    }
-
-    // 2. Salary & Payroll management: Admin only
-    if (activeTab === 'salary' && currentUser.role !== 'admin') {
-      return (
-        <div className="flex flex-col items-center justify-center p-12 text-center bg-white rounded-xl border border-[#DFE6F1]">
-          <div className="w-12 h-12 rounded-xl bg-[#E11D48]/10 text-[#E11D48] flex items-center justify-center mb-3">
-            <ShieldAlert className="w-6 h-6" />
-          </div>
-          <h2 className="text-base font-bold text-[#111827]">Access Restricted</h2>
-          <p className="text-xs text-[#7185A5] max-w-sm mt-1 mb-4">
-            Confidential company payroll, adjustments, and disbursement records are restricted to executive administrators.
-          </p>
-          <Button variant="primary" size="sm" onClick={() => setActiveTab(currentUser.role === 'employee' ? 'my_dashboard' : 'dashboard')}>
-            Return to Dashboard
-          </Button>
-        </div>
-      );
-    }
-
-    // 3. Organization Settings: Admin only
-    if (activeTab === 'settings' && currentUser.role !== 'admin') {
-      return (
-        <div className="flex flex-col items-center justify-center p-12 text-center bg-white rounded-xl border border-[#DFE6F1]">
-          <div className="w-12 h-12 rounded-xl bg-[#E11D48]/10 text-[#E11D48] flex items-center justify-center mb-3">
-            <ShieldAlert className="w-6 h-6" />
-          </div>
-          <h2 className="text-base font-bold text-[#111827]">Admin Privileges Required</h2>
-          <p className="text-xs text-[#7185A5] max-w-sm mt-1 mb-4">
-            Company organization profiles, tax settings, and work policies are restricted to Admin users.
-          </p>
-          <Button variant="primary" size="sm" onClick={() => setActiveTab(currentUser.role === 'employee' ? 'my_dashboard' : 'dashboard')}>
-            Return to Dashboard
-          </Button>
-        </div>
-      );
-    }
-
-    // 4. Invoices / Employees / Reports: Guard against Employee role
-    if ((activeTab === 'invoices' || activeTab === 'employees' || activeTab === 'reports') && currentUser.role === 'employee') {
-      return (
-        <div className="flex flex-col items-center justify-center p-12 text-center bg-white rounded-xl border border-[#DFE6F1]">
-          <div className="w-12 h-12 rounded-xl bg-[#E11D48]/10 text-[#E11D48] flex items-center justify-center mb-3">
-            <ShieldAlert className="w-6 h-6" />
-          </div>
-          <h2 className="text-base font-bold text-[#111827]">Management Portal Only</h2>
-          <p className="text-xs text-[#7185A5] max-w-sm mt-1 mb-4">
-            This module is reserved for management and administrative team leads. Please use your personal employee workspace.
-          </p>
-          <Button variant="primary" size="sm" onClick={() => setActiveTab('my_dashboard')}>
-            Open My Dashboard
-          </Button>
-        </div>
-      );
-    }
-
-    // Route views by tab
-    switch (activeTab) {
-      // Admin & Manager Views
-      case 'dashboard':
-        return currentUser.role === 'employee' ? <EmployeeDashboardView /> : <DashboardView />;
-      case 'accounting':
-        return <AccountingView />;
-      case 'invoices':
-        return <InvoicesView />;
-      case 'employees':
-        return <EmployeesView />;
-      case 'attendance':
-        return currentUser.role === 'employee' ? <EmployeeAttendanceView /> : <AdminAttendanceView />;
-      case 'salary':
-        return <SalaryView />;
-      case 'reports':
-        return <ReportsView />;
-      case 'directory':
-        return <TeamDirectoryView />;
-      case 'settings':
-        return <SettingsView />;
-
-      // Employee Personal Views
-      case 'my_dashboard':
-        return <EmployeeDashboardView />;
-      case 'my_attendance':
-        return <EmployeeAttendanceView />;
-      case 'my_salary_slips':
-        return <EmployeeSalarySlipsView />;
-      case 'my_profile':
-        return <EmployeeProfileView />;
-
-      default:
-        return currentUser.role === 'employee' ? <EmployeeDashboardView /> : <DashboardView />;
-    }
-  };
-
   return (
     <div className="min-h-screen bg-[#F7F9FC] flex">
-      {/* Left Sidebar */}
-      <Sidebar
-        mobileOpen={mobileSidebarOpen}
-        onMobileClose={() => setMobileSidebarOpen(false)}
-      />
+      <Sidebar mobileOpen={mobileSidebarOpen} onMobileClose={() => setMobileSidebarOpen(false)} />
 
-      {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 lg:pl-64">
-        {/* Top Navigation */}
         <TopNav
           onMobileMenuToggle={() => setMobileSidebarOpen(!mobileSidebarOpen)}
           searchQuery={globalSearch}
           setSearchQuery={setGlobalSearch}
         />
 
-        {/* Page Viewport */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
-          {renderContent()}
+          <Suspense fallback={<PageLoading />}>
+            <Outlet />
+          </Suspense>
         </main>
 
-        {/* Global Footer */}
         <footer className="px-6 py-4 border-t border-[#DFE6F1] bg-white text-xs text-[#7185A5] flex flex-col sm:flex-row items-center justify-between gap-2 no-print">
-          <div>
-            &copy; 2026 Hybrid Monks. Monks Internal Management System.
-          </div>
+          <div>&copy; 2026 Hybrid Monks. Monks Internal Management System.</div>
           <div className="flex items-center gap-4 text-[11px]">
             <span>Confidential Internal Portal</span>
             <span>·</span>
@@ -179,65 +69,59 @@ const MainLayout: React.FC = () => {
         </footer>
       </div>
 
-      {/* Floating Toast Notification System */}
       <ToastContainer />
     </div>
   );
 };
 
-// Decides between the signed-out screens, the forced password change and the app itself.
-const AppContent: React.FC = () => {
-  const { status, user } = useAuth();
-
-  // No router yet: the emailed reset link (/reset-password?token=...) is recognised by its path.
-  const [resetToken, setResetToken] = useState<string | null>(() =>
-    window.location.pathname === '/reset-password'
-      ? new URLSearchParams(window.location.search).get('token') ?? ''
-      : null
-  );
-  const [loginNotice, setLoginNotice] = useState<string | undefined>();
-
-  if (resetToken !== null) {
-    return (
-      <ResetPasswordPage
-        token={resetToken}
-        onDone={notice => {
-          window.history.replaceState(null, '', '/');
-          setLoginNotice(notice);
-          setResetToken(null);
-        }}
-      />
-    );
-  }
-
-  if (status === 'loading') {
-    return (
-      <div className="min-h-screen bg-[#F7F9FC] flex items-center justify-center text-xs text-[#7185A5]">
-        Loading...
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <AuthPage notice={loginNotice} />;
-  }
-
-  if (user.mustChangePassword) {
-    return <ChangePasswordPage />;
-  }
-
-  // Keyed by user so nothing from a previous sign-in survives in memory.
+// Everything behind sign-in. Keyed by user so nothing from a previous sign-in survives in memory.
+const SignedInApp: React.FC = () => {
+  const { user } = useAuth();
   return (
-    <AppProvider key={user.id}>
-      <MainLayout />
-    </AppProvider>
+    <RequireAuth>
+      <AppProvider key={user?.id}>
+        <MainLayout />
+      </AppProvider>
+    </RequireAuth>
   );
 };
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <BrowserRouter>
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<RedirectIfSignedIn><AuthPage mode="login" /></RedirectIfSignedIn>} />
+          <Route path="/forgot-password" element={<RedirectIfSignedIn><AuthPage mode="forgot" /></RedirectIfSignedIn>} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/change-password" element={<RequirePasswordChange><ChangePasswordPage /></RequirePasswordChange>} />
+
+          <Route element={<SignedInApp />}>
+            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/team" element={<TeamDirectoryView />} />
+            <Route path="/profile" element={<EmployeeProfileView />} />
+            <Route path="/salary/slips" element={<EmployeeSalarySlipsView />} />
+
+            <Route element={<RequireRole roles={['admin', 'manager']} />}>
+              <Route path="/employees" element={<EmployeesView />} />
+              <Route path="/employees/:id" element={<EmployeesView />} />
+              <Route path="/invoices" element={<InvoicesView />} />
+              <Route path="/invoices/:id" element={<InvoicesView />} />
+              <Route path="/reports" element={<ReportsView />} />
+            </Route>
+
+            <Route element={<RequireRole roles={['admin']} />}>
+              <Route path="/accounting" element={<AccountingView />} />
+              <Route path="/salary" element={<SalaryView />} />
+              <Route path="/settings" element={<SettingsView />} />
+              <Route path="/settings/users" element={<SettingsView />} />
+            </Route>
+
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Route>
+        </Routes>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }

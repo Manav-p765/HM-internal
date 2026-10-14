@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useLocation, useNavigate } from 'react-router';
 import { Mail } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { authApi } from '../../api/auth';
@@ -7,15 +8,16 @@ import { Button } from '../common/Button';
 import { AuthLayout, PasswordField } from './AuthLayout';
 
 interface AuthPageProps {
-  // Shown above the sign-in form, e.g. after a successful password reset.
-  notice?: string;
+  mode: 'login' | 'forgot'; // /login or /forgot-password
 }
 
 // Signed-out screens: sign in, and "forgot password". Accounts are created by an admin; there is no signup.
-export const AuthPage: React.FC<AuthPageProps> = ({ notice }) => {
+export const AuthPage: React.FC<AuthPageProps> = ({ mode }) => {
   const { login } = useAuth();
-
-  const [mode, setMode] = useState<'login' | 'forgot'>('login');
+  const navigate = useNavigate();
+  const location = useLocation();
+  // e.g. "Your password has been reset" after /reset-password; "from" is where RequireAuth sent us from.
+  const { notice, from } = (location.state as { notice?: string; from?: string } | null) ?? {};
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -23,7 +25,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ notice }) => {
   const [isLoading, setIsLoading] = useState(false);
 
   const switchMode = (next: 'login' | 'forgot') => {
-    setMode(next);
+    navigate(next === 'login' ? '/login' : '/forgot-password', { state: from ? { from } : undefined });
     setError('');
     setSuccess('');
     setPassword('');
@@ -36,7 +38,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ notice }) => {
     setIsLoading(true);
     try {
       await login(email.trim(), password);
-      // On success AuthProvider now has a user and App swaps this screen out.
+      // On success AuthProvider has a user and RedirectIfSignedIn moves on (to "from" or /dashboard).
     } catch (err) {
       setError(errorMessage(err));
       setIsLoading(false);

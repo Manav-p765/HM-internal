@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useLocation, useNavigate } from 'react-router';
 import { useApp } from '../../context/AppContext';
 import { AuditLog } from '../../types';
 import { Card } from '../common/Card';
@@ -35,7 +36,19 @@ export const SettingsView: React.FC = () => {
     showToast,
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+  // /settings/users is its own route; General and Audit Trail are tabs within /settings.
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const [localTab, setLocalTab] = useState<'general' | 'audit'>('general');
+  const activeTab: SettingsTab = pathname === '/settings/users' ? 'users' : localTab;
+  const setActiveTab = (tab: SettingsTab) => {
+    if (tab === 'users') {
+      navigate('/settings/users');
+      return;
+    }
+    setLocalTab(tab);
+    if (pathname !== '/settings') navigate('/settings');
+  };
 
   // Form states
   const [companyName, setCompanyName] = useState(settings.companyName);

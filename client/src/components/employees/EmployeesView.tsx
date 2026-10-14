@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useNavigate, useParams } from 'react-router';
 import { useApp } from '../../context/AppContext';
 import { Employee, Department, EmploymentStatus } from '../../types';
 import { Card } from '../common/Card';
@@ -35,7 +36,10 @@ export const EmployeesView: React.FC = () => {
   } = useApp();
 
   const [employeeToEdit, setEmployeeToEdit] = useState<Employee | null>(null);
-  const [employeeToView, setEmployeeToView] = useState<Employee | null>(null);
+  const { id: viewId } = useParams();
+  const navigate = useNavigate();
+  const employeeToView = viewId ? employees.find(emp => emp.id === viewId) ?? null : null;
+  const setEmployeeToView = (emp: Employee | null) => navigate(emp ? `/employees/${emp.id}` : '/employees');
   const [employeeToDeactivate, setEmployeeToDeactivate] = useState<Employee | null>(null);
 
   // Filters

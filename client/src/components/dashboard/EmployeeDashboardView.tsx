@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router';
 import { useApp } from '../../context/AppContext';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
@@ -25,9 +26,9 @@ export const EmployeeDashboardView: React.FC = () => {
     punchOut,
     attendance,
     mySalarySlips,
-    setActiveTab,
     settings,
   } = useApp();
+  const navigate = useNavigate();
 
   // Live timer for currently working session
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
@@ -258,7 +259,7 @@ export const EmployeeDashboardView: React.FC = () => {
           <p className="text-[11px] text-[#7185A5] mt-1">
             {latestSalarySlip ? (
               <button
-                onClick={() => setActiveTab('my_salary_slips')}
+                onClick={() => navigate('/salary/slips')}
                 className="text-[#5038F5] font-semibold hover:underline flex items-center gap-1 cursor-pointer"
               >
                 View Slip <ArrowRight className="w-3 h-3" />
@@ -281,12 +282,6 @@ export const EmployeeDashboardView: React.FC = () => {
               Your verified punch timestamps for recent working days
             </p>
           </div>
-          <button
-            onClick={() => setActiveTab('my_attendance')}
-            className="text-xs font-semibold text-[#5038F5] hover:underline flex items-center gap-1 cursor-pointer"
-          >
-            View Full History <ArrowRight className="w-3.5 h-3.5" />
-          </button>
         </div>
 
         {myAttendanceRecords.length === 0 ? (

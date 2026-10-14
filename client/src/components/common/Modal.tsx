@@ -8,6 +8,7 @@ interface ModalProps {
   description?: string;
   children: React.ReactNode;
   maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '4xl';
+  size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '4xl'; // alias of maxWidth
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -16,7 +17,8 @@ export const Modal: React.FC<ModalProps> = ({
   title,
   description,
   children,
-  maxWidth = 'lg',
+  maxWidth,
+  size,
 }) => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -31,6 +33,8 @@ export const Modal: React.FC<ModalProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [isOpen, onClose]);
+
+  const effectiveMaxWidth = size || maxWidth || 'lg';
 
   if (!isOpen) return null;
 
@@ -51,7 +55,7 @@ export const Modal: React.FC<ModalProps> = ({
         aria-hidden="true"
       />
       <div
-        className={`relative w-full ${maxWidths[maxWidth]} bg-white rounded-xl border border-[#DFE6F1] shadow-xl overflow-hidden z-10 my-auto`}
+        className={`relative w-full ${maxWidths[effectiveMaxWidth]} bg-white rounded-xl border border-[#DFE6F1] shadow-xl overflow-hidden z-10 my-auto`}
         onClick={e => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

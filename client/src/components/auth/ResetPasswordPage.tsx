@@ -1,17 +1,17 @@
 import React, { useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router';
 import { authApi } from '../../api/auth';
 import { errorMessage } from '../../api/client';
 import { Button } from '../common/Button';
 import { AuthLayout, PasswordField, MIN_PASSWORD_LENGTH, checkNewPassword } from './AuthLayout';
 
-interface ResetPasswordPageProps {
-  // The one-time token from the emailed link (/reset-password?token=...).
-  token: string;
-  // Called after the password was reset (with the server's confirmation) or when the user gives up.
-  onDone: (notice?: string) => void;
-}
-
-export const ResetPasswordPage: React.FC<ResetPasswordPageProps> = ({ token, onDone }) => {
+// Opened from the emailed link: /reset-password?token=...
+export const ResetPasswordPage: React.FC = () => {
+  const [searchParams] = useSearchParams();
+  const token = searchParams.get('token') ?? '';
+  const navigate = useNavigate();
+  // Back to sign-in; replace so the one-time token doesn't stay in history.
+  const onDone = (notice?: string) => navigate('/login', { replace: true, state: notice ? { notice } : undefined });
   const [newPassword, setNewPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [error, setError] = useState(token ? '' : 'This reset link is incomplete. Please request a new one.');

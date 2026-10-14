@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router';
 import { useApp } from '../../context/AppContext';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
@@ -31,11 +32,11 @@ export const DashboardView: React.FC = () => {
     salaries,
     attendance,
     settings,
-    setActiveTab,
     setIsAddTransactionOpen,
     setIsAddInvoiceOpen,
     currentUser,
   } = useApp();
+  const navigate = useNavigate();
 
   const [dateFilter, setDateFilter] = useState<DateFilterOption>('this_month');
 
@@ -435,14 +436,7 @@ export const DashboardView: React.FC = () => {
                 Live shift monitoring and compliance tracking for active staff members
               </p>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              icon={<Clock className="w-3.5 h-3.5" />}
-              onClick={() => setActiveTab('attendance')}
-            >
-              Open Full Attendance Roster
-            </Button>
+            {/* "Open Full Attendance Roster" link removed while attendance pages are deferred */}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
@@ -485,7 +479,7 @@ export const DashboardView: React.FC = () => {
                 {pendingInvoicesCount} invoices pending payment or overdue
               </p>
               <button
-                onClick={() => setActiveTab('invoices')}
+                onClick={() => navigate('/invoices')}
                 className="text-[11px] font-semibold text-[#5038F5] hover:underline mt-1 block cursor-pointer"
               >
                 Review invoices &rarr;
@@ -576,12 +570,6 @@ export const DashboardView: React.FC = () => {
                 <h3 className="text-sm font-bold text-[#111827]">Today's Team Clock-ins</h3>
                 <p className="text-xs text-[#7185A5]">Staff punch-in timeline for today</p>
               </div>
-              <button
-                onClick={() => setActiveTab('attendance')}
-                className="text-xs font-semibold text-[#5038F5] hover:underline flex items-center gap-1 cursor-pointer"
-              >
-                Manage Attendance <ArrowRight className="w-3.5 h-3.5" />
-              </button>
             </div>
 
             <div className="divide-y divide-[#DFE6F1] mt-1">
@@ -635,7 +623,7 @@ export const DashboardView: React.FC = () => {
                 <p className="text-xs text-[#7185A5]">Latest income and expense entries</p>
               </div>
               <button
-                onClick={() => setActiveTab('accounting')}
+                onClick={() => navigate('/accounting')}
                 className="text-xs font-semibold text-[#5038F5] hover:underline flex items-center gap-1 cursor-pointer"
               >
                 View All <ArrowRight className="w-3.5 h-3.5" />
@@ -682,7 +670,7 @@ export const DashboardView: React.FC = () => {
               <p className="text-xs text-[#7185A5]">Client billing and payment status</p>
             </div>
             <button
-              onClick={() => setActiveTab('invoices')}
+              onClick={() => navigate('/invoices')}
               className="text-xs font-semibold text-[#5038F5] hover:underline flex items-center gap-1 cursor-pointer"
             >
               View Invoices <ArrowRight className="w-3.5 h-3.5" />
@@ -740,7 +728,7 @@ export const DashboardView: React.FC = () => {
             <p className="text-xs text-[#7185A5]">Department breakdown & headcount</p>
           </div>
           <button
-            onClick={() => setActiveTab('employees')}
+            onClick={() => navigate('/employees')}
             className="text-xs font-semibold text-[#5038F5] hover:underline flex items-center gap-1 cursor-pointer"
           >
             Manage Team <ArrowRight className="w-3.5 h-3.5" />

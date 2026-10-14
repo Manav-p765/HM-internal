@@ -1,7 +1,9 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { useAuth } from '../../context/AuthContext';
-import { ActiveTab } from '../../types';
+import { NavLink } from 'react-router';
+import { UserRole } from '../../types';
+import { Avatar } from '../common/Avatar';
 import {
   LayoutDashboard,
   WalletCards,
@@ -22,140 +24,56 @@ import {
 } from 'lucide-react';
 import { Badge } from '../common/Badge';
 
+interface NavItem {
+  to: string;
+  label: string;
+  icon: React.ReactNode;
+  end?: boolean;
+}
+
+function getNavItems(role: UserRole): NavItem[] {
+  if (role === 'employee') {
+    return [
+      { to: '/dashboard', label: 'My Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
+      { to: '/salary/slips', label: 'My Salary Slips', icon: <Receipt className="w-4 h-4" /> },
+      { to: '/team', label: 'Team Directory', icon: <Contact className="w-4 h-4" /> },
+      { to: '/profile', label: 'My Profile', icon: <User className="w-4 h-4" /> },
+    ];
+  }
+  if (role === 'manager') {
+    return [
+      { to: '/dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
+      { to: '/employees', label: 'Employees', icon: <Users className="w-4 h-4" /> },
+      { to: '/team', label: 'Team Directory', icon: <Contact className="w-4 h-4" /> },
+      { to: '/invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
+      { to: '/reports', label: 'Reports', icon: <BarChart3 className="w-4 h-4" /> },
+    ];
+  }
+  return [
+    { to: '/dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
+    { to: '/accounting', label: 'Accounting', icon: <WalletCards className="w-4 h-4" /> },
+    { to: '/invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
+    { to: '/employees', label: 'Employees', icon: <Users className="w-4 h-4" /> },
+    // 'end' so /salary/slips (own payslips) doesn't also light up Salary Management
+    { to: '/salary', label: 'Salary Management', icon: <Banknote className="w-4 h-4" />, end: true },
+    { to: '/reports', label: 'Reports', icon: <BarChart3 className="w-4 h-4" /> },
+    { to: '/team', label: 'Team Directory', icon: <Contact className="w-4 h-4" /> },
+    { to: '/settings', label: 'Settings', icon: <Settings className="w-4 h-4" /> },
+  ];
+}
+
 interface SidebarProps {
   mobileOpen: boolean;
   onMobileClose: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onMobileClose }) => {
-  const {
-    activeTab,
-    setActiveTab,
-    currentUser,
-    settings,
-  } = useApp();
+  const { currentUser, settings } = useApp();
   const { logout } = useAuth();
 
-  // Define navigation items based on Role
-  const getNavItems = () => {
-    // 1. EMPLOYEE: Strict 4-item navigation + Logout
-    if (currentUser.role === 'employee') {
-      return [
-        {
-          tab: 'my_dashboard' as ActiveTab,
-          label: 'My Dashboard',
-          icon: <LayoutDashboard className="w-4 h-4" />,
-        },
-        {
-          tab: 'my_attendance' as ActiveTab,
-          label: 'My Attendance',
-          icon: <Clock className="w-4 h-4" />,
-        },
-        {
-          tab: 'my_salary_slips' as ActiveTab,
-          label: 'My Salary Slips',
-          icon: <Receipt className="w-4 h-4" />,
-        },
-        {
-          tab: 'my_profile' as ActiveTab,
-          label: 'My Profile',
-          icon: <User className="w-4 h-4" />,
-        },
-      ];
-    }
-
-    // 2. MANAGER: Operational dashboard, attendance, employees, directory, reports
-    if (currentUser.role === 'manager') {
-      return [
-        {
-          tab: 'dashboard' as ActiveTab,
-          label: 'Dashboard',
-          icon: <LayoutDashboard className="w-4 h-4" />,
-        },
-        {
-          tab: 'attendance' as ActiveTab,
-          label: 'Attendance',
-          icon: <Clock className="w-4 h-4" />,
-        },
-        {
-          tab: 'employees' as ActiveTab,
-          label: 'Employees',
-          icon: <Users className="w-4 h-4" />,
-        },
-        {
-          tab: 'directory' as ActiveTab,
-          label: 'Team Directory',
-          icon: <Contact className="w-4 h-4" />,
-        },
-        {
-          tab: 'invoices' as ActiveTab,
-          label: 'Invoices',
-          icon: <FileText className="w-4 h-4" />,
-        },
-        {
-          tab: 'reports' as ActiveTab,
-          label: 'Reports',
-          icon: <BarChart3 className="w-4 h-4" />,
-        },
-      ];
-    }
-
-    // 3. ADMIN: Full access to all 11 modules
-    return [
-      {
-        tab: 'dashboard' as ActiveTab,
-        label: 'Dashboard',
-        icon: <LayoutDashboard className="w-4 h-4" />,
-      },
-      {
-        tab: 'accounting' as ActiveTab,
-        label: 'Accounting',
-        icon: <WalletCards className="w-4 h-4" />,
-      },
-      {
-        tab: 'invoices' as ActiveTab,
-        label: 'Invoices',
-        icon: <FileText className="w-4 h-4" />,
-      },
-      {
-        tab: 'employees' as ActiveTab,
-        label: 'Employees',
-        icon: <Users className="w-4 h-4" />,
-      },
-      {
-        tab: 'attendance' as ActiveTab,
-        label: 'Attendance',
-        icon: <Clock className="w-4 h-4" />,
-      },
-      {
-        tab: 'salary' as ActiveTab,
-        label: 'Salary Management',
-        icon: <Banknote className="w-4 h-4" />,
-      },
-      {
-        tab: 'reports' as ActiveTab,
-        label: 'Reports',
-        icon: <BarChart3 className="w-4 h-4" />,
-      },
-      {
-        tab: 'directory' as ActiveTab,
-        label: 'Team Directory',
-        icon: <Contact className="w-4 h-4" />,
-      },
-      {
-        tab: 'settings' as ActiveTab,
-        label: 'Settings',
-        icon: <Settings className="w-4 h-4" />,
-      },
-    ];
-  };
-
-  const navItems = getNavItems();
-
-  const handleNavClick = (tab: ActiveTab) => {
-    setActiveTab(tab);
-    onMobileClose();
-  };
+  // Attendance and Leaves are deferred: their views stay in the codebase but have no nav item or route.
+  // Hiding items by role is cosmetic; RequireRole and the server are the real guards.
+  const navItems = getNavItems(currentUser.role);
 
   return (
     <>
@@ -205,46 +123,34 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onMobileClose }) =
             </span>
           </div>
 
-          {navItems.map(item => {
-            const isActive = activeTab === item.tab;
-            return (
-              <button
-                key={item.label}
-                onClick={() => handleNavClick(item.tab)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-left cursor-pointer ${
+          {navItems.map(item => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              onClick={onMobileClose}
+              className={({ isActive }) =>
+                `w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-left cursor-pointer ${
                   isActive
                     ? 'bg-[#5038F5]/10 text-[#5038F5] font-semibold'
                     : 'text-[#475569] hover:text-[#111827] hover:bg-[#F7F9FC]'
-                }`}
-              >
-                <span className={isActive ? 'text-[#5038F5]' : 'text-[#7185A5]'}>
-                  {item.icon}
-                </span>
-                <span className="truncate flex-1">{item.label}</span>
-              </button>
-            );
-          })}
+                }`
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  <span className={isActive ? 'text-[#5038F5]' : 'text-[#7185A5]'}>{item.icon}</span>
+                  <span className="truncate flex-1">{item.label}</span>
+                </>
+              )}
+            </NavLink>
+          ))}
         </div>
 
         {/* Signed-in user */}
         <div className="p-3 border-t border-[#DFE6F1] bg-[#F7F9FC]/40 relative">
           <div className="flex items-center gap-3 p-2 rounded-lg">
-            <div className="relative w-9 h-9 rounded-full overflow-hidden bg-[#5038F5]/10 border border-[#DFE6F1] shrink-0">
-              {currentUser.avatarUrl && (
-                <img
-                  src={currentUser.avatarUrl}
-                  alt={currentUser.name}
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
-                  onError={e => {
-                    (e.target as HTMLImageElement).style.display = 'none';
-                  }}
-                />
-              )}
-              <span className="w-full h-full flex items-center justify-center text-xs font-bold text-[#5038F5]">
-                {currentUser.name.charAt(0)}
-              </span>
-            </div>
+            <Avatar name={currentUser.name} url={currentUser.avatarUrl} size="md" />
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between gap-1">
                 <span className="text-xs font-semibold text-[#111827] truncate">
