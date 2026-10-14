@@ -29,6 +29,7 @@ const STATUS_VARIANT: Record<RosterStatus, 'success' | 'purple' | 'neutral'> = {
 };
 
 export const AdminAttendanceView: React.FC = () => {
+  const { currentUser } = useApp();
   // undefined = "today" as the server sees it (IST); the browser clock is never used.
   const [selectedDate, setSelectedDate] = useState<string | undefined>(undefined);
   const [departmentFilter, setDepartmentFilter] = useState('all');
@@ -269,6 +270,8 @@ export const AdminAttendanceView: React.FC = () => {
                       )}
                     </td>
                     <td className="py-3 px-4 text-right whitespace-nowrap">
+                      {/* Cosmetic: the server refuses corrections to your own record. */}
+                      {e.employeeId !== currentUser.employeeId && (
                       <button
                         onClick={() => setToCorrect(e)}
                         className="p-1.5 text-[#7185A5] hover:text-[#5038F5] hover:bg-[#F1F5F9] rounded cursor-pointer"
@@ -277,6 +280,7 @@ export const AdminAttendanceView: React.FC = () => {
                       >
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
+                      )}
                     </td>
                   </tr>
                 ))}

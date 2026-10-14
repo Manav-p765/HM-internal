@@ -39,6 +39,8 @@ Only if a column or table is genuinely missing. Use `/create-migration`: next nu
 - If client-role scoping exists (`req.user.clientId`), every route must also state what a client may see, and the route-matrix test must stay green.
 - Data owned by the caller (`/me`-style routes) is selected by `req.user.employeeId` / `req.user.clientId`, never by an id from the body or URL. A record outside the caller's scope is a **404 identical to a missing id** (see `routes/tasks.ts` assignee scope and `routes/portal.ts`), never a 403.
 - Client-facing data goes through `/api/portal` (`routes/portal.ts`) with an explicit column list; never reuse a staff SELECT for clients. Use `routes/shared.ts` helpers (`isoDate`, `pageQuery`, `likePattern`, `TODAY_SQL`) and derive values like "overdue" in SQL instead of storing them.
+- **Anything date/time based** (today, deadlines, durations, presence) reads the clock through `services/clock.ts` (`now()`, `istDate()`, `todayIst()`), passes the instant to SQL as a parameter, and returns "today" in the response for the UI. Never trust the browser clock; tests move time with `setClock()`. Derived statuses with several inputs get one pure function (like `deriveAvailability` in `services/availability.ts`) with its own unit test.
+- A client-visible view of staff data (like `GET /api/portal/team`) returns an explicit object built field by field (no ids unless needed), and its test asserts the exact JSON keys.
 - Validate every body with a zod schema through `parseBody(schema, req.body)` (trim strings, bound lengths, `z.enum` for statuses, dates as `YYYY-MM-DD`). Query strings: `schema.safeParse(req.query)`. Ids: `z.uuid()`, invalid → 404. Use `.strict()` where extra fields must be rejected (as `PATCH /employees/me` does).
 - **Parameterised SQL only** (`$1`, `$2`…). Dynamic `SET` lists or sort columns come from a fixed whitelist (like the `COLUMN` map in `employees.ts`), never from request text.
 - Money: accept a number or numeric string, validate to 2 decimals, pass to Postgres as a string, return the `NUMERIC` string as-is. Never a JS float in SQL.
@@ -65,7 +67,7 @@ Copy the structure of `employees.test.ts` (and `projects-tasks.test.ts` / `porta
 - `client/src/api/<module>.ts`: a `<module>Api` object of one-line typed wrappers over `api<T>()`, unwrapping the envelope, like `employeesApi`.
 - Each page fetches its own data with `useApiData(load, deps)` and renders the three states: loading text, `LoadError` (with retry), `EmptyState`. After a mutation, `showToast` and `reload()` (or `setData` with the server response). Forms show server field errors with `common/FormField` (see `EmployeeModal`). Detail views are routes (`/<module>/:id`) whose modal loads its own record.
 - **Remove the module from local state completely:** its fields and functions in `AppContext.tsx`, its methods and seed array in `services/storage.ts`, and its localStorage key. Either delete the key or bump it (`_v1` → `_v2`) and add the old key to the cleanup list in `client/src/context/AuthContext.tsx`. Other local modules that referenced the removed data get the API data passed in instead (as salary generation now receives the API employee list).
-- If `server/db/seed.dev.sql` has rows for the domain, keep them realistic and clearly fake.
+- If `server/db/seed.dev.sql` has rows for the domain, keep them realistic and clearly fake. Date-based seed rows are generated relative to the IST date at seed time (see the attendance/leave inserts) and the tables go into the `--reset` TRUNCATE list in `scripts/seed.ts`.
 
 ## 6. Finish
 

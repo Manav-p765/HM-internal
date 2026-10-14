@@ -301,6 +301,24 @@ describe('roster and corrections', () => {
     expect(mine.body.record.corrected).toBe(true);
   });
 
+  it('nobody corrects their own attendance; the history never shows an admin email', async () => {
+    setClock(at(10 * 60));
+    const body = { punchIn: `${DAY}T09:00:00+05:30`, punchOut: null, note: 'Self (fake)' };
+    const own = await agents.manager.put(`/api/attendance/${ids.managerEmp}/${DAY}`).send(body).expect(400);
+    expect(own.body.code).toBe('CANNOT_CORRECT_OWN');
+    expect(await records(ids.managerEmp)).toHaveLength(0);
+    await agents.admin.put(`/api/attendance/${ids.empA}/${DAY}`).send(body).expect(200);
+    const mine = await agents.employee.get(`/api/attendance/${ids.empA}/${DAY}`).expect(200);
+    expect(mine.body.history[0].actorName).toBe('Admin');
+    expect(JSON.stringify(mine.body)).not.toContain('admin@example.test');
+  });
+
+  it('out-of-range dates are a 400, not a 500', async () => {
+    await agents.admin.get('/api/attendance?date=0000-01-01').expect(400);
+    await agents.employee.get('/api/attendance/me?month=0000-01').expect(400);
+    await agents.employee.post('/api/leaves').send({ leaveType: 'casual', startDate: '0000-01-03', endDate: '0000-01-03', reason: 'x' }).expect(400);
+  });
+
   it('PUT creates a manual record for someone with none', async () => {
     setClock(at(10 * 60));
     await agents.admin

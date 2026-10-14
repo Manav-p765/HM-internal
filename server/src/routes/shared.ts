@@ -13,6 +13,8 @@ export const optionalText = (max: number) =>
 export const isoDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the format YYYY-MM-DD')
+  // Postgres rejects year 0 (that was a 500); no business date is outside this range.
+  .refine(v => v >= '1900-01-01' && v <= '2999-12-31', 'Enter a date between 1900 and 2999')
   // Round-trip check: Date.parse alone accepts 2026-02-30 (rolling over to March 2).
   .refine(v => {
     const parsed = new Date(`${v}T00:00:00Z`);

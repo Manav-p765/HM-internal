@@ -80,7 +80,7 @@ attendanceRouter.get('/me/today', ['employee'], async (req, res) => {
 const monthQuery = z.object({
   month: z
     .string()
-    .regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Use the format YYYY-MM')
+    .regex(/^(19|2\d)\d{2}-(0[1-9]|1[0-2])$/, 'Use the format YYYY-MM')
     .optional(),
 });
 
@@ -228,7 +228,7 @@ function parseTarget(req: Request): { employeeId: string; date: string } {
 async function correctionHistory(recordId: string) {
   return query(
     `SELECT al.id, al.created_at AS "createdAt", al.metadata->'before' AS before, al.metadata->'after' AS after,
-            coalesce(ae.full_name, au.email::text) AS "actorName", au.role AS "actorRole"
+            coalesce(ae.full_name, initcap(au.role)) AS "actorName", au.role AS "actorRole"
        FROM audit_logs al
        LEFT JOIN users au ON au.id = al.actor_user_id
        LEFT JOIN employees ae ON ae.id = au.employee_id
@@ -279,6 +279,11 @@ attendanceRouter.put('/:employeeId/:date', ['admin', 'manager'], async (req, res
     if (body.punchOut.getTime() - body.punchIn.getTime() > 24 * 60 * 60 * 1000) {
       throw invalid('punchOut', 'A shift cannot be longer than 24 hours');
     }
+  }
+
+  // Nobody corrects their own attendance (managers and admins linked to an employee record included).
+  if (req.user!.employeeId === employeeId) {
+    throw new HttpError(400, 'You cannot correct your own attendance', 'CANNOT_CORRECT_OWN');
   }
 
   const { record, before } = await withTransaction(async client => {
