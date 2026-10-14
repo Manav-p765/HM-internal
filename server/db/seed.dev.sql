@@ -100,3 +100,51 @@ INSERT INTO transactions (txn_date, type, category, description, amount, payment
   ('2026-09-05', 'expense', 'Software and Tools',         'Design tool seats (fake vendor)',     4999.00, 'Credit Card',   NULL,            NULL,                                   NULL,                                   '00000000-0000-4000-a000-000000000002'),
   ('2026-09-12', 'expense', 'Hosting and Infrastructure', 'Cloud hosting (fake vendor)',        12000.00, 'Credit Card',   NULL,            NULL,                                   NULL,                                   '00000000-0000-4000-a000-000000000002'),
   ('2026-10-02', 'expense', 'Office Expenses',            'Stationery',                          1850.00, 'Cash',          NULL,            NULL,                                   NULL,                                   '00000000-0000-4000-a000-000000000002');
+
+-- Attendance: the 10 weekdays before today (IST), relative to when the seed runs, so the screens always
+-- have recent history. Erin (EMP-002) misses one day (covered by an approved sick leave below); Eli
+-- (EMP-003) misses two and has one record left open (never punched out); the manager's rows were entered
+-- manually by the admin. Today has no rows: employees are punched in automatically when they sign in.
+WITH last10 AS (
+  SELECT d::date AS day, row_number() OVER (ORDER BY d DESC) AS n
+    FROM generate_series((now() AT TIME ZONE 'Asia/Kolkata')::date - 16, (now() AT TIME ZONE 'Asia/Kolkata')::date - 1, interval '1 day') d
+   WHERE extract(isodow FROM d) < 6
+   ORDER BY d DESC
+   LIMIT 10
+), plan (employee_id, created_by, updated_by, absent_days, open_day, source, minute_offset) AS (VALUES
+  ('00000000-0000-4000-a000-000000000102'::uuid, '00000000-0000-4000-a000-000000000003'::uuid, NULL::uuid, ARRAY[3], NULL::bigint, 'login', 4),
+  ('00000000-0000-4000-a000-000000000103'::uuid, '00000000-0000-4000-a000-000000000004'::uuid, NULL::uuid, ARRAY[2, 7], 5::bigint, 'login', 17),
+  ('00000000-0000-4000-a000-000000000101'::uuid, '00000000-0000-4000-a000-000000000001'::uuid, '00000000-0000-4000-a000-000000000001'::uuid, ARRAY[]::int[], NULL::bigint, 'manual', 9)
+)
+INSERT INTO attendance_records (employee_id, work_date, punch_in, punch_out, source, note, created_by, updated_by)
+SELECT p.employee_id, l.day,
+       (l.day + time '09:00' + make_interval(mins => ((l.n * 7 + p.minute_offset) % 45)::int)) AT TIME ZONE 'Asia/Kolkata',
+       CASE WHEN l.n = p.open_day THEN NULL
+            ELSE (l.day + time '17:40' + make_interval(mins => ((l.n * 11 + p.minute_offset) % 70)::int)) AT TIME ZONE 'Asia/Kolkata' END,
+       p.source,
+       CASE WHEN p.source = 'manual' THEN 'Entered by admin from the visitor log (fake)' END,
+       p.created_by, p.updated_by
+  FROM plan p CROSS JOIN last10 l
+ WHERE NOT (l.n = ANY (p.absent_days));
+
+-- Leave requests in every status. Dates are relative to today; total_days counts weekdays (half day = 0.5).
+WITH t AS (SELECT (now() AT TIME ZONE 'Asia/Kolkata')::date AS today, date_trunc('week', (now() AT TIME ZONE 'Asia/Kolkata'))::date AS monday),
+     erin_absent AS (
+       SELECT d::date AS day FROM generate_series((SELECT today FROM t) - 16, (SELECT today FROM t) - 1, interval '1 day') d
+        WHERE extract(isodow FROM d) < 6 ORDER BY d DESC OFFSET 2 LIMIT 1),
+     req (employee_id, leave_type, start_date, end_date, day_type, half_day_period, reason, status, reviewed_by, reviewer_comment, rejection_reason) AS (
+       SELECT '00000000-0000-4000-a000-000000000102'::uuid, 'sick', (SELECT day FROM erin_absent), (SELECT day FROM erin_absent), 'full', NULL, 'Fever (fake)', 'approved', '00000000-0000-4000-a000-000000000002'::uuid, 'Get well soon (fake)', NULL
+       UNION ALL SELECT '00000000-0000-4000-a000-000000000103', 'earned', t.monday + 7, t.monday + 9, 'full', NULL, 'Family trip (fake)', 'pending', NULL, NULL, NULL FROM t
+       UNION ALL SELECT '00000000-0000-4000-a000-000000000103', 'casual', t.monday - 28, t.monday - 27, 'full', NULL, 'Moving house (fake)', 'rejected', '00000000-0000-4000-a000-000000000001', NULL, 'Release week, please pick other dates (fake)' FROM t
+       UNION ALL SELECT '00000000-0000-4000-a000-000000000102', 'casual', t.monday + 11, t.monday + 11, 'half', 'second', 'Appointment (fake)', 'cancelled', NULL, NULL, NULL FROM t
+       UNION ALL SELECT '00000000-0000-4000-a000-000000000101', 'casual', t.monday + 14, t.monday + 15, 'full', NULL, 'Wedding in the family (fake)', 'pending', NULL, NULL, NULL FROM t
+       UNION ALL SELECT '00000000-0000-4000-a000-000000000104', 'earned', t.monday, t.monday + 4, 'full', NULL, 'Pre-planned holiday (fake)', 'approved', '00000000-0000-4000-a000-000000000002', NULL, NULL FROM t
+     )
+INSERT INTO leave_requests (employee_id, leave_type, start_date, end_date, day_type, half_day_period, total_days, reason, status,
+                            reviewed_by, reviewed_at, reviewer_comment, rejection_reason)
+SELECT r.employee_id, r.leave_type, r.start_date, r.end_date, r.day_type, r.half_day_period,
+       CASE WHEN r.day_type = 'half' THEN 0.5
+            ELSE (SELECT count(*) FROM generate_series(r.start_date, r.end_date, interval '1 day') g WHERE extract(isodow FROM g) < 6) END,
+       r.reason, r.status, r.reviewed_by, CASE WHEN r.reviewed_by IS NOT NULL THEN now() - interval '2 days' END,
+       r.reviewer_comment, r.rejection_reason
+  FROM req r;

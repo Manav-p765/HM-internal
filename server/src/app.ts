@@ -15,6 +15,9 @@ import { clientsRouter } from './routes/clients.js';
 import { projectsRouter } from './routes/projects.js';
 import { commentsRouter, tasksRouter } from './routes/tasks.js';
 import { portalRouter } from './routes/portal.js';
+import { attendanceRouter } from './routes/attendance.js';
+import { presenceRouter, teamRouter } from './routes/presence.js';
+import { leavesRouter } from './routes/leaves.js';
 import { createRouter, mountRouter } from './middleware/access.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -68,6 +71,10 @@ mountRouter(api, '/projects', projectsRouter);
 mountRouter(api, '/tasks', tasksRouter);
 mountRouter(api, '/comments', commentsRouter);
 mountRouter(api, '/portal', portalRouter);
+mountRouter(api, '/attendance', attendanceRouter);
+mountRouter(api, '/presence', presenceRouter);
+mountRouter(api, '/team', teamRouter);
+mountRouter(api, '/leaves', leavesRouter);
 
 api.use(apiNotFound);
 app.use('/api', api);

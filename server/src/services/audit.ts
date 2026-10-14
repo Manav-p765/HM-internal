@@ -31,7 +31,15 @@ export type AuditAction =
   | 'task.deleted'
   | 'task.status_changed'
   | 'comment.created'
-  | 'comment.deleted';
+  | 'comment.deleted'
+  | 'attendance.punched_in'
+  | 'attendance.punched_out'
+  | 'attendance.corrected'
+  | 'leave.requested'
+  | 'leave.updated'
+  | 'leave.cancelled'
+  | 'leave.approved'
+  | 'leave.rejected';
 
 interface AuditEntry {
   action: AuditAction;

@@ -8,6 +8,8 @@ const PgStore = connectPgSimple(session);
 declare module 'express-session' {
   interface SessionData {
     userId?: string;
+    // IST date on which the automatic punch-in was last attempted for this session (services/attendance.ts).
+    punchCheckedOn?: string;
   }
 }
 

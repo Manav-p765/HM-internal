@@ -13,7 +13,11 @@ export const optionalText = (max: number) =>
 export const isoDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the format YYYY-MM-DD')
-  .refine(v => !Number.isNaN(Date.parse(`${v}T00:00:00Z`)), 'Enter a valid date');
+  // Round-trip check: Date.parse alone accepts 2026-02-30 (rolling over to March 2).
+  .refine(v => {
+    const parsed = new Date(`${v}T00:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === v;
+  }, 'Enter a valid date');
 
 export const pageQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),

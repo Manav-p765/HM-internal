@@ -26,6 +26,8 @@ const CLIENT_ALLOWED = new Set([
   'GET /api/portal/projects/:id/tasks',
   'GET /api/portal/tasks/:id/comments',
   'POST /api/portal/tasks/:id/comments',
+  // Who works on the company's projects and their status today (name, designation, avatar, status, projects).
+  'GET /api/portal/team',
 ]);
 
 // Routes that need no sign-in at all.

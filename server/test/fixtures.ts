@@ -8,7 +8,7 @@ export const PASSWORD = 'correct-horse-battery';
 
 export async function resetAll() {
   await query(
-    'TRUNCATE task_comments, tasks, project_members, projects, audit_logs, auth_tokens, sessions, users, employees, clients CASCADE',
+    'TRUNCATE attendance_records, leave_requests, task_comments, tasks, project_members, projects, audit_logs, auth_tokens, sessions, users, employees, clients CASCADE',
   );
 }
 

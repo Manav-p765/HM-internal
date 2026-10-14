@@ -2,6 +2,7 @@ import type { Request } from 'express';
 import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { audit } from '../services/audit.js';
+import { autoPunchIn } from '../services/attendance.js';
 import { sendPasswordResetEmail } from '../services/mail.js';
 import {
   DUMMY_HASH,
@@ -68,7 +69,9 @@ authRouter.post('/login', 'public', loginLimiter, async (req, res) => {
   await query('UPDATE users SET last_login_at = now() WHERE id = $1', [user.id]);
   await audit(req, { action: 'auth.login_success', actorUserId: user.id, entityType: 'user', entityId: user.id });
 
-  res.json({ user: await loadSessionUser(user.id) });
+  const sessionUser = await loadSessionUser(user.id);
+  if (sessionUser) await autoPunchIn(req, sessionUser); // never fails the login
+  res.json({ user: sessionUser });
 });
 
 // ---------------------------------------------------------------------------
@@ -87,7 +90,8 @@ authRouter.post('/logout', 'public', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/auth/me
 // ---------------------------------------------------------------------------
-authRouter.get('/me', 'session', (req, res) => {
+authRouter.get('/me', 'session', async (req, res) => {
+  await autoPunchIn(req, req.user!); // the first request of a new IST day punches an employee in
   res.json({ user: req.user });
 });
 

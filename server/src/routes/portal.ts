@@ -3,6 +3,7 @@ import { rateLimit } from 'express-rate-limit';
 import { config } from '../config.js';
 import { query } from '../db.js';
 import { audit } from '../services/audit.js';
+import { availabilityFor } from '../services/availability.js';
 import { clientScope, createRouter } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
 import { OVERDUE_SQL, COMMENT_AUTHOR_SQL } from './tasks.js';
@@ -70,6 +71,34 @@ portalRouter.get('/projects/:id/tasks', ['client'], async (req, res) => {
     [projectId],
   );
   res.json({ project, tasks });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/portal/team: the people working on this company's non-archived projects, with today's status.
+// Exactly name, designation, avatarUrl, status and the names of this company's projects they are on:
+// no ids, no emails, no punch times, no leave details.
+// ---------------------------------------------------------------------------
+portalRouter.get('/team', ['client'], async (req, res) => {
+  const rows = await query<{ id: string; name: string; designation: string; avatarUrl: string | null; projects: string[] }>(
+    `SELECT e.id, e.full_name AS name, e.designation, e.avatar_url AS "avatarUrl",
+            array_agg(DISTINCT p.name ORDER BY p.name) AS projects
+       FROM project_members pm
+       JOIN projects p ON p.id = pm.project_id
+       JOIN employees e ON e.id = pm.employee_id
+      WHERE p.client_id = $1 AND p.status <> 'archived' AND e.status <> 'inactive'
+      GROUP BY e.id
+      ORDER BY e.full_name`,
+    [clientScope(req)],
+  );
+  const statuses = await availabilityFor(rows.map(r => r.id));
+  const team = rows.map(r => ({
+    name: r.name,
+    designation: r.designation,
+    avatarUrl: r.avatarUrl,
+    status: statuses.get(r.id) ?? 'not_in_today',
+    projects: r.projects,
+  }));
+  res.json({ team });
 });
 
 // A task the client may see: visible, in a non-archived project of their company.
