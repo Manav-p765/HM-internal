@@ -26,6 +26,8 @@ npm run create-admin -w server -- --email you@example.com   # create an admin (h
 - Never edit an applied migration; always add a new numbered one (a hook blocks edits to existing files in `server/db/migrations/`).
 - Money is `NUMERIC(14,2)` in Postgres and travels as a string, never a JS float.
 - **Every route declares its roles** (deny by default): routes are added only through `createRouter()` from `server/src/middleware/access.ts` — `router.get(path, access, ...handlers)` where `access` is `'public'`, `'session'` (only `/auth/me`, `/auth/logout`, `/auth/change-password`) or a role list such as `['admin', 'manager']` or `STAFF` — and routers are mounted with `mountRouter()`. `server/test/route-matrix.test.ts` walks every registered route and fails if one bypasses this, if a client session can reach anything outside its allowlist, or if a non-public route answers an anonymous caller. UI checks are cosmetic only.
+- **Out-of-scope ids are 404, never 403:** when a record exists but belongs to someone else (another employee's task, another company's project), answer exactly like a missing id so nothing leaks. 403 is only for "your role can't do this at all".
+- **Client portal API** lives in `server/src/routes/portal.ts` under `/api/portal`, every route `['client']`, scoped by `clientScope(req)`; clients only see `client_visible` tasks of their company's non-archived projects and only `client_feedback` comments (filtered in SQL). Portal responses select an explicit column list with no internal fields; `server/test/portal.test.ts` asserts on the raw JSON text that internal notes never appear.
 - **Client scoping:** a `client` user sees only their own company. Client-scoped queries take the company from `clientScope(req)` (= `req.user.clientId`), never from the body, query string or URL. Clients never see finance (invoices, salary, ledger, reports), employee records or other clients. Adding a client-visible route means adding it to the allowlist in `route-matrix.test.ts` on purpose.
 - No passwords, temporary passwords or tokens in logs, API responses or audit metadata. The only exception is the dev mail printout in `server/src/services/mail.ts`.
 - Do not add new npm libraries without asking first.
@@ -78,11 +80,15 @@ The app started as a client-only prototype storing everything in localStorage. A
 
 ### Database
 
+- Shared route helpers: `server/src/routes/shared.ts` (`optionalText`, `isoDate`, `pageQuery`, `likePattern`, `TODAY_SQL`). "Overdue" is always derived (`status <> 'completed' AND deadline < TODAY_SQL`, Asia/Kolkata), never stored; names (project, assignee, client) are joined, never copied onto rows.
+
 - `server/src/db.ts`: `query()` and `withTransaction()`; all SQL is hand-written and must be parameterised (`$1`, `$2`…). `NUMERIC` comes back as a string (intended, for money); `DATE` comes back as `'YYYY-MM-DD'`.
 - `server/src/migrations.ts` applies `server/db/migrations/NNN_name.sql` in filename order, each in a transaction, recording filenames in `schema_migrations`. **An applied file is never re-run, so never edit an existing migration — add a new numbered one.**
 - Schema conventions (see header of `001_init.sql`): uuid PKs (`gen_random_uuid()`), `citext` emails, money `numeric(14,2)`, text status columns with `CHECK (... IN (...))`, `created_at`/`updated_at timestamptz` on every app table with a `set_updated_at()` trigger. `audit_logs` is append-only (no `updated_at`).
 - Snake_case columns are aliased to camelCase in SELECTs (`must_change_password AS "mustChangePassword"`).
 
 ### Tests
+
+- Fixture helpers for multi-role scenarios: `server/test/fixtures.ts` (`resetAll`, `employee`, `company`, `user`, `signIn`, `project`, `task`, `comment`).
 
 Tests use the same `DATABASE_URL` but a separate Postgres schema: `server/vitest.config.ts` sets `DB_SCHEMA=hm_test`; `test/global-setup.ts` drops and recreates that schema and runs all migrations once per run. Dev data in `public` is untouched. Files run serially (`fileParallelism: false`).

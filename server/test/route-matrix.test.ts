@@ -21,6 +21,11 @@ const CLIENT_ALLOWED = new Set([
   'POST /api/auth/forgot-password',
   'POST /api/auth/reset-password',
   'GET /api/clients/me',
+  // The client portal API (every route is ['client'] and scoped to req.user.clientId).
+  'GET /api/portal/projects',
+  'GET /api/portal/projects/:id/tasks',
+  'GET /api/portal/tasks/:id/comments',
+  'POST /api/portal/tasks/:id/comments',
 ]);
 
 // Routes that need no sign-in at all.
@@ -81,6 +86,7 @@ function collectRoutes(): { routes: FoundRoute[]; problems: string[] } {
 const concrete = (path: string) => path.replace(/:[A-Za-z]+/g, '00000000-0000-4000-a000-00000000dead');
 
 let clientAgent: request.Agent;
+const staffAgents: Record<string, request.Agent> = {};
 
 beforeAll(async () => {
   await query('TRUNCATE audit_logs, auth_tokens, sessions, users, employees, clients CASCADE');
@@ -89,6 +95,15 @@ beforeAll(async () => {
     `INSERT INTO users (email, password_hash, role, client_id) VALUES ('matrix-client@example.test', $1, 'client', $2)`,
     [await hashPassword('correct-horse-battery'), company.id],
   );
+  for (const role of ['admin', 'manager', 'employee'] as const) {
+    await query(`INSERT INTO users (email, password_hash, role) VALUES ($1, $2, $3)`, [
+      `matrix-${role}@example.test`,
+      await hashPassword('correct-horse-battery'),
+      role,
+    ]);
+    staffAgents[role] = request.agent(app);
+    await staffAgents[role].post('/api/auth/login').send({ email: `matrix-${role}@example.test`, password: 'correct-horse-battery' }).expect(200);
+  }
   clientAgent = request.agent(app);
   await clientAgent
     .post('/api/auth/login')
@@ -131,6 +146,17 @@ describe('route matrix (deny by default)', () => {
     expect(checked.length).toBeGreaterThan(15);
     // The client is still signed in (nothing above logged it out) and can read its own company.
     await clientAgent.get('/api/clients/me').expect(200);
+  });
+
+  it('staff (admin, manager, employee) get 403 on every /api/portal route', async () => {
+    const portalRoutes = collectRoutes().routes.filter(r => r.path.startsWith('/api/portal/'));
+    expect(portalRoutes.length).toBeGreaterThanOrEqual(4);
+    for (const [role, agent] of Object.entries(staffAgents)) {
+      for (const route of portalRoutes) {
+        const res = await (agent as unknown as Record<string, (u: string) => request.Test>)[route.method](concrete(route.path)).send({});
+        expect({ role, route: route.key, status: res.status }).toEqual({ role, route: route.key, status: 403 });
+      }
+    }
   });
 
   it('an anonymous caller gets 401 on every non-public route', async () => {

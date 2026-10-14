@@ -37,7 +37,8 @@ Only if a column or table is genuinely missing. Use `/create-migration`: next nu
 
 - **Every route declares its roles.** Build the router with `createRouter()` and give each route its access: `router.get('/', ['admin', 'manager'], handler)` (or `STAFF` for any staff). Deny by default: there is no way to add a route without one, and `server/test/route-matrix.test.ts` fails if a route bypasses it. Mount with `mountRouter(api, '/<module>', router)` in `app.ts`. `'session'` access is only for `/auth/me`, `/auth/logout`, `/auth/change-password`.
 - If client-role scoping exists (`req.user.clientId`), every route must also state what a client may see, and the route-matrix test must stay green.
-- Data owned by the caller (`/me`-style routes) is selected by `req.user.employeeId` / `req.user.clientId`, never by an id from the body or URL.
+- Data owned by the caller (`/me`-style routes) is selected by `req.user.employeeId` / `req.user.clientId`, never by an id from the body or URL. A record outside the caller's scope is a **404 identical to a missing id** (see `routes/tasks.ts` assignee scope and `routes/portal.ts`), never a 403.
+- Client-facing data goes through `/api/portal` (`routes/portal.ts`) with an explicit column list; never reuse a staff SELECT for clients. Use `routes/shared.ts` helpers (`isoDate`, `pageQuery`, `likePattern`, `TODAY_SQL`) and derive values like "overdue" in SQL instead of storing them.
 - Validate every body with a zod schema through `parseBody(schema, req.body)` (trim strings, bound lengths, `z.enum` for statuses, dates as `YYYY-MM-DD`). Query strings: `schema.safeParse(req.query)`. Ids: `z.uuid()`, invalid → 404. Use `.strict()` where extra fields must be rejected (as `PATCH /employees/me` does).
 - **Parameterised SQL only** (`$1`, `$2`…). Dynamic `SET` lists or sort columns come from a fixed whitelist (like the `COLUMN` map in `employees.ts`), never from request text.
 - Money: accept a number or numeric string, validate to 2 decimals, pass to Postgres as a string, return the `NUMERIC` string as-is. Never a JS float in SQL.
@@ -51,7 +52,7 @@ Only if a column or table is genuinely missing. Use `/create-migration`: next nu
 
 ## 4. Tests: `server/test/<module>.test.ts` (run in the `hm_test` schema)
 
-Copy the structure of `employees.test.ts`:
+Copy the structure of `employees.test.ts` (and `projects-tasks.test.ts` / `portal.test.ts` with the helpers in `server/test/fixtures.ts` for multi-role scenarios):
 - `beforeEach`: `TRUNCATE ... CASCADE` the module's tables plus `audit_logs, auth_tokens, sessions, users, employees`; create one user per role; sign each in with `request.agent(app)`. `afterAll`: `pool.end()`.
 - **Role matrix for every route**: expected status for admin / manager / employee / (client, if the role exists) / anonymous.
 - Fields hidden per role are absent (`not.toHaveProperty`), including in lists and summaries.

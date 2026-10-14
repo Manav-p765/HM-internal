@@ -36,6 +36,42 @@ INSERT INTO users (id, email, password_hash, role, client_id, status) VALUES
   ('00000000-0000-4000-a000-000000000602', 'client.globex1@example.test', '$2b$10$1Oz/QhsWJBXzDI5l1KQLIuIHO1qX3AskdqHU.NvBn1n1JHcXSaGWW', 'client', '00000000-0000-4000-a000-000000000502', 'active'),
   ('00000000-0000-4000-a000-000000000603', 'client.globex2@example.test', '$2b$10$1Oz/QhsWJBXzDI5l1KQLIuIHO1qX3AskdqHU.NvBn1n1JHcXSaGWW', 'client', '00000000-0000-4000-a000-000000000502', 'active');
 
+-- Projects: three client projects across the two seed companies plus one internal project.
+INSERT INTO projects (id, name, description, client_id, start_date, deadline, status, created_by) VALUES
+  ('00000000-0000-4000-a000-000000000701', 'Acme Website Redesign (Fake)', 'New marketing site for Acme.', '00000000-0000-4000-a000-000000000501', '2026-09-01', '2026-11-30', 'active',      '00000000-0000-4000-a000-000000000001'),
+  ('00000000-0000-4000-a000-000000000702', 'Globex Mobile App (Fake)',     'Customer app, phase 1.',       '00000000-0000-4000-a000-000000000502', '2026-08-15', '2026-12-15', 'active',      '00000000-0000-4000-a000-000000000002'),
+  ('00000000-0000-4000-a000-000000000703', 'Globex Brand Refresh (Fake)',  'Logo and style guide.',        '00000000-0000-4000-a000-000000000502', '2026-10-01', '2026-10-31', 'not_started', '00000000-0000-4000-a000-000000000002'),
+  ('00000000-0000-4000-a000-000000000704', 'Internal Tooling (Fake)',      'Internal admin improvements.', NULL,                                   '2026-09-15', NULL,         'active',      '00000000-0000-4000-a000-000000000001');
+
+INSERT INTO project_members (project_id, employee_id) VALUES
+  ('00000000-0000-4000-a000-000000000701', '00000000-0000-4000-a000-000000000102'),
+  ('00000000-0000-4000-a000-000000000701', '00000000-0000-4000-a000-000000000103'),
+  ('00000000-0000-4000-a000-000000000702', '00000000-0000-4000-a000-000000000102'),
+  ('00000000-0000-4000-a000-000000000702', '00000000-0000-4000-a000-000000000101'),
+  ('00000000-0000-4000-a000-000000000703', '00000000-0000-4000-a000-000000000103'),
+  ('00000000-0000-4000-a000-000000000704', '00000000-0000-4000-a000-000000000101');
+
+-- Tasks in mixed statuses, priorities and client visibility (completed_at only on completed tasks).
+INSERT INTO tasks (id, task_code, project_id, title, description, assignee_employee_id, start_date, deadline, priority, status,
+                   client_visible, completed_at, completion_comment, created_by, updated_by) VALUES
+  ('00000000-0000-4000-a000-000000000801', 'TSK-001', '00000000-0000-4000-a000-000000000701', 'Homepage design',        'Hero, features, footer.',        '00000000-0000-4000-a000-000000000103', '2026-09-01', '2026-09-20', 'high',   'completed',   true,  '2026-09-19 17:00+05:30', 'Signed off internally after QA.', '00000000-0000-4000-a000-000000000001', '00000000-0000-4000-a000-000000000002'),
+  ('00000000-0000-4000-a000-000000000802', 'TSK-002', '00000000-0000-4000-a000-000000000701', 'Build homepage',         'Implement the approved design.', '00000000-0000-4000-a000-000000000102', '2026-09-21', '2026-10-10', 'high',   'in_progress', true,  NULL, NULL, '00000000-0000-4000-a000-000000000001', '00000000-0000-4000-a000-000000000001'),
+  ('00000000-0000-4000-a000-000000000803', 'TSK-003', '00000000-0000-4000-a000-000000000701', 'Contact form + CRM hook', NULL,                             '00000000-0000-4000-a000-000000000102', '2026-10-05', '2026-10-25', 'medium', 'todo',        true,  NULL, NULL, '00000000-0000-4000-a000-000000000001', '00000000-0000-4000-a000-000000000001'),
+  ('00000000-0000-4000-a000-000000000804', 'TSK-004', '00000000-0000-4000-a000-000000000701', 'Set up staging server',  'Internal infra task.',           '00000000-0000-4000-a000-000000000103', '2026-09-05', '2026-09-12', 'low',    'completed',   false, '2026-09-11 12:00+05:30', NULL, '00000000-0000-4000-a000-000000000001', '00000000-0000-4000-a000-000000000001'),
+  ('00000000-0000-4000-a000-000000000805', 'TSK-005', '00000000-0000-4000-a000-000000000702', 'Login screens',          NULL,                             '00000000-0000-4000-a000-000000000102', '2026-08-15', '2026-09-30', 'urgent', 'in_review',   true,  NULL, 'Ready for review, see build 42.', '00000000-0000-4000-a000-000000000002', '00000000-0000-4000-a000-000000000002'),
+  ('00000000-0000-4000-a000-000000000806', 'TSK-006', '00000000-0000-4000-a000-000000000702', 'Push notifications',     'Blocked on vendor keys.',        '00000000-0000-4000-a000-000000000101', '2026-09-01', '2026-10-05', 'high',   'blocked',     true,  NULL, NULL, '00000000-0000-4000-a000-000000000002', '00000000-0000-4000-a000-000000000002'),
+  ('00000000-0000-4000-a000-000000000807', 'TSK-007', '00000000-0000-4000-a000-000000000702', 'Analytics events',       NULL,                             NULL,                                   NULL,         '2026-11-01', 'low',    'todo',        false, NULL, NULL, '00000000-0000-4000-a000-000000000002', '00000000-0000-4000-a000-000000000002'),
+  ('00000000-0000-4000-a000-000000000808', 'TSK-008', '00000000-0000-4000-a000-000000000703', 'Moodboard',              NULL,                             '00000000-0000-4000-a000-000000000103', '2026-10-01', '2026-10-08', 'medium', 'todo',        true,  NULL, NULL, '00000000-0000-4000-a000-000000000002', '00000000-0000-4000-a000-000000000002'),
+  ('00000000-0000-4000-a000-000000000809', 'TSK-009', '00000000-0000-4000-a000-000000000704', 'Audit log viewer',       NULL,                             '00000000-0000-4000-a000-000000000101', '2026-09-15', '2026-10-20', 'medium', 'in_progress', false, NULL, NULL, '00000000-0000-4000-a000-000000000001', '00000000-0000-4000-a000-000000000001'),
+  ('00000000-0000-4000-a000-000000000810', 'TSK-010', '00000000-0000-4000-a000-000000000704', 'Backup script',          NULL,                             NULL,                                   NULL,         NULL,         'low',    'todo',        false, NULL, NULL, '00000000-0000-4000-a000-000000000001', '00000000-0000-4000-a000-000000000001');
+
+INSERT INTO task_comments (task_id, author_user_id, comment_type, body, created_at) VALUES
+  ('00000000-0000-4000-a000-000000000801', '00000000-0000-4000-a000-000000000002', 'internal_note',   'Internal: client asked for a darker hero; we kept brand colours.', '2026-09-18 11:00+05:30'),
+  ('00000000-0000-4000-a000-000000000801', '00000000-0000-4000-a000-000000000002', 'client_feedback', 'The homepage design is ready for your review.',                     '2026-09-19 17:05+05:30'),
+  ('00000000-0000-4000-a000-000000000801', '00000000-0000-4000-a000-000000000601', 'client_feedback', 'Looks great, approved.',                                             '2026-09-20 10:00+05:30'),
+  ('00000000-0000-4000-a000-000000000805', '00000000-0000-4000-a000-000000000003', 'internal_note',   'Internal: OTP edge case still flaky on Android.',                    '2026-10-01 15:30+05:30'),
+  ('00000000-0000-4000-a000-000000000805', '00000000-0000-4000-a000-000000000602', 'client_feedback', 'Can the login screen show our logo larger?',                         '2026-10-02 09:15+05:30');
+
 -- Invoices: one paid, one sent + partially paid, one draft
 INSERT INTO invoices (id, invoice_number, client_name, client_email, client_address, client_gstin, invoice_date, due_date, subtotal, tax_rate, tax_amount, total_amount, status, notes, created_by) VALUES
   ('00000000-0000-4000-a000-000000000201', 'INV-DEV-001', 'Acme Corp (Fake)',   'billing@acme.example.test',   '42 Sample Road, Faketown', '00BBBBB0000B0Z0', '2026-08-01', '2026-08-16', 100000.00, 18, 18000.00, 118000.00, 'paid',  NULL,                 '00000000-0000-4000-a000-000000000001'),

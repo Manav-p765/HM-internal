@@ -12,6 +12,9 @@ import { authRouter } from './routes/auth.js';
 import { usersRouter } from './routes/users.js';
 import { employeesRouter } from './routes/employees.js';
 import { clientsRouter } from './routes/clients.js';
+import { projectsRouter } from './routes/projects.js';
+import { commentsRouter, tasksRouter } from './routes/tasks.js';
+import { portalRouter } from './routes/portal.js';
 import { createRouter, mountRouter } from './middleware/access.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -61,6 +64,10 @@ mountRouter(api, '/auth', authRouter);
 mountRouter(api, '/users', usersRouter);
 mountRouter(api, '/employees', employeesRouter);
 mountRouter(api, '/clients', clientsRouter);
+mountRouter(api, '/projects', projectsRouter);
+mountRouter(api, '/tasks', tasksRouter);
+mountRouter(api, '/comments', commentsRouter);
+mountRouter(api, '/portal', portalRouter);
 
 api.use(apiNotFound);
 app.use('/api', api);

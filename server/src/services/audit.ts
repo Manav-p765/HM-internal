@@ -20,7 +20,18 @@ export type AuditAction =
   | 'client.created'
   | 'client.updated'
   | 'client.deactivated'
-  | 'client.reactivated';
+  | 'client.reactivated'
+  | 'project.created'
+  | 'project.updated'
+  | 'project.members_updated'
+  | 'project.archived'
+  | 'project.unarchived'
+  | 'task.created'
+  | 'task.updated'
+  | 'task.deleted'
+  | 'task.status_changed'
+  | 'comment.created'
+  | 'comment.deleted';
 
 interface AuditEntry {
   action: AuditAction;
