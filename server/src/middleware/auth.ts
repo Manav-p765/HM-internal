@@ -10,7 +10,11 @@ export interface SessionUser {
   role: Role;
   employeeId: string | null;
   mustChangePassword: boolean;
-  name: string | null; // employee full name when the account is linked to an employee
+  // From the linked employee record (null when the account isn't linked to one).
+  name: string | null;
+  designation: string | null;
+  department: string | null;
+  avatarUrl: string | null;
 }
 
 declare global {
@@ -24,7 +28,8 @@ declare global {
 export async function loadSessionUser(userId: string): Promise<SessionUser | null> {
   const rows = await query<SessionUser>(
     `SELECT u.id, u.email, u.role, u.employee_id AS "employeeId",
-            u.must_change_password AS "mustChangePassword", e.full_name AS name
+            u.must_change_password AS "mustChangePassword", e.full_name AS name,
+            e.designation, e.department, e.avatar_url AS "avatarUrl"
        FROM users u
        LEFT JOIN employees e ON e.id = u.employee_id
       WHERE u.id = $1 AND u.status = 'active'`,

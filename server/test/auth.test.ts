@@ -63,6 +63,9 @@ describe('login', () => {
       employeeId: null,
       mustChangePassword: false,
       name: null,
+      designation: null,
+      department: null,
+      avatarUrl: null,
     });
     expect(JSON.stringify(login.body)).not.toContain('password_hash');
 

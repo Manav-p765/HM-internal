@@ -12,7 +12,11 @@ export type AuditAction =
   | 'user.updated'
   | 'user.disabled'
   | 'user.enabled'
-  | 'user.credentials_resent';
+  | 'user.credentials_resent'
+  | 'employee.created'
+  | 'employee.updated'
+  | 'employee.deactivated'
+  | 'employee.reactivated';
 
 interface AuditEntry {
   action: AuditAction;

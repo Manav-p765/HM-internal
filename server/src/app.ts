@@ -10,6 +10,7 @@ import { apiNotFound, errorHandler } from './middleware/errors.js';
 import { checkOrigin } from './middleware/security.js';
 import { authRouter } from './routes/auth.js';
 import { usersRouter } from './routes/users.js';
+import { employeesRouter } from './routes/employees.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(here, '../../client/dist');
@@ -52,6 +53,7 @@ api.get('/health', async (_req, res) => {
 
 api.use('/auth', authRouter);
 api.use('/users', usersRouter);
+api.use('/employees', employeesRouter);
 
 api.use(apiNotFound);
 app.use('/api', api);
