@@ -21,13 +21,12 @@ import { roundToTwoDecimals } from '../utils/formatters';
 
 const STORAGE_KEYS = {
   SETTINGS: 'monks_company_settings_v1',
-  EMPLOYEES: 'monks_employees_v1',
   TRANSACTIONS: 'monks_transactions_v1',
   INVOICES: 'monks_invoices_v1',
-  SALARIES: 'monks_salaries_v1',
-  SALARY_SLIPS: 'monks_salary_slips_v1',
-  ATTENDANCE: 'monks_attendance_v1',
-  LEAVES: 'monks_leaves_v1',
+  SALARIES: 'monks_salaries_v2',
+  SALARY_SLIPS: 'monks_salary_slips_v2',
+  ATTENDANCE: 'monks_attendance_v2',
+  LEAVES: 'monks_leaves_v2',
   ACTIVITY_LOGS: 'monks_activity_logs_v1',
   AUDIT_LOGS: 'monks_audit_logs_v1',
 };
@@ -51,111 +50,7 @@ const INITIAL_SETTINGS: CompanySettings = {
   weeklyWorkingDays: 5,
 };
 
-const INITIAL_EMPLOYEES: Employee[] = [
-  {
-    id: 'EMP-001',
-    fullName: 'Arjun Mehta',
-    workEmail: 'arjun.mehta@hybridmonks.com',
-    phoneNumber: '+91 98201 12345',
-    department: 'Engineering',
-    designation: 'Lead Full-Stack Architect',
-    joiningDate: '2024-03-15',
-    status: 'Active',
-    monthlySalary: 185000,
-    paymentMethod: 'Bank Transfer',
-    notes: 'Core architecture and cloud infrastructure lead.',
-    avatarUrl: '/avatars/avatar-1.jpg',
-    userId: 'usr_arjun',
-    accountStatus: 'Active',
-    lastLogin: '2026-10-08T09:15:00.000Z',
-    createdAt: '2024-03-15T09:00:00.000Z',
-  },
-  {
-    id: 'EMP-002',
-    fullName: 'Priya Sharma',
-    workEmail: 'priya.sharma@hybridmonks.com',
-    phoneNumber: '+91 98190 23456',
-    department: 'Finance',
-    designation: 'Finance & Operations Lead',
-    joiningDate: '2024-06-01',
-    status: 'Active',
-    monthlySalary: 160000,
-    paymentMethod: 'Bank Transfer',
-    notes: 'Handles accounting, client billing, and compliance.',
-    avatarUrl: '/avatars/avatar-2.jpg',
-    userId: 'usr_manager',
-    accountStatus: 'Active',
-    lastLogin: '2026-10-09T08:45:00.000Z',
-    createdAt: '2024-06-01T09:00:00.000Z',
-  },
-  {
-    id: 'EMP-003',
-    fullName: 'Rahul Verma',
-    workEmail: 'rahul.verma@hybridmonks.com',
-    phoneNumber: '+91 98765 43210',
-    department: 'Engineering',
-    designation: 'Senior Frontend Engineer',
-    joiningDate: '2024-09-10',
-    status: 'Active',
-    monthlySalary: 140000,
-    paymentMethod: 'Bank Transfer',
-    notes: 'Design systems and React web applications.',
-    avatarUrl: '/avatars/avatar-1.jpg',
-    userId: 'usr_employee',
-    accountStatus: 'Active',
-    lastLogin: '2026-10-09T09:20:00.000Z',
-    createdAt: '2024-09-10T09:00:00.000Z',
-  },
-  {
-    id: 'EMP-004',
-    fullName: 'Ananya Roy',
-    workEmail: 'ananya.roy@hybridmonks.com',
-    phoneNumber: '+91 99302 54321',
-    department: 'Design',
-    designation: 'Product Design Lead',
-    joiningDate: '2025-01-12',
-    status: 'Active',
-    monthlySalary: 155000,
-    paymentMethod: 'Bank Transfer',
-    notes: 'Brand design, Figma UI systems, user research.',
-    avatarUrl: '/avatars/avatar-2.jpg',
-    accountStatus: 'Not Created',
-    createdAt: '2025-01-12T09:00:00.000Z',
-  },
-  {
-    id: 'EMP-005',
-    fullName: 'Karan Singhania',
-    workEmail: 'karan.s@hybridmonks.com',
-    phoneNumber: '+91 97690 98765',
-    department: 'Marketing',
-    designation: 'Growth & Brand Marketing Lead',
-    joiningDate: '2025-04-01',
-    status: 'Active',
-    monthlySalary: 125000,
-    paymentMethod: 'Bank Transfer',
-    notes: 'Inbound campaigns and enterprise partnerships.',
-    avatarUrl: '/avatars/avatar-1.jpg',
-    accountStatus: 'Not Created',
-    createdAt: '2025-04-01T09:00:00.000Z',
-  },
-  {
-    id: 'EMP-006',
-    fullName: 'Neha Kapoor',
-    workEmail: 'neha.kapoor@hybridmonks.com',
-    phoneNumber: '+91 98450 67890',
-    department: 'Operations',
-    designation: 'Client Success Manager',
-    joiningDate: '2025-07-15',
-    status: 'On Leave',
-    monthlySalary: 110000,
-    paymentMethod: 'Bank Transfer',
-    notes: 'On planned parental leave until November 2026.',
-    avatarUrl: '/avatars/avatar-2.jpg',
-    accountStatus: 'Not Created',
-    createdAt: '2025-07-15T09:00:00.000Z',
-  },
-];
-
+// Employees live in Postgres now (/api/employees); there is no local employee seed.
 const INITIAL_TRANSACTIONS: Transaction[] = [
   {
     id: 'TXN-2026-089',
@@ -417,425 +312,18 @@ const INITIAL_INVOICES: Invoice[] = [
   },
 ];
 
-const INITIAL_SALARIES: SalaryRecord[] = [
-  // September 2026 - Paid
-  {
-    id: 'SAL-2026-09-EMP001',
-    employeeId: 'EMP-001',
-    employeeName: 'Arjun Mehta',
-    employeeEmail: 'arjun.mehta@hybridmonks.com',
-    department: 'Engineering',
-    salaryMonth: '2026-09',
-    baseSalary: 185000,
-    adjustments: 0,
-    finalPayableAmount: 185000,
-    paymentDate: '2026-09-30',
-    paymentMethod: 'Bank Transfer',
-    status: 'Paid',
-    linkedExpenseTxnId: 'TXN-2026-086',
-    isSlipPublished: true,
-    notes: 'Disbursed via batch payroll.',
-    createdAt: '2026-09-25T10:00:00.000Z',
-    updatedAt: '2026-09-30T17:00:00.000Z',
-  },
-  {
-    id: 'SAL-2026-09-EMP002',
-    employeeId: 'EMP-002',
-    employeeName: 'Priya Sharma',
-    employeeEmail: 'priya.sharma@hybridmonks.com',
-    department: 'Finance',
-    salaryMonth: '2026-09',
-    baseSalary: 160000,
-    adjustments: 0,
-    finalPayableAmount: 160000,
-    paymentDate: '2026-09-30',
-    paymentMethod: 'Bank Transfer',
-    status: 'Paid',
-    linkedExpenseTxnId: 'TXN-2026-086',
-    isSlipPublished: true,
-    notes: 'Disbursed via batch payroll.',
-    createdAt: '2026-09-25T10:00:00.000Z',
-    updatedAt: '2026-09-30T17:00:00.000Z',
-  },
-  {
-    id: 'SAL-2026-09-EMP003',
-    employeeId: 'EMP-003',
-    employeeName: 'Rahul Verma',
-    employeeEmail: 'rahul.verma@hybridmonks.com',
-    department: 'Engineering',
-    salaryMonth: '2026-09',
-    baseSalary: 140000,
-    adjustments: 0,
-    finalPayableAmount: 140000,
-    paymentDate: '2026-09-30',
-    paymentMethod: 'Bank Transfer',
-    status: 'Paid',
-    linkedExpenseTxnId: 'TXN-2026-086',
-    isSlipPublished: true,
-    notes: 'Disbursed via batch payroll.',
-    createdAt: '2026-09-25T10:00:00.000Z',
-    updatedAt: '2026-09-30T17:00:00.000Z',
-  },
-  {
-    id: 'SAL-2026-09-EMP004',
-    employeeId: 'EMP-004',
-    employeeName: 'Ananya Roy',
-    employeeEmail: 'ananya.roy@hybridmonks.com',
-    department: 'Design',
-    salaryMonth: '2026-09',
-    baseSalary: 155000,
-    adjustments: 0,
-    finalPayableAmount: 155000,
-    paymentDate: '2026-09-30',
-    paymentMethod: 'Bank Transfer',
-    status: 'Paid',
-    linkedExpenseTxnId: 'TXN-2026-086',
-    isSlipPublished: true,
-    notes: 'Disbursed via batch payroll.',
-    createdAt: '2026-09-25T10:00:00.000Z',
-    updatedAt: '2026-09-30T17:00:00.000Z',
-  },
-  {
-    id: 'SAL-2026-09-EMP005',
-    employeeId: 'EMP-005',
-    employeeName: 'Karan Singhania',
-    employeeEmail: 'karan.s@hybridmonks.com',
-    department: 'Marketing',
-    salaryMonth: '2026-09',
-    baseSalary: 125000,
-    adjustments: 0,
-    finalPayableAmount: 125000,
-    paymentDate: '2026-09-30',
-    paymentMethod: 'Bank Transfer',
-    status: 'Paid',
-    linkedExpenseTxnId: 'TXN-2026-086',
-    isSlipPublished: true,
-    notes: 'Disbursed via batch payroll.',
-    createdAt: '2026-09-25T10:00:00.000Z',
-    updatedAt: '2026-09-30T17:00:00.000Z',
-  },
-  // October 2026 - Generated & Pending
-  {
-    id: 'SAL-2026-10-EMP001',
-    employeeId: 'EMP-001',
-    employeeName: 'Arjun Mehta',
-    employeeEmail: 'arjun.mehta@hybridmonks.com',
-    department: 'Engineering',
-    salaryMonth: '2026-10',
-    baseSalary: 185000,
-    adjustments: 5000,
-    finalPayableAmount: 190000,
-    status: 'Pending',
-    isSlipPublished: false,
-    notes: 'Includes Q3 performance retention bonus of ₹5,000.',
-    createdAt: '2026-10-01T09:00:00.000Z',
-    updatedAt: '2026-10-01T09:00:00.000Z',
-  },
-  {
-    id: 'SAL-2026-10-EMP002',
-    employeeId: 'EMP-002',
-    employeeName: 'Priya Sharma',
-    employeeEmail: 'priya.sharma@hybridmonks.com',
-    department: 'Finance',
-    salaryMonth: '2026-10',
-    baseSalary: 160000,
-    adjustments: 0,
-    finalPayableAmount: 160000,
-    status: 'Pending',
-    isSlipPublished: false,
-    notes: 'October scheduled salary.',
-    createdAt: '2026-10-01T09:00:00.000Z',
-    updatedAt: '2026-10-01T09:00:00.000Z',
-  },
-  {
-    id: 'SAL-2026-10-EMP003',
-    employeeId: 'EMP-003',
-    employeeName: 'Rahul Verma',
-    employeeEmail: 'rahul.verma@hybridmonks.com',
-    department: 'Engineering',
-    salaryMonth: '2026-10',
-    baseSalary: 140000,
-    adjustments: 0,
-    finalPayableAmount: 140000,
-    status: 'Pending',
-    isSlipPublished: false,
-    notes: 'October scheduled salary.',
-    createdAt: '2026-10-01T09:00:00.000Z',
-    updatedAt: '2026-10-01T09:00:00.000Z',
-  },
-];
+const INITIAL_SALARIES: SalaryRecord[] = [];
 
 // Initial Seed Salary Slips (Published for September 2026)
-const INITIAL_SALARY_SLIPS: SalarySlip[] = [
-  {
-    id: 'SLIP-2026-09-EMP003',
-    salaryRecordId: 'SAL-2026-09-EMP003',
-    employeeId: 'EMP-003',
-    employeeName: 'Rahul Verma',
-    employeeEmail: 'rahul.verma@hybridmonks.com',
-    department: 'Engineering',
-    designation: 'Senior Frontend Engineer',
-    salaryMonth: '2026-09',
-    issueDate: '2026-09-30',
-    basicSalary: 140000,
-    allowances: [
-      { title: 'House Rent Allowance (HRA)', amount: 42000 },
-      { title: 'Special Allowance', amount: 28000 },
-      { title: 'Internet & Remote Allowance', amount: 3500 },
-    ],
-    deductions: [
-      { title: 'Professional Tax', amount: 200 },
-      { title: 'Provident Fund (Employee)', amount: 1800 },
-    ],
-    netPayable: 140000,
-    paymentDate: '2026-09-30',
-    paymentMethod: 'Bank Transfer',
-    paymentStatus: 'Paid',
-    isPublished: true,
-    publishedAt: '2026-09-30T18:00:00.000Z',
-    publishedBy: 'Priya Sharma',
-  },
-  {
-    id: 'SLIP-2026-09-EMP001',
-    salaryRecordId: 'SAL-2026-09-EMP001',
-    employeeId: 'EMP-001',
-    employeeName: 'Arjun Mehta',
-    employeeEmail: 'arjun.mehta@hybridmonks.com',
-    department: 'Engineering',
-    designation: 'Lead Full-Stack Architect',
-    salaryMonth: '2026-09',
-    issueDate: '2026-09-30',
-    basicSalary: 185000,
-    allowances: [
-      { title: 'House Rent Allowance (HRA)', amount: 55500 },
-      { title: 'Special Allowance', amount: 37000 },
-    ],
-    deductions: [
-      { title: 'Professional Tax', amount: 200 },
-      { title: 'Provident Fund (Employee)', amount: 1800 },
-    ],
-    netPayable: 185000,
-    paymentDate: '2026-09-30',
-    paymentMethod: 'Bank Transfer',
-    paymentStatus: 'Paid',
-    isPublished: true,
-    publishedAt: '2026-09-30T18:00:00.000Z',
-    publishedBy: 'Priya Sharma',
-  },
-];
+const INITIAL_SALARY_SLIPS: SalarySlip[] = [];
 
 // Initial Seed Attendance Records (October 2026 workdays)
-const INITIAL_ATTENDANCE: AttendanceRecord[] = [
-  // Today's records (2026-10-09)
-  {
-    id: 'ATT-2026-10-09-EMP003',
-    employeeId: 'EMP-003',
-    employeeName: 'Rahul Verma',
-    department: 'Engineering',
-    date: '2026-10-09',
-    punchIn: '2026-10-09T03:55:00.000Z', // 09:25 AM IST (03:55 UTC)
-    durationMinutes: 480,
-    status: 'Working',
-  },
-  {
-    id: 'ATT-2026-10-09-EMP001',
-    employeeId: 'EMP-001',
-    employeeName: 'Arjun Mehta',
-    department: 'Engineering',
-    date: '2026-10-09',
-    punchIn: '2026-10-09T03:45:00.000Z',
-    durationMinutes: 490,
-    status: 'Working',
-  },
-  {
-    id: 'ATT-2026-10-09-EMP002',
-    employeeId: 'EMP-002',
-    employeeName: 'Priya Sharma',
-    department: 'Finance',
-    date: '2026-10-09',
-    punchIn: '2026-10-09T03:50:00.000Z',
-    durationMinutes: 485,
-    status: 'Working',
-  },
-  {
-    id: 'ATT-2026-10-09-EMP004',
-    employeeId: 'EMP-004',
-    employeeName: 'Ananya Roy',
-    department: 'Design',
-    date: '2026-10-09',
-    punchIn: '2026-10-09T04:15:00.000Z', // Late: 09:45 AM IST
-    durationMinutes: 460,
-    status: 'Working',
-  },
-  // Yesterday (2026-10-08)
-  {
-    id: 'ATT-2026-10-08-EMP003',
-    employeeId: 'EMP-003',
-    employeeName: 'Rahul Verma',
-    department: 'Engineering',
-    date: '2026-10-08',
-    punchIn: '2026-10-08T03:52:00.000Z',
-    punchOut: '2026-10-08T13:02:00.000Z', // 06:32 PM IST
-    durationMinutes: 550,
-    status: 'Present',
-  },
-  {
-    id: 'ATT-2026-10-08-EMP001',
-    employeeId: 'EMP-001',
-    employeeName: 'Arjun Mehta',
-    department: 'Engineering',
-    date: '2026-10-08',
-    punchIn: '2026-10-08T03:40:00.000Z',
-    punchOut: '2026-10-08T13:10:00.000Z',
-    durationMinutes: 570,
-    status: 'Present',
-  },
-  {
-    id: 'ATT-2026-10-08-EMP002',
-    employeeId: 'EMP-002',
-    employeeName: 'Priya Sharma',
-    department: 'Finance',
-    date: '2026-10-08',
-    punchIn: '2026-10-08T03:55:00.000Z',
-    punchOut: '2026-10-08T12:55:00.000Z',
-    durationMinutes: 540,
-    status: 'Present',
-  },
-  {
-    id: 'ATT-2026-10-07-EMP003',
-    employeeId: 'EMP-003',
-    employeeName: 'Rahul Verma',
-    department: 'Engineering',
-    date: '2026-10-07',
-    punchIn: '2026-10-07T03:58:00.000Z',
-    punchOut: '2026-10-07T13:00:00.000Z',
-    durationMinutes: 542,
-    status: 'Present',
-  },
-];
+const INITIAL_ATTENDANCE: AttendanceRecord[] = [];
 
 // Initial Seed Leave Requests
-const INITIAL_LEAVES: LeaveRequest[] = [
-  {
-    id: 'LV-2026-001',
-    employeeId: 'EMP-003',
-    employeeName: 'Rahul Verma',
-    employeeEmail: 'rahul.verma@hybridmonks.com',
-    department: 'Engineering',
-    leaveType: 'Earned Leave',
-    startDate: '2026-10-24',
-    endDate: '2026-10-27',
-    dayType: 'Full Day',
-    totalDays: 4,
-    reason: 'Family celebration and Diwali festival travel.',
-    status: 'Pending',
-    appliedAt: '2026-10-06T10:15:00.000Z',
-    createdAt: '2026-10-06T10:15:00.000Z',
-    updatedAt: '2026-10-06T10:15:00.000Z',
-  },
-  {
-    id: 'LV-2026-002',
-    employeeId: 'EMP-001',
-    employeeName: 'Arjun Mehta',
-    employeeEmail: 'arjun.mehta@hybridmonks.com',
-    department: 'Engineering',
-    leaveType: 'Casual Leave',
-    startDate: '2026-10-15',
-    endDate: '2026-10-15',
-    dayType: 'Half Day',
-    halfDayPeriod: 'Second Half',
-    totalDays: 0.5,
-    reason: 'Personal bank appointment and documentation.',
-    status: 'Pending',
-    appliedAt: '2026-10-07T14:30:00.000Z',
-    createdAt: '2026-10-07T14:30:00.000Z',
-    updatedAt: '2026-10-07T14:30:00.000Z',
-  },
-  {
-    id: 'LV-2026-003',
-    employeeId: 'EMP-003',
-    employeeName: 'Rahul Verma',
-    employeeEmail: 'rahul.verma@hybridmonks.com',
-    department: 'Engineering',
-    leaveType: 'Sick Leave',
-    startDate: '2026-09-18',
-    endDate: '2026-09-19',
-    dayType: 'Full Day',
-    totalDays: 2,
-    reason: 'Viral fever and doctor prescribed recovery rest.',
-    status: 'Approved',
-    appliedAt: '2026-09-17T18:00:00.000Z',
-    reviewedBy: 'Alex Monks',
-    reviewedByRole: 'admin',
-    reviewedAt: '2026-09-18T09:00:00.000Z',
-    reviewerComment: 'Approved. Take care and rest well.',
-    createdAt: '2026-09-17T18:00:00.000Z',
-    updatedAt: '2026-09-18T09:00:00.000Z',
-  },
-  {
-    id: 'LV-2026-004',
-    employeeId: 'EMP-002',
-    employeeName: 'Priya Sharma',
-    employeeEmail: 'priya.sharma@hybridmonks.com',
-    department: 'Finance',
-    leaveType: 'Casual Leave',
-    startDate: '2026-09-04',
-    endDate: '2026-09-04',
-    dayType: 'Full Day',
-    totalDays: 1,
-    reason: 'Family event in Pune.',
-    status: 'Approved',
-    appliedAt: '2026-09-01T11:00:00.000Z',
-    reviewedBy: 'Alex Monks',
-    reviewedByRole: 'admin',
-    reviewedAt: '2026-09-01T15:20:00.000Z',
-    reviewerComment: 'Approved. Handover finance approvals before leaving.',
-    createdAt: '2026-09-01T11:00:00.000Z',
-    updatedAt: '2026-09-01T15:20:00.000Z',
-  },
-  {
-    id: 'LV-2026-005',
-    employeeId: 'EMP-004',
-    employeeName: 'Ananya Roy',
-    employeeEmail: 'ananya.roy@hybridmonks.com',
-    department: 'Design',
-    leaveType: 'Unpaid Leave',
-    startDate: '2026-09-22',
-    endDate: '2026-09-25',
-    dayType: 'Full Day',
-    totalDays: 4,
-    reason: 'Personal workshop trip.',
-    status: 'Rejected',
-    appliedAt: '2026-09-15T10:00:00.000Z',
-    reviewedBy: 'Priya Sharma',
-    reviewedByRole: 'manager',
-    reviewedAt: '2026-09-16T11:30:00.000Z',
-    rejectionReason: 'Major client milestone delivery scheduled during this sprint period.',
-    createdAt: '2026-09-15T10:00:00.000Z',
-    updatedAt: '2026-09-16T11:30:00.000Z',
-  },
-  {
-    id: 'LV-2026-006',
-    employeeId: 'EMP-006',
-    employeeName: 'Neha Kapoor',
-    employeeEmail: 'neha.kapoor@hybridmonks.com',
-    department: 'Operations',
-    leaveType: 'Earned Leave',
-    startDate: '2026-10-01',
-    endDate: '2026-10-31',
-    dayType: 'Full Day',
-    totalDays: 22,
-    reason: 'Extended parental leave as approved by HR leadership.',
-    status: 'Approved',
-    appliedAt: '2026-09-20T10:00:00.000Z',
-    reviewedBy: 'Alex Monks',
-    reviewedByRole: 'admin',
-    reviewedAt: '2026-09-21T12:00:00.000Z',
-    reviewerComment: 'Parental leave approved according to company policy.',
-    createdAt: '2026-09-20T10:00:00.000Z',
-    updatedAt: '2026-09-21T12:00:00.000Z',
-  },
-];
+// Leave, attendance, salary and slip seed rows referenced the old localStorage employee ids (EMP-00x)
+// and were removed when employees moved to the API. These modules are rebuilt on the API later.
+const INITIAL_LEAVES: LeaveRequest[] = [];
 
 const INITIAL_ACTIVITY_LOGS: ActivityLog[] = [
   {
@@ -992,7 +480,8 @@ export class StorageService {
     return records.find(r => r.employeeId === employeeId && r.date === today) || null;
   }
 
-  static punchIn(employeeId: string): { success: boolean; record?: AttendanceRecord; error?: string } {
+  static punchIn(emp: { id: string; fullName: string; department: string }): { success: boolean; record?: AttendanceRecord; error?: string } {
+    const employeeId = emp.id;
     const today = new Date().toISOString().split('T')[0];
     const records = this.getAttendance();
     const existing = records.find(r => r.employeeId === employeeId && r.date === today);
@@ -1002,12 +491,6 @@ export class StorageService {
         return { success: false, error: 'You have already completed attendance for today.' };
       }
       return { success: false, error: 'You are already punched in.' };
-    }
-
-    const employees = this.getEmployees();
-    const emp = employees.find(e => e.id === employeeId);
-    if (!emp) {
-      return { success: false, error: 'Employee record not found.' };
     }
 
     const serverNow = new Date().toISOString();
@@ -1198,6 +681,7 @@ export class StorageService {
 
   static applyLeave(data: {
     employeeId: string;
+    employee: { id: string; fullName: string; workEmail: string; department: string; status: string };
     leaveType: LeaveType;
     startDate: string;
     endDate: string;
@@ -1220,12 +704,8 @@ export class StorageService {
       return { success: false, error: 'Half-day leave must be for a single date.' };
     }
 
-    const employees = this.getEmployees();
-    const emp = employees.find(e => e.id === data.employeeId);
-    if (!emp) {
-      return { success: false, error: 'Employee record not found.' };
-    }
-    if (emp.status === 'Inactive') {
+    const emp = data.employee;
+    if (emp.status === 'inactive') {
       return { success: false, error: 'Inactive employee accounts cannot apply for leave.' };
     }
 
@@ -1544,77 +1024,6 @@ export class StorageService {
     this.addLog('Alex Monks', 'admin', 'Updated Settings', 'Updated company profile and financial parameters', 'settings');
   }
 
-  static getEmployees(): Employee[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.EMPLOYEES);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.EMPLOYEES, JSON.stringify(INITIAL_EMPLOYEES));
-      return INITIAL_EMPLOYEES;
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return INITIAL_EMPLOYEES;
-    }
-  }
-
-  static saveEmployees(employees: Employee[]): void {
-    localStorage.setItem(STORAGE_KEYS.EMPLOYEES, JSON.stringify(employees));
-  }
-
-  static addEmployee(employee: Omit<Employee, 'id' | 'createdAt'>): Employee {
-    const employees = this.getEmployees();
-    const highestId = employees.reduce((max, e) => {
-      const match = e.id.match(/EMP-(\d+)/);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        return num > max ? num : max;
-      }
-      return max;
-    }, 0);
-    const newId = `EMP-${String(highestId + 1).padStart(3, '0')}`;
-    const newEmployee: Employee = {
-      ...employee,
-      id: newId,
-      createdAt: new Date().toISOString(),
-    };
-    employees.push(newEmployee);
-    this.saveEmployees(employees);
-    this.addLog('Admin', 'admin', 'Added Employee', `Added ${employee.fullName} (${employee.designation})`, 'employee');
-    return newEmployee;
-  }
-
-  static updateEmployee(employee: Employee): void {
-    const employees = this.getEmployees();
-    const index = employees.findIndex(e => e.id === employee.id);
-    if (index !== -1) {
-      employees[index] = employee;
-      this.saveEmployees(employees);
-      this.addLog('Admin', 'admin', 'Updated Employee', `Updated details for ${employee.fullName}`, 'employee');
-    }
-  }
-
-  static deactivateEmployee(id: string): void {
-    const employees = this.getEmployees();
-    const emp = employees.find(e => e.id === id);
-    if (emp) {
-      emp.status = 'Inactive';
-      this.saveEmployees(employees);
-
-      this.addLog('Admin', 'admin', 'Deactivated Employee', `Deactivated employee ${emp.fullName}`, 'employee');
-    }
-  }
-
-  static reactivateEmployee(id: string): void {
-    const employees = this.getEmployees();
-    const emp = employees.find(e => e.id === id);
-    if (emp) {
-      emp.status = 'Active';
-      this.saveEmployees(employees);
-
-      this.addLog('Admin', 'admin', 'Reactivated Employee', `Reactivated employee ${emp.fullName}`, 'employee');
-    }
-  }
-
   static getTransactions(): Transaction[] {
     const raw = localStorage.getItem(STORAGE_KEYS.TRANSACTIONS);
     if (!raw) {
@@ -1879,8 +1288,12 @@ export class StorageService {
     localStorage.setItem(STORAGE_KEYS.SALARIES, JSON.stringify(salaries));
   }
 
-  static generateMonthlySalaries(month: string, generatedBy: string = 'Admin'): { createdCount: number; skippedCount: number } {
-    const employees = this.getEmployees().filter(e => e.status === 'Active');
+  static generateMonthlySalaries(
+    month: string,
+    activeEmployees: Employee[],
+    generatedBy: string = 'Admin'
+  ): { createdCount: number; skippedCount: number } {
+    const employees = activeEmployees.filter(e => e.status === 'active');
     const existingSalaries = this.getSalaries();
     let createdCount = 0;
     let skippedCount = 0;
@@ -1898,15 +1311,15 @@ export class StorageService {
       }
 
       const record: SalaryRecord = {
-        id: `SAL-${month}-${emp.id.replace('-', '')}`,
+        id: `SAL-${month}-${emp.id}`,
         employeeId: emp.id,
         employeeName: emp.fullName,
         employeeEmail: emp.workEmail,
         department: emp.department,
         salaryMonth: month,
-        baseSalary: roundToTwoDecimals(emp.monthlySalary),
+        baseSalary: roundToTwoDecimals(Number(emp.monthlySalary ?? 0)),
         adjustments: 0,
-        finalPayableAmount: roundToTwoDecimals(emp.monthlySalary),
+        finalPayableAmount: roundToTwoDecimals(Number(emp.monthlySalary ?? 0)),
         status: 'Pending',
         isSlipPublished: false,
         notes: `Auto-generated monthly salary for ${month}`,

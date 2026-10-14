@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
+import { employeesApi } from '../../api/employees';
+import { useApiData } from '../../api/useApiData';
 import { AttendanceRecord, Department } from '../../types';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
@@ -23,11 +25,14 @@ import { formatDate, exportToCSV } from '../../utils/formatters';
 export const AdminAttendanceView: React.FC = () => {
   const {
     attendance,
-    employees,
     correctAttendance,
     currentUser,
     settings,
   } = useApp();
+
+  // Deferred module: employees now come from the API, attendance records are still local.
+  const roster = useApiData(() => employeesApi.list({ status: 'active', limit: 200 }), []);
+  const employees = roster.data?.employees ?? [];
 
   const todayStr = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
@@ -43,7 +48,7 @@ export const AdminAttendanceView: React.FC = () => {
 
   // Active employees
   const activeEmployees = useMemo(() => {
-    return employees.filter(e => e.status === 'Active');
+    return employees.filter(e => e.status === 'active');
   }, [employees]);
 
   // Today's stats

@@ -46,12 +46,24 @@ npm run create-admin -w server -- --email you@example.com   # create an admin (h
 
 ### Migration in progress: localStorage → Express + Postgres
 
-The app started as a client-only prototype storing everything in localStorage. Auth and user management are now server-side; the other domains (employees, invoices, transactions, salaries, salary slips, attendance, leaves, settings, activity/audit logs) still live in `client/src/services/storage.ts` (`StorageService`) and are wired through `client/src/context/AppContext.tsx`. Each phase moves one domain to the server. The users/auth implementation is the reference pattern:
+The app started as a client-only prototype storing everything in localStorage. Auth, user management and **employees** are now server-side; the other domains (invoices, transactions, salaries, salary slips, attendance, leaves, settings, activity/audit logs) still live in `client/src/services/storage.ts` (`StorageService`) and are wired through `client/src/context/AppContext.tsx`. Each phase moves one domain to the server. **Employees is the reference pattern** to copy:
 
-- **Server route**: `server/src/routes/users.ts` — `Router()` with `requireAuth` + `requireRole(...)`, zod schemas validated via `parseBody()`, ids parsed with `z.uuid()` (invalid → 404), `HttpError(status, message, CODE)` for failures, `withTransaction()` for multi-statement writes with `FOR UPDATE` locking, `audit(req, {...})` after successful mutations. Mounted in `server/src/app.ts` under the `api` router.
+- **Server route**: `server/src/routes/employees.ts` — `requireAuth` on the whole router, `requireRole(...)` per route, zod schemas validated via `parseBody()` (unknown keys are stripped; use `.strict()` where extra fields must be rejected), ids parsed with `z.uuid()` (invalid → 404), `HttpError(status, message, CODE)` for failures, `withTransaction()` for multi-statement writes with `FOR UPDATE` locking, `audit(req, {...})` after successful mutations (field names, never values like salaries). Unique violations (`23505`) become 409s. Static paths (`/directory`, `/me`) are declared before `/:id`. Mounted in `server/src/app.ts`.
+- **Role-scoped fields**: fields only admins may see (salary: `monthlySalary`, `paymentMethod`) are deleted from the response object for other roles, not nulled (`forViewer()` in `routes/employees.ts`).
+- **Never deleted**: records are deactivated/reactivated; there is no DELETE route. Codes like `EMP-001` are assigned by the server (max+1 under `pg_advisory_xact_lock`).
+- **API shapes are the client types**: `client/src/types/index.ts` mirrors the JSON (camelCase, lowercase status values like `'on_leave'` with a `*_LABEL` map for display, money as decimal strings). Don't map to old prototype shapes.
 - **Audit actions** are a closed union type in `server/src/services/audit.ts`; add new action strings there. Never put passwords or tokens in metadata.
-- **Client API module**: `client/src/api/users.ts` — thin typed wrappers over `api()` in `client/src/api/client.ts`, which throws `ApiError` and triggers the session handlers on 401 `UNAUTHENTICATED` / 403 `PASSWORD_CHANGE_REQUIRED`.
-- **Tests**: `server/test/auth.test.ts` — `createUser(email, role)` + `signIn()` (a `request.agent(app)` keeping the session cookie), `TRUNCATE ... CASCADE` in `beforeEach`, assertions on `audit_logs` rows.
+- **Client API module**: `client/src/api/employees.ts` — thin typed wrappers over `api()` in `client/src/api/client.ts`, which throws `ApiError` (with per-field `details` for 400s) and triggers the session handlers on 401 `UNAUTHENTICATED` / 403 `PASSWORD_CHANGE_REQUIRED`.
+- **Page data**: each page fetches its own data with `useApiData(load, deps)` (`client/src/api/useApiData.ts`) and renders loading / `LoadError` / `EmptyState`; nothing server-backed goes into `AppContext`. Forms show server validation errors with `common/FormField`.
+- **Tests**: `server/test/employees.test.ts` — a role matrix (admin/manager/employee/anonymous) per route, then behaviour tests; `createUser(email, role, employeeId)` + `signIn()` (a `request.agent(app)`), `TRUNCATE ... CASCADE` in `beforeEach`, assertions on `audit_logs` rows.
+
+### Client routing (`client/src/App.tsx`, `client/src/routes/guards.tsx`)
+
+- react-router v7 (`import from 'react-router'`). Pages are `React.lazy` chunks rendered inside `MainLayout`'s `<Outlet/>`.
+- `RequireAuth` (→ `/login` with `state.from`, → `/change-password` while `mustChangePassword`), `RequireRole roles={[...]}` (→ `/dashboard` + toast), `RedirectIfSignedIn` for `/login` and `/forgot-password`.
+- Detail views are routes that open a modal over the list (`/employees/:id`, `/invoices/:id`); the modal loads its own record so deep links work.
+- Sidebar items are role-filtered `NavLink`s in `components/layout/Sidebar.tsx` (cosmetic; the server is the guard). Attendance and leaves have no routes yet (code kept, deferred).
+- `currentUser` (AppContext) comes from the session (`/api/auth/me`, which includes the linked employee's name, designation, department, avatarUrl); `currentUser.employeeId` is the employee uuid.
 
 ### Auth and sessions (`server/src/middleware/auth.ts`, `server/src/session.ts`)
 

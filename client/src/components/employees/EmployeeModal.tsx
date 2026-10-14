@@ -1,299 +1,261 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Employee, Department, EmploymentStatus } from '../../types';
+import { employeesApi, EmployeeInput } from '../../api/employees';
+import { ApiError, errorMessage } from '../../api/client';
+import { DEPARTMENTS, Employee } from '../../types';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
+import { FormField } from '../common/FormField';
 
 interface EmployeeModalProps {
   isOpen: boolean;
   onClose: () => void;
   employeeToEdit?: Employee | null;
+  // Called with the saved record; created is true for a new employee.
+  onSaved: (employee: Employee, created: boolean) => void;
 }
 
-const DEPARTMENTS: Department[] = [
-  'Engineering',
-  'Design',
-  'Marketing',
-  'Operations',
-  'Finance',
-];
+type FieldErrors = Partial<Record<keyof EmployeeInput, string>>;
 
-const STATUSES: EmploymentStatus[] = ['Active', 'On Leave', 'Inactive'];
+const today = () => new Date().toISOString().split('T')[0];
 
-export const EmployeeModal: React.FC<EmployeeModalProps> = ({
-  isOpen,
-  onClose,
-  employeeToEdit,
-}) => {
-  const { addEmployee, updateEmployee, settings } = useApp();
+const inputClass =
+  'w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]';
+
+// Admin-only form. The employee code is assigned by the server.
+export const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employeeToEdit, onSaved }) => {
+  const { settings } = useApp();
 
   const [fullName, setFullName] = useState('');
   const [workEmail, setWorkEmail] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [department, setDepartment] = useState<Department>('Engineering');
+  const [phone, setPhone] = useState('');
+  const [department, setDepartment] = useState(DEPARTMENTS[0]);
   const [designation, setDesignation] = useState('');
-  const [joiningDate, setJoiningDate] = useState(new Date().toISOString().split('T')[0]);
-  const [status, setStatus] = useState<EmploymentStatus>('Active');
+  const [joiningDate, setJoiningDate] = useState(today());
+  const [status, setStatus] = useState<'active' | 'on_leave'>('active');
   const [monthlySalary, setMonthlySalary] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Bank Transfer');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [isSaving, setIsSaving] = useState(false);
+
+  const isInactive = employeeToEdit?.status === 'inactive';
 
   useEffect(() => {
-    if (employeeToEdit) {
-      setFullName(employeeToEdit.fullName);
-      setWorkEmail(employeeToEdit.workEmail);
-      setPhoneNumber(employeeToEdit.phoneNumber || '');
-      setDepartment(employeeToEdit.department);
-      setDesignation(employeeToEdit.designation);
-      setJoiningDate(employeeToEdit.joiningDate);
-      setStatus(employeeToEdit.status);
-      setMonthlySalary(String(employeeToEdit.monthlySalary));
-      setPaymentMethod(employeeToEdit.paymentMethod || 'Bank Transfer');
-      setNotes(employeeToEdit.notes || '');
-    } else {
-      setFullName('');
-      setWorkEmail('');
-      setPhoneNumber('');
-      setDepartment('Engineering');
-      setDesignation('');
-      setJoiningDate(new Date().toISOString().split('T')[0]);
-      setStatus('Active');
-      setMonthlySalary('120000');
-      setPaymentMethod('Bank Transfer');
-      setNotes('');
-    }
+    if (!isOpen) return;
+    const e = employeeToEdit;
+    setFullName(e?.fullName ?? '');
+    setWorkEmail(e?.workEmail ?? '');
+    setPhone(e?.phone ?? '');
+    setDepartment(e?.department ?? DEPARTMENTS[0]);
+    setDesignation(e?.designation ?? '');
+    setJoiningDate(e?.joiningDate ?? today());
+    setStatus(e && e.status !== 'inactive' ? e.status : 'active');
+    setMonthlySalary(e?.monthlySalary ?? '');
+    setPaymentMethod(e?.paymentMethod ?? 'Bank Transfer');
+    setNotes(e?.notes ?? '');
     setError('');
+    setFieldErrors({});
+    setIsSaving(false);
   }, [employeeToEdit, isOpen]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!fullName.trim()) {
-      setError('Full Name is required');
-      return;
-    }
-    if (!workEmail.trim() || !workEmail.includes('@')) {
-      setError('A valid work email is required');
-      return;
-    }
-    if (!designation.trim()) {
-      setError('Designation is required');
-      return;
-    }
-    const salaryNum = parseFloat(monthlySalary);
-    if (isNaN(salaryNum) || salaryNum < 0) {
-      setError('Monthly Salary must be a valid non-negative number');
-      return;
-    }
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError('');
+    setFieldErrors({});
 
-    if (employeeToEdit) {
-      updateEmployee({
-        ...employeeToEdit,
-        fullName: fullName.trim(),
-        workEmail: workEmail.trim(),
-        phoneNumber: phoneNumber.trim() || undefined,
-        department,
-        designation: designation.trim(),
-        joiningDate,
-        status,
-        monthlySalary: salaryNum,
-        paymentMethod,
-        notes: notes.trim() || undefined,
-      });
-    } else {
-      addEmployee({
-        fullName: fullName.trim(),
-        workEmail: workEmail.trim(),
-        phoneNumber: phoneNumber.trim() || undefined,
-        department,
-        designation: designation.trim(),
-        joiningDate,
-        status,
-        monthlySalary: salaryNum,
-        paymentMethod,
-        notes: notes.trim() || undefined,
-      });
-    }
+    const input: EmployeeInput = {
+      fullName: fullName.trim(),
+      workEmail: workEmail.trim(),
+      phone: phone.trim() || null,
+      department,
+      designation: designation.trim(),
+      joiningDate,
+      monthlySalary: monthlySalary.trim(),
+      paymentMethod: paymentMethod || null,
+      notes: notes.trim() || null,
+      // An inactive employee's status is changed with Reactivate, not here.
+      ...(isInactive ? {} : { status }),
+    };
 
-    onClose();
+    setIsSaving(true);
+    try {
+      const saved = employeeToEdit
+        ? await employeesApi.update(employeeToEdit.id, input)
+        : await employeesApi.create(input);
+      onSaved(saved, !employeeToEdit);
+      onClose();
+    } catch (err) {
+      // Show server validation messages next to their fields.
+      if (err instanceof ApiError && err.details?.length) {
+        const byField: FieldErrors = {};
+        for (const detail of err.details) byField[detail.path as keyof EmployeeInput] ??= detail.message;
+        setFieldErrors(byField);
+      }
+      setError(errorMessage(err));
+      setIsSaving(false);
+    }
   };
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={employeeToEdit ? 'Edit Employee Details' : 'Add New Employee'}
+      title={employeeToEdit ? `Edit ${employeeToEdit.fullName} (${employeeToEdit.code})` : 'Add New Employee'}
       description="Record internal employee profile and payroll base salary"
-      maxWidth="md"
+      size="md"
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         {error && (
-          <div className="p-3 text-xs bg-[#E11D48]/10 border border-[#E11D48]/20 text-[#E11D48] rounded-lg">
+          <div role="alert" className="p-3 text-xs bg-[#E11D48]/10 border border-[#E11D48]/20 text-[#E11D48] rounded-lg">
             {error}
           </div>
         )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-semibold text-[#111827] mb-1">
-              Full Name *
-            </label>
+          <FormField label="Full Name" required error={fieldErrors.fullName}>
             <input
+              aria-label="Full Name"
               type="text"
               placeholder="e.g. Rahul Sharma"
               value={fullName}
               onChange={e => setFullName(e.target.value)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+              className={inputClass}
               required
             />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-[#111827] mb-1">
-              Work Email *
-            </label>
+          </FormField>
+          <FormField label="Work Email" required error={fieldErrors.workEmail}>
             <input
+              aria-label="Work Email"
               type="email"
-              placeholder="rahul@hybridmonks.com"
+              placeholder="name@hybridmonks.com"
               value={workEmail}
               onChange={e => setWorkEmail(e.target.value)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+              className={inputClass}
               required
             />
-          </div>
+          </FormField>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-semibold text-[#111827] mb-1">
-              Department *
-            </label>
-            <select
-              value={department}
-              onChange={e => setDepartment(e.target.value as Department)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-            >
-              {DEPARTMENTS.map(dept => (
+          <FormField label="Department" required error={fieldErrors.department}>
+            <select aria-label="Department" value={department} onChange={e => setDepartment(e.target.value)} className={inputClass}>
+              {/* Keep an existing value that isn't in the standard list selectable. */}
+              {[...new Set([...DEPARTMENTS, department])].map(dept => (
                 <option key={dept} value={dept}>
                   {dept}
                 </option>
               ))}
             </select>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-[#111827] mb-1">
-              Designation *
-            </label>
+          </FormField>
+          <FormField label="Designation" required error={fieldErrors.designation}>
             <input
+              aria-label="Designation"
               type="text"
               placeholder="e.g. Senior Frontend Engineer"
               value={designation}
               onChange={e => setDesignation(e.target.value)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+              className={inputClass}
               required
             />
-          </div>
+          </FormField>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div>
-            <label className="block text-xs font-semibold text-[#111827] mb-1">
-              Phone Number
-            </label>
+          <FormField label="Phone Number" error={fieldErrors.phone}>
             <input
+              aria-label="Phone Number"
               type="text"
               placeholder="+91 98765 43210"
-              value={phoneNumber}
-              onChange={e => setPhoneNumber(e.target.value)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+              value={phone}
+              onChange={e => setPhone(e.target.value)}
+              className={inputClass}
             />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-[#111827] mb-1">
-              Joining Date *
-            </label>
+          </FormField>
+          <FormField label="Joining Date" required error={fieldErrors.joiningDate}>
             <input
+              aria-label="Joining Date"
               type="date"
               value={joiningDate}
               onChange={e => setJoiningDate(e.target.value)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+              className={inputClass}
               required
             />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-[#111827] mb-1">
-              Employment Status *
-            </label>
+          </FormField>
+          <FormField
+            label="Employment Status"
+            error={fieldErrors.status}
+            hint={isInactive ? 'Inactive: use Reactivate in the list.' : undefined}
+          >
             <select
-              value={status}
-              onChange={e => setStatus(e.target.value as EmploymentStatus)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+              aria-label="Employment Status"
+              value={isInactive ? 'inactive' : status}
+              disabled={isInactive}
+              onChange={e => setStatus(e.target.value as 'active' | 'on_leave')}
+              className={`${inputClass} disabled:opacity-60`}
             >
-              {STATUSES.map(s => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
+              <option value="active">Active</option>
+              <option value="on_leave">On Leave</option>
+              {isInactive && <option value="inactive">Inactive</option>}
             </select>
-          </div>
+          </FormField>
         </div>
 
-        {/* Salary Information (Authorized only) */}
+        {/* Salary (admin only; the server never sends it to anyone else) */}
         <div className="p-3 bg-[#F7F9FC] rounded-lg border border-[#DFE6F1]">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-[#111827] mb-1">
-                Monthly Base Salary ({settings.defaultCurrency}) *
-              </label>
+            <FormField
+              label={`Monthly Base Salary (${settings.defaultCurrency})`}
+              required
+              error={fieldErrors.monthlySalary}
+            >
               <input
-                type="number"
-                step="any"
-                min="0"
+                aria-label="Monthly Base Salary"
+                type="text"
+                inputMode="decimal"
                 placeholder="100000"
                 value={monthlySalary}
                 onChange={e => setMonthlySalary(e.target.value)}
-                className="w-full text-xs font-mono px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                className={`${inputClass} font-mono`}
                 required
               />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-[#111827] mb-1">
-                Disbursement Method
-              </label>
+            </FormField>
+            <FormField label="Disbursement Method" error={fieldErrors.paymentMethod}>
               <select
+                aria-label="Disbursement Method"
                 value={paymentMethod}
                 onChange={e => setPaymentMethod(e.target.value)}
-                className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                className={inputClass}
               >
                 <option value="Bank Transfer">Bank Transfer (NEFT/RTGS)</option>
                 <option value="UPI">UPI</option>
                 <option value="Cheque">Cheque</option>
               </select>
-            </div>
+            </FormField>
           </div>
           <p className="text-[10px] text-[#7185A5] mt-2">
             Base salary is used when generating monthly payroll records. Changes will not alter historical paid records.
           </p>
         </div>
 
-        <div>
-          <label className="block text-xs font-semibold text-[#111827] mb-1">
-            Notes / Role Remarks
-          </label>
+        <FormField label="Notes / Role Remarks" error={fieldErrors.notes}>
           <input
+            aria-label="Notes"
             type="text"
             placeholder="Special skills, reporting line, etc."
             value={notes}
             onChange={e => setNotes(e.target.value)}
-            className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+            className={inputClass}
           />
-        </div>
+        </FormField>
 
         <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#DFE6F1]">
-          <Button type="button" variant="outline" size="md" onClick={onClose}>
+          <Button type="button" variant="outline" size="md" onClick={onClose} disabled={isSaving}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" size="md">
-            {employeeToEdit ? 'Save Employee' : 'Add Employee'}
+          <Button type="submit" variant="primary" size="md" disabled={isSaving}>
+            {isSaving ? 'Saving...' : employeeToEdit ? 'Save Employee' : 'Add Employee'}
           </Button>
         </div>
       </form>

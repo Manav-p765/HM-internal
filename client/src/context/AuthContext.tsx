@@ -13,10 +13,22 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Left behind in browsers by the old localStorage-only prototype (it stored users and passwords there).
+// Left behind in browsers by the old localStorage-only prototype (users and passwords, and data keyed
+// by the old local employee ids).
 function removeLegacyAuthStorage() {
   try {
-    const legacy = ['monks_auth_users_v1', 'monks_active_session_v1', 'monks_active_user_v1', 'monks_invitations_v1'];
+    const legacy = [
+      'monks_auth_users_v1',
+      'monks_active_session_v1',
+      'monks_active_user_v1',
+      'monks_invitations_v1',
+      // Employees moved to the API; these held rows keyed by the old local employee ids (now *_v2).
+      'monks_employees_v1',
+      'monks_salaries_v1',
+      'monks_salary_slips_v1',
+      'monks_attendance_v1',
+      'monks_leaves_v1',
+    ];
     legacy.forEach(key => localStorage.removeItem(key));
     Object.keys(localStorage)
       .filter(key => key.startsWith('monks_reset_'))

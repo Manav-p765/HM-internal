@@ -11,11 +11,12 @@ const sizes = {
   sm: 'w-8 h-8 text-xs',
   md: 'w-9 h-9 text-xs',
   lg: 'w-12 h-12 text-sm',
-  xl: 'w-16 h-16 text-lg',
+  xl: 'w-20 h-20 text-2xl',
 };
 
 export function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
+  // Words that start with a letter, so 'Erin Employee (Fake)' gives 'EE', not 'E('.
+  const parts = name.trim().split(/\s+/).filter(word => /^\p{L}/u.test(word));
   if (parts.length === 0) return '?';
   const first = parts[0][0];
   const last = parts.length > 1 ? parts[parts.length - 1][0] : '';

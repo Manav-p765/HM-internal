@@ -1,5 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router';
+import { employeesApi } from '../../api/employees';
+import { useApiData } from '../../api/useApiData';
+import { DEPARTMENTS } from '../../types';
 import { useApp } from '../../context/AppContext';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
@@ -28,7 +31,6 @@ export const DashboardView: React.FC = () => {
   const {
     transactions,
     invoices,
-    employees,
     salaries,
     attendance,
     settings,
@@ -37,6 +39,9 @@ export const DashboardView: React.FC = () => {
     currentUser,
   } = useApp();
   const navigate = useNavigate();
+  // Admin/manager dashboard: roster from the API (up to 200 for the department breakdown).
+  const roster = useApiData(() => employeesApi.list({ limit: 200 }), []);
+  const employees = roster.data?.employees ?? [];
 
   const [dateFilter, setDateFilter] = useState<DateFilterOption>('this_month');
 
@@ -105,8 +110,8 @@ export const DashboardView: React.FC = () => {
       .reduce((sum, s) => sum + s.finalPayableAmount, 0);
   }, [salaries]);
 
-  const totalEmployeesCount = employees.length;
-  const activeEmployeesCount = employees.filter(e => e.status === 'Active').length;
+  const totalEmployeesCount = roster.data?.summary.total ?? 0;
+  const activeEmployeesCount = roster.data?.summary.active ?? 0;
 
   // Operational metrics for Manager role
   const todayStr = new Date().toISOString().split('T')[0];
@@ -736,8 +741,8 @@ export const DashboardView: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-4">
-          {(['Engineering', 'Design', 'Marketing', 'Operations', 'Finance'] as const).map(dept => {
-            const count = employees.filter(e => e.department === dept).length;
+          {DEPARTMENTS.map(dept => {
+            const count = employees.filter(e => e.department === dept && e.status !== 'inactive').length;
             return (
               <div
                 key={dept}

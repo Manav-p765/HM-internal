@@ -8,7 +8,11 @@ export interface SessionUser {
   role: UserRole;
   employeeId: string | null;
   mustChangePassword: boolean;
+  // From the linked employee record (null when the account isn't linked to one).
   name: string | null;
+  designation: string | null;
+  department: string | null;
+  avatarUrl: string | null;
 }
 
 export const authApi = {

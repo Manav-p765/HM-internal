@@ -100,7 +100,7 @@ export const TopNav: React.FC<TopNavProps> = ({
       );
     }
 
-    if (pathname.startsWith('/employees') || pathname === '/team') {
+    if ((pathname.startsWith('/employees') || pathname === '/team') && currentUser.role === 'admin') {
       return (
         <Button
           variant="primary"

@@ -1,116 +1,147 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { useApp } from '../../context/AppContext';
-import { Employee, Department, EmploymentStatus } from '../../types';
+import { employeesApi } from '../../api/employees';
+import { errorMessage } from '../../api/client';
+import { useApiData } from '../../api/useApiData';
+import { DEPARTMENTS, EMPLOYMENT_STATUS_LABEL, Employee, EmploymentStatus } from '../../types';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
+import { Avatar } from '../common/Avatar';
 import { EmptyState } from '../common/EmptyState';
+import { LoadError } from '../common/LoadError';
 import { ConfirmDialog } from '../common/ConfirmDialog';
+import { Modal } from '../common/Modal';
 import { EmployeeModal } from './EmployeeModal';
 import { EmployeeDetailModal } from './EmployeeDetailModal';
-import {
-  Users,
-  Plus,
-  Search,
-  Filter,
-  Eye,
-  Edit2,
-  UserX,
-  UserCheck,
-  Building,
-  Mail,
-  Phone,
-  Calendar,
-} from 'lucide-react';
+import { loginStatus, statusBadgeVariant } from './employeeDisplay';
+import { Users, Plus, Search, Eye, Edit2, UserX, UserCheck, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatCurrency, formatDate } from '../../utils/formatters';
 
-export const EmployeesView: React.FC = () => {
-  const {
-    employees,
-    deactivateEmployee,
-    settings,
-    currentUser,
-    isAddEmployeeOpen,
-    setIsAddEmployeeOpen,
-  } = useApp();
+const PAGE_SIZE = 50;
 
-  const [employeeToEdit, setEmployeeToEdit] = useState<Employee | null>(null);
+export const EmployeesView: React.FC = () => {
+  const { currentUser, settings, showToast, isAddEmployeeOpen, setIsAddEmployeeOpen } = useApp();
+  const isAdmin = currentUser.role === 'admin';
+
+  // Filters (search is debounced so typing doesn't fire a request per keystroke)
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [departmentFilter, setDepartmentFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'' | EmploymentStatus>('');
+  const [offset, setOffset] = useState(0);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setOffset(0);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  const list = useApiData(
+    () =>
+      employeesApi.list({
+        search,
+        department: departmentFilter || undefined,
+        status: statusFilter || undefined,
+        limit: PAGE_SIZE,
+        offset,
+      }),
+    [search, departmentFilter, statusFilter, offset],
+  );
+  const employees = list.data?.employees ?? [];
+  const summary = list.data?.summary;
+  const total = list.data?.total ?? 0;
+
+  // /employees/:id opens the detail modal (works as a direct link too).
   const { id: viewId } = useParams();
   const navigate = useNavigate();
-  const employeeToView = viewId ? employees.find(emp => emp.id === viewId) ?? null : null;
-  const setEmployeeToView = (emp: Employee | null) => navigate(emp ? `/employees/${emp.id}` : '/employees');
+
+  const [employeeToEdit, setEmployeeToEdit] = useState<Employee | null>(null);
   const [employeeToDeactivate, setEmployeeToDeactivate] = useState<Employee | null>(null);
+  const [employeeToReactivate, setEmployeeToReactivate] = useState<Employee | null>(null);
+  const [restoreLogin, setRestoreLogin] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  // Filters
-  const [search, setSearch] = useState('');
-  const [departmentFilter, setDepartmentFilter] = useState<'all' | Department>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | EmploymentStatus>('all');
+  const openAdd = () => {
+    setEmployeeToEdit(null);
+    setIsAddEmployeeOpen(true);
+  };
+  const openEdit = (employee: Employee) => {
+    setEmployeeToEdit(employee);
+    setIsAddEmployeeOpen(true);
+  };
 
-  const filteredEmployees = useMemo(() => {
-    return employees.filter(emp => {
-      if (departmentFilter !== 'all' && emp.department !== departmentFilter) return false;
-      if (statusFilter !== 'all' && emp.status !== statusFilter) return false;
-      if (search.trim()) {
-        const query = search.toLowerCase();
-        const matchesName = emp.fullName.toLowerCase().includes(query);
-        const matchesEmail = emp.workEmail.toLowerCase().includes(query);
-        const matchesDesig = emp.designation.toLowerCase().includes(query);
-        const matchesId = emp.id.toLowerCase().includes(query);
-        if (!matchesName && !matchesEmail && !matchesDesig && !matchesId) return false;
-      }
-      return true;
-    });
-  }, [employees, departmentFilter, statusFilter, search]);
+  const afterChange = (employee: Employee, message: string) => {
+    showToast('success', message);
+    list.reload();
+    return employee;
+  };
 
-  const activeCount = employees.filter(e => e.status === 'Active').length;
-  const onLeaveCount = employees.filter(e => e.status === 'On Leave').length;
-  const inactiveCount = employees.filter(e => e.status === 'Inactive').length;
+  const handleDeactivate = async () => {
+    const target = employeeToDeactivate;
+    if (!target) return;
+    setEmployeeToDeactivate(null);
+    setBusy(true);
+    try {
+      const updated = await employeesApi.deactivate(target.id);
+      afterChange(
+        updated,
+        target.login ? `${target.fullName} deactivated and their login disabled` : `${target.fullName} deactivated`,
+      );
+    } catch (err) {
+      showToast('error', errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
-  const totalMonthlyPayroll = useMemo(() => {
-    return employees
-      .filter(e => e.status === 'Active')
-      .reduce((sum, e) => sum + e.monthlySalary, 0);
-  }, [employees]);
+  const handleReactivate = async () => {
+    const target = employeeToReactivate;
+    if (!target) return;
+    setEmployeeToReactivate(null);
+    setBusy(true);
+    try {
+      const updated = await employeesApi.reactivate(target.id, restoreLogin);
+      afterChange(
+        updated,
+        restoreLogin && target.login ? `${target.fullName} reactivated; their login works again` : `${target.fullName} reactivated`,
+      );
+    } catch (err) {
+      showToast('error', errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
-  const canViewSalary = currentUser.role === 'admin' || currentUser.role === 'manager';
+  const hasFilters = Boolean(search || departmentFilter || statusFilter);
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">
-            Employee Management
-          </h1>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">Employee Management</h1>
           <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">
             Internal workforce roster, designations, and compensation baselines
           </p>
         </div>
 
-        {currentUser.role !== 'employee' && (
-          <Button
-            variant="primary"
-            size="sm"
-            icon={<Plus className="w-3.5 h-3.5" />}
-            onClick={() => {
-              setEmployeeToEdit(null);
-              setIsAddEmployeeOpen(true);
-            }}
-          >
+        {isAdmin && (
+          <Button variant="primary" size="sm" icon={<Plus className="w-3.5 h-3.5" />} onClick={openAdd}>
             Add Employee
           </Button>
         )}
       </div>
 
-      {/* KPI Cards */}
+      {/* KPI Cards (whole roster, not the filtered page) */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <Card padding="sm">
           <span className="text-[11px] font-semibold text-[#7185A5] block">Total Team Roster</span>
           <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-xl font-mono font-bold text-[#111827]">
-              {employees.length}
-            </span>
+            <span className="text-xl font-mono font-bold text-[#111827]">{summary?.total ?? '—'}</span>
             <span className="text-xs text-[#7185A5]">Total headcount</span>
           </div>
         </Card>
@@ -118,9 +149,7 @@ export const EmployeesView: React.FC = () => {
         <Card padding="sm">
           <span className="text-[11px] font-semibold text-[#7185A5] block">Active Members</span>
           <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-xl font-mono font-bold text-[#047857]">
-              {activeCount}
-            </span>
+            <span className="text-xl font-mono font-bold text-[#047857]">{summary?.active ?? '—'}</span>
             <span className="text-xs text-[#047857]">Working actively</span>
           </div>
         </Card>
@@ -128,19 +157,17 @@ export const EmployeesView: React.FC = () => {
         <Card padding="sm">
           <span className="text-[11px] font-semibold text-[#7185A5] block">On Leave</span>
           <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-xl font-mono font-bold text-[#B45309]">
-              {onLeaveCount}
-            </span>
+            <span className="text-xl font-mono font-bold text-[#B45309]">{summary?.onLeave ?? '—'}</span>
             <span className="text-xs text-[#B45309]">Scheduled leave</span>
           </div>
         </Card>
 
-        {canViewSalary ? (
+        {summary?.monthlyPayroll !== undefined ? (
           <Card padding="sm">
             <span className="text-[11px] font-semibold text-[#7185A5] block">Monthly Base Payroll</span>
             <div className="mt-1 flex items-baseline justify-between">
               <span className="text-xl font-mono font-bold text-[#5038F5]">
-                {formatCurrency(totalMonthlyPayroll, settings.defaultCurrency)}
+                {formatCurrency(Number(summary.monthlyPayroll), settings.defaultCurrency)}
               </span>
               <span className="text-xs text-[#7185A5]">/ month</span>
             </div>
@@ -149,9 +176,7 @@ export const EmployeesView: React.FC = () => {
           <Card padding="sm">
             <span className="text-[11px] font-semibold text-[#7185A5] block">Inactive / Alumni</span>
             <div className="mt-1 flex items-baseline justify-between">
-              <span className="text-xl font-mono font-bold text-[#7185A5]">
-                {inactiveCount}
-              </span>
+              <span className="text-xl font-mono font-bold text-[#7185A5]">{summary?.inactive ?? '—'}</span>
               <span className="text-xs text-[#7185A5]">Preserved records</span>
             </div>
           </Card>
@@ -164,56 +189,68 @@ export const EmployeesView: React.FC = () => {
           <div className="relative">
             <Search className="w-4 h-4 text-[#7185A5] absolute left-3 top-1/2 -translate-y-1/2" />
             <input
-              type="text"
-              placeholder="Search by name, email, designation, or ID..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
+              type="search"
+              aria-label="Search employees"
+              placeholder="Search by name, email, designation, or code..."
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
               className="w-full text-xs pl-9 pr-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
             />
           </div>
 
-          <div>
-            <select
-              value={departmentFilter}
-              onChange={e => setDepartmentFilter(e.target.value as any)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-            >
-              <option value="all">All Departments</option>
-              <option value="Engineering">Engineering</option>
-              <option value="Design">Design</option>
-              <option value="Marketing">Marketing</option>
-              <option value="Operations">Operations</option>
-              <option value="Finance">Finance</option>
-            </select>
-          </div>
+          <select
+            aria-label="Filter by department"
+            value={departmentFilter}
+            onChange={e => {
+              setDepartmentFilter(e.target.value);
+              setOffset(0);
+            }}
+            className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+          >
+            <option value="">All Departments</option>
+            {DEPARTMENTS.map(d => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
 
-          <div>
-            <select
-              value={statusFilter}
-              onChange={e => setStatusFilter(e.target.value as any)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-            >
-              <option value="all">All Statuses</option>
-              <option value="Active">Active</option>
-              <option value="On Leave">On Leave</option>
-              <option value="Inactive">Inactive</option>
-            </select>
-          </div>
+          <select
+            aria-label="Filter by status"
+            value={statusFilter}
+            onChange={e => {
+              setStatusFilter(e.target.value as '' | EmploymentStatus);
+              setOffset(0);
+            }}
+            className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+          >
+            <option value="">All Statuses</option>
+            {(Object.keys(EMPLOYMENT_STATUS_LABEL) as EmploymentStatus[]).map(s => (
+              <option key={s} value={s}>
+                {EMPLOYMENT_STATUS_LABEL[s]}
+              </option>
+            ))}
+          </select>
         </div>
       </Card>
 
       {/* Employee Listing Table */}
       <Card padding="none" className="overflow-hidden">
-        {filteredEmployees.length === 0 ? (
+        {list.error ? (
+          <LoadError message={list.error} onRetry={list.reload} />
+        ) : list.isLoading && !list.data ? (
+          <p className="py-12 text-center text-xs text-[#7185A5]" role="status">
+            Loading employees...
+          </p>
+        ) : employees.length === 0 ? (
           <EmptyState
             icon={<Users className="w-6 h-6" />}
-            title="No employees found"
-            description="No employees match your search query or department filter."
-            actionLabel={currentUser.role !== 'employee' ? 'Add Employee' : undefined}
-            onAction={() => {
-              setEmployeeToEdit(null);
-              setIsAddEmployeeOpen(true);
-            }}
+            title={hasFilters ? 'No employees found' : 'No employees yet'}
+            description={
+              hasFilters ? 'No employees match your search or filters.' : 'Add the first employee to start the roster.'
+            }
+            actionLabel={isAdmin && !hasFilters ? 'Add Employee' : undefined}
+            onAction={openAdd}
           />
         ) : (
           <div className="overflow-x-auto">
@@ -223,136 +260,210 @@ export const EmployeesView: React.FC = () => {
                   <th className="py-3 px-4">Employee</th>
                   <th className="py-3 px-4">Department</th>
                   <th className="py-3 px-4">Designation</th>
-                  <th className="py-3 px-4">Joining Date</th>
-                  {canViewSalary && (
-                    <th className="py-3 px-4 text-right">Monthly Salary</th>
-                  )}
-                  <th className="py-3 px-4 text-center">Status</th>
+                  <th className="py-3 px-4">Account Status</th>
+                  <th className="py-3 px-4">Last Login</th>
+                  {isAdmin && <th className="py-3 px-4 text-right">Monthly Salary</th>}
+                  <th className="py-3 px-4 text-center">Work Status</th>
                   <th className="py-3 px-4 text-right w-28">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#DFE6F1]">
-                {filteredEmployees.map(emp => (
-                  <tr key={emp.id} className="hover:bg-[#F7F9FC]/60 transition-colors">
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-[#5038F5]/10 text-[#5038F5] flex items-center justify-center font-bold text-xs shrink-0 border border-[#DFE6F1]">
-                          {emp.fullName.charAt(0)}
-                        </div>
-                        <div>
-                          <div className="font-semibold text-[#111827] flex items-center gap-1.5">
-                            {emp.fullName}
-                            <span className="font-mono text-[10px] text-[#7185A5]">
-                              ({emp.id})
-                            </span>
+                {employees.map(emp => {
+                  const account = loginStatus(emp);
+                  return (
+                    <tr key={emp.id} className="hover:bg-[#F7F9FC]/60 transition-colors">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-3">
+                          <Avatar name={emp.fullName} url={emp.avatarUrl} />
+                          <div>
+                            <div className="font-semibold text-[#111827] flex items-center gap-1.5">
+                              {emp.fullName}
+                              <span className="font-mono text-[10px] text-[#7185A5]">({emp.code})</span>
+                            </div>
+                            <div className="text-[11px] text-[#7185A5]">{emp.workEmail}</div>
                           </div>
-                          <div className="text-[11px] text-[#7185A5]">{emp.workEmail}</div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 font-medium text-[#111827]">
-                      {emp.department}
-                    </td>
-                    <td className="py-3 px-4 text-[#475569]">
-                      {emp.designation}
-                    </td>
-                    <td className="py-3 px-4 text-[#7185A5] whitespace-nowrap">
-                      {formatDate(emp.joiningDate)}
-                    </td>
-                    {canViewSalary && (
-                      <td className="py-3 px-4 text-right font-mono font-bold text-[#111827] whitespace-nowrap">
-                        {formatCurrency(emp.monthlySalary, settings.defaultCurrency)}
                       </td>
-                    )}
-                    <td className="py-3 px-4 text-center whitespace-nowrap">
-                      <Badge
-                        variant={
-                          emp.status === 'Active'
-                            ? 'success'
-                            : emp.status === 'On Leave'
-                            ? 'warning'
-                            : 'neutral'
-                        }
-                      >
-                        {emp.status}
-                      </Badge>
-                    </td>
-                    <td className="py-3 px-4 text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => setEmployeeToView(emp)}
-                          className="p-1.5 text-[#7185A5] hover:text-[#5038F5] hover:bg-[#F1F5F9] rounded cursor-pointer"
-                          title="View Profile & Salary History"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-                        {currentUser.role !== 'employee' && (
+                      <td className="py-3 px-4 font-medium text-[#111827]">{emp.department}</td>
+                      <td className="py-3 px-4 text-[#475569]">{emp.designation}</td>
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        <Badge variant={account.variant} size="sm">
+                          {account.label}
+                        </Badge>
+                      </td>
+                      <td className="py-3 px-4 text-[#7185A5] whitespace-nowrap">
+                        {emp.login?.lastLoginAt ? formatDate(emp.login.lastLoginAt.slice(0, 10)) : 'Never'}
+                      </td>
+                      {isAdmin && (
+                        <td className="py-3 px-4 text-right font-mono font-bold text-[#111827] whitespace-nowrap">
+                          {emp.monthlySalary !== undefined
+                            ? formatCurrency(Number(emp.monthlySalary), settings.defaultCurrency)
+                            : '—'}
+                        </td>
+                      )}
+                      <td className="py-3 px-4 text-center whitespace-nowrap">
+                        <Badge variant={statusBadgeVariant(emp.status)}>{EMPLOYMENT_STATUS_LABEL[emp.status]}</Badge>
+                      </td>
+                      <td className="py-3 px-4 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1">
                           <button
-                            onClick={() => {
-                              setEmployeeToEdit(emp);
-                              setIsAddEmployeeOpen(true);
-                            }}
+                            onClick={() => navigate(`/employees/${emp.id}`)}
                             className="p-1.5 text-[#7185A5] hover:text-[#5038F5] hover:bg-[#F1F5F9] rounded cursor-pointer"
-                            title="Edit Employee"
+                            title="View profile"
+                            aria-label={`View ${emp.fullName}`}
                           >
-                            <Edit2 className="w-3.5 h-3.5" />
+                            <Eye className="w-3.5 h-3.5" />
                           </button>
-                        )}
-                        {currentUser.role === 'admin' && emp.status !== 'Inactive' && (
-                          <button
-                            onClick={() => setEmployeeToDeactivate(emp)}
-                            className="p-1.5 text-[#7185A5] hover:text-[#E11D48] hover:bg-[#F1F5F9] rounded cursor-pointer"
-                            title="Deactivate Employee"
-                          >
-                            <UserX className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          {isAdmin && (
+                            <>
+                              <button
+                                onClick={() => openEdit(emp)}
+                                className="p-1.5 text-[#7185A5] hover:text-[#5038F5] hover:bg-[#F1F5F9] rounded cursor-pointer"
+                                title="Edit employee"
+                                aria-label={`Edit ${emp.fullName}`}
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              {emp.status !== 'inactive' ? (
+                                <button
+                                  onClick={() => setEmployeeToDeactivate(emp)}
+                                  disabled={busy}
+                                  className="p-1.5 text-[#7185A5] hover:text-[#E11D48] hover:bg-[#F1F5F9] rounded cursor-pointer disabled:opacity-50"
+                                  title="Deactivate employee (history is kept)"
+                                  aria-label={`Deactivate ${emp.fullName}`}
+                                >
+                                  <UserX className="w-3.5 h-3.5" />
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => {
+                                    setRestoreLogin(false);
+                                    setEmployeeToReactivate(emp);
+                                  }}
+                                  disabled={busy}
+                                  className="p-1.5 text-[#047857] hover:bg-[#047857]/10 rounded cursor-pointer disabled:opacity-50"
+                                  title="Reactivate employee"
+                                  aria-label={`Reactivate ${emp.fullName}`}
+                                >
+                                  <UserCheck className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
+
+        {/* Pagination */}
+        {total > PAGE_SIZE && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-[#DFE6F1] text-xs text-[#7185A5]">
+            <span>
+              {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<ChevronLeft className="w-3.5 h-3.5" />}
+                disabled={offset === 0 || list.isLoading}
+                onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={offset + PAGE_SIZE >= total || list.isLoading}
+                onClick={() => setOffset(offset + PAGE_SIZE)}
+              >
+                Next <ChevronRight className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
 
-      {/* Employee Modal */}
-      <EmployeeModal
-        isOpen={isAddEmployeeOpen}
-        onClose={() => {
-          setIsAddEmployeeOpen(false);
-          setEmployeeToEdit(null);
-        }}
-        employeeToEdit={employeeToEdit}
-      />
+      {/* Add / edit (admin only) */}
+      {isAdmin && (
+        <EmployeeModal
+          isOpen={isAddEmployeeOpen}
+          onClose={() => {
+            setIsAddEmployeeOpen(false);
+            setEmployeeToEdit(null);
+          }}
+          employeeToEdit={employeeToEdit}
+          onSaved={(saved, created) =>
+            afterChange(saved, created ? `${saved.fullName} added as ${saved.code}` : `${saved.fullName} updated`)
+          }
+        />
+      )}
 
-      {/* Employee Detail Modal */}
-      <EmployeeDetailModal
-        isOpen={!!employeeToView}
-        onClose={() => setEmployeeToView(null)}
-        employee={employeeToView}
-        onEdit={emp => {
-          setEmployeeToEdit(emp);
-          setIsAddEmployeeOpen(true);
-        }}
-      />
+      {/* Detail (routed) */}
+      {viewId && (
+        <EmployeeDetailModal
+          employeeId={viewId}
+          onClose={() => navigate('/employees')}
+          onEdit={isAdmin ? openEdit : undefined}
+        />
+      )}
 
-      {/* Deactivate Confirmation */}
+      {/* Deactivate confirmation */}
       <ConfirmDialog
         isOpen={!!employeeToDeactivate}
         onClose={() => setEmployeeToDeactivate(null)}
-        onConfirm={() => {
-          if (employeeToDeactivate) {
-            deactivateEmployee(employeeToDeactivate.id);
-            setEmployeeToDeactivate(null);
-          }
-        }}
+        onConfirm={handleDeactivate}
         title="Deactivate Employee"
-        message={`Are you sure you want to deactivate ${employeeToDeactivate?.fullName}? Their historical records, invoices, and past salaries will be safely preserved.`}
+        message={
+          employeeToDeactivate?.login
+            ? `Deactivate ${employeeToDeactivate.fullName}? Their login will be disabled and they will be signed out. Historical records are kept.`
+            : `Deactivate ${employeeToDeactivate?.fullName}? Their historical records are kept.`
+        }
         confirmLabel="Deactivate"
         isDestructive={true}
       />
+
+      {/* Reactivate (with the option to restore the login) */}
+      <Modal
+        isOpen={!!employeeToReactivate}
+        onClose={() => setEmployeeToReactivate(null)}
+        title="Reactivate Employee"
+        description={employeeToReactivate ? `${employeeToReactivate.fullName} (${employeeToReactivate.code})` : undefined}
+        size="sm"
+      >
+        <div className="space-y-4 text-xs">
+          <p className="text-[#475569]">They will be marked Active again and appear in the team directory.</p>
+          {employeeToReactivate?.login?.status === 'disabled' && (
+            <label className="flex items-start gap-2.5 p-3 rounded-lg border border-[#DFE6F1] bg-[#F7F9FC] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={restoreLogin}
+                onChange={e => setRestoreLogin(e.target.checked)}
+                className="mt-0.5 accent-[#5038F5]"
+              />
+              <span>
+                <span className="font-semibold text-[#111827] block">Also restore their login</span>
+                <span className="text-[#7185A5]">
+                  Re-enables {employeeToReactivate.workEmail} with their existing password.
+                </span>
+              </span>
+            </label>
+          )}
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" size="sm" onClick={() => setEmployeeToReactivate(null)}>
+              Cancel
+            </Button>
+            <Button variant="primary" size="sm" onClick={handleReactivate}>
+              Reactivate
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

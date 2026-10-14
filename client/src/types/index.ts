@@ -7,6 +7,7 @@ export interface UserProfile {
   role: UserRole;
   avatarUrl: string;
   designation: string;
+  department?: string;
   employeeId?: string; // Links to Employee record
 }
 
@@ -100,32 +101,71 @@ export interface Invoice {
   updatedAt: string;
 }
 
-export type EmploymentStatus = 'Active' | 'On Leave' | 'Inactive';
+// ---- Employees (shapes returned by /api/employees) ----
 
-export type Department =
-  | 'Engineering'
-  | 'Design'
-  | 'Marketing'
-  | 'Operations'
-  | 'Finance';
+export type EmploymentStatus = 'active' | 'on_leave' | 'inactive';
+
+export const EMPLOYMENT_STATUS_LABEL: Record<EmploymentStatus, string> = {
+  active: 'Active',
+  on_leave: 'On Leave',
+  inactive: 'Inactive',
+};
+
+// Free text on the server; the UI offers this list.
+export type Department = string;
+export const DEPARTMENTS: Department[] = ['Engineering', 'Design', 'Marketing', 'Operations', 'Finance'];
+
+// The employee's login account, if one exists (admin/manager views only).
+export interface EmployeeLogin {
+  userId: string;
+  status: 'active' | 'disabled';
+  mustChangePassword: boolean;
+  lastLoginAt: string | null;
+}
 
 export interface Employee {
   id: string;
+  code: string; // EMP-001, assigned by the server
   fullName: string;
   workEmail: string;
-  phoneNumber?: string;
+  phone: string | null;
+  department: Department;
+  designation: string;
+  joiningDate: string; // YYYY-MM-DD
+  status: EmploymentStatus;
+  notes: string | null;
+  avatarUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+  login: EmployeeLogin | null;
+  // Only present for admins; the server omits these fields for everyone else.
+  monthlySalary?: string; // NUMERIC(14,2) as a string
+  paymentMethod?: string | null;
+}
+
+// GET /api/employees/directory: visible to all staff.
+export interface DirectoryEntry {
+  id: string;
+  fullName: string;
+  designation: string;
+  department: Department;
+  workEmail: string;
+  avatarUrl: string | null;
+  status: EmploymentStatus;
+}
+
+// GET /api/employees/me: the signed-in user's own record (no salary or admin notes).
+export interface MyEmployeeProfile {
+  id: string;
+  code: string;
+  fullName: string;
+  workEmail: string;
+  phone: string | null;
   department: Department;
   designation: string;
   joiningDate: string;
   status: EmploymentStatus;
-  monthlySalary: number; // Visible to admin and authorized manager
-  paymentMethod?: string;
-  notes?: string;
-  avatarUrl?: string;
-  userId?: string; // Linked Auth User ID
-  accountStatus?: 'Active' | 'Needs Password Change' | 'Disabled' | 'Not Created';
-  lastLogin?: string;
-  createdAt: string;
+  avatarUrl: string | null;
 }
 
 export type SalaryPaymentStatus = 'Pending' | 'Paid';

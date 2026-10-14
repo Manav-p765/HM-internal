@@ -15,6 +15,8 @@ import {
 } from '../types';
 import { StorageService } from '../services/storage';
 import { useAuth } from './AuthContext';
+import { employeesApi } from '../api/employees';
+import { errorMessage } from '../api/client';
 
 interface Toast {
   id: string;
@@ -31,12 +33,6 @@ interface AppContextType {
   settings: CompanySettings;
   updateSettings: (newSettings: CompanySettings) => void;
 
-  // Employees
-  employees: Employee[];
-  addEmployee: (emp: Omit<Employee, 'id' | 'createdAt'>) => Employee;
-  updateEmployee: (emp: Employee) => void;
-  deactivateEmployee: (id: string) => void;
-
   // Transactions & Accounting
   transactions: Transaction[];
   addTransaction: (txn: Omit<Transaction, 'id' | 'createdAt'>) => Transaction;
@@ -52,7 +48,7 @@ interface AppContextType {
 
   // Salaries & Payroll
   salaries: SalaryRecord[];
-  generateMonthlySalaries: (month: string) => { createdCount: number; skippedCount: number };
+  generateMonthlySalaries: (month: string) => Promise<{ createdCount: number; skippedCount: number } | null>;
   updateSalaryRecord: (salary: SalaryRecord) => void;
   markSalaryPaid: (salaryId: string, paymentDate: string, paymentMethod?: SalaryRecord['paymentMethod']) => boolean;
   publishSalarySlip: (salaryRecordId: string) => boolean;
@@ -95,7 +91,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }
 
   const [settings, setSettingsState] = useState<CompanySettings>(StorageService.getSettings());
-  const [employees, setEmployees] = useState<Employee[]>(StorageService.getEmployees());
   const [transactions, setTransactions] = useState<Transaction[]>(StorageService.getTransactions());
   const [invoices, setInvoices] = useState<Invoice[]>(StorageService.getInvoices());
   const [salaries, setSalaries] = useState<SalaryRecord[]>(StorageService.getSalaries());
@@ -112,7 +107,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const refreshData = () => {
     setSettingsState(StorageService.getSettings());
-    setEmployees(StorageService.getEmployees());
     setTransactions(StorageService.getTransactions());
     setInvoices(StorageService.getInvoices());
     setSalaries(StorageService.getSalaries());
@@ -134,21 +128,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
-  // The server session only knows id/email/role (+ employee name). Until employee records move to the
-  // API, the rest of the profile comes from the locally stored employee with the same work email.
+  // Straight from the server session; name, designation, department and avatar come from the linked
+  // employee record (null when the account isn't linked to one).
   const currentUser: UserProfile = useMemo(() => {
-    const employee = employees.find(e => e.workEmail.toLowerCase() === user.email.toLowerCase());
     const roleTitle = { admin: 'Administrator', manager: 'Manager', employee: 'Team Member' }[user.role];
     return {
       id: user.id,
-      name: user.name || employee?.fullName || user.email.split('@')[0],
+      name: user.name || user.email.split('@')[0],
       email: user.email,
       role: user.role,
-      avatarUrl: employee?.avatarUrl || '',
-      designation: employee?.designation || roleTitle,
-      employeeId: employee?.id,
+      avatarUrl: user.avatarUrl || '',
+      designation: user.designation || roleTitle,
+      department: user.department || undefined,
+      employeeId: user.employeeId || undefined,
     };
-  }, [user, employees]);
+  }, [user]);
 
   // Audit entries written by the storage layer are attributed to the signed-in user.
   StorageService.currentActor = {
@@ -169,7 +163,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       showToast('error', 'Your user account is not linked to an employee record.');
       return { success: false, error: 'No linked employee record' };
     }
-    const res = StorageService.punchIn(currentUser.employeeId);
+    const res = StorageService.punchIn({
+      id: currentUser.employeeId,
+      fullName: currentUser.name,
+      department: currentUser.department || '',
+    });
     if (res.success) {
       refreshData();
       showToast('success', `Punched in successfully at ${new Date().toLocaleTimeString()}! Have a great day.`);
@@ -236,25 +234,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     showToast('success', 'Company settings updated successfully');
   };
 
-  const addEmployee = (emp: Omit<Employee, 'id' | 'createdAt'>): Employee => {
-    const created = StorageService.addEmployee(emp);
-    refreshData();
-    showToast('success', `Employee ${created.fullName} added successfully`);
-    return created;
-  };
-
-  const updateEmployee = (emp: Employee) => {
-    StorageService.updateEmployee(emp);
-    refreshData();
-    showToast('success', `Employee ${emp.fullName} updated successfully`);
-  };
-
-  const deactivateEmployee = (id: string) => {
-    StorageService.deactivateEmployee(id);
-    refreshData();
-    showToast('info', 'Employee status changed to Inactive');
-  };
-
   const addTransaction = (txn: Omit<Transaction, 'id' | 'createdAt'>): Transaction => {
     const created = StorageService.addTransaction(txn);
     refreshData();
@@ -308,8 +287,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return false;
   };
 
-  const generateMonthlySalaries = (month: string): { createdCount: number; skippedCount: number } => {
-    const result = StorageService.generateMonthlySalaries(month, currentUser.name);
+  // Salary records are still local; the employee list (with salaries, admin only) comes from the API.
+  const generateMonthlySalaries = async (month: string) => {
+    let activeEmployees: Employee[];
+    try {
+      activeEmployees = (await employeesApi.list({ status: 'active', limit: 200 })).employees;
+    } catch (err) {
+      showToast('error', errorMessage(err));
+      return null;
+    }
+    const result = StorageService.generateMonthlySalaries(month, activeEmployees, currentUser.name);
     refreshData();
     if (result.createdCount > 0) {
       showToast('success', `Generated ${result.createdCount} salary records for ${month}`);
@@ -358,10 +345,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         currentUser,
         settings,
         updateSettings,
-        employees,
-        addEmployee,
-        updateEmployee,
-        deactivateEmployee,
         transactions,
         addTransaction,
         updateTransaction,

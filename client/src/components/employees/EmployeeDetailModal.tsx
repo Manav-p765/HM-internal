@@ -1,6 +1,11 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
-import { Employee } from '../../types';
+import { employeesApi } from '../../api/employees';
+import { useApiData } from '../../api/useApiData';
+import { EMPLOYMENT_STATUS_LABEL, Employee } from '../../types';
+import { Avatar } from '../common/Avatar';
+import { LoadError } from '../common/LoadError';
+import { loginStatus, statusBadgeVariant } from './employeeDisplay';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
@@ -18,73 +23,65 @@ import {
 import { formatCurrency, formatDate, formatMonthYear } from '../../utils/formatters';
 
 interface EmployeeDetailModalProps {
-  isOpen: boolean;
+  employeeId: string; // from /employees/:id
   onClose: () => void;
-  employee: Employee | null;
-  onEdit: (emp: Employee) => void;
+  onEdit?: (emp: Employee) => void; // admins only
 }
 
-export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({
-  isOpen,
-  onClose,
-  employee,
-  onEdit,
-}) => {
-  const { salaries, currentUser, settings } = useApp();
+// Loads the employee itself so /employees/:id works as a direct link.
+export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({ employeeId, onClose, onEdit }) => {
+  const { salaries, settings } = useApp();
+  const { data: employee, error, reload } = useApiData(() => employeesApi.get(employeeId), [employeeId]);
 
-  if (!employee) return null;
+  if (!employee || employee.id !== employeeId) {
+    return (
+      <Modal isOpen onClose={onClose} title="Employee" size="xl">
+        {error ? (
+          <LoadError message={error} onRetry={reload} />
+        ) : (
+          <p className="py-10 text-center text-xs text-[#7185A5]" role="status">
+            Loading...
+          </p>
+        )}
+      </Modal>
+    );
+  }
 
-  // Filter salary history for this employee
+  // Salary records are still local until the salary phase.
   const employeeSalaries = salaries.filter(s => s.employeeId === employee.id);
 
-  const canViewSalary = currentUser.role === 'admin' || currentUser.role === 'manager';
+  // The server only sends salary fields to admins.
+  const canViewSalary = employee.monthlySalary !== undefined;
+  const account = loginStatus(employee);
 
   return (
     <Modal
-      isOpen={isOpen}
+      isOpen
       onClose={onClose}
       title={`${employee.fullName} — Profile`}
-      description={`ID: ${employee.id} · Department: ${employee.department}`}
-      maxWidth="xl"
+      description={`${employee.code} · Department: ${employee.department}`}
+      size="xl"
     >
       <div className="space-y-6">
         {/* Profile Card */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-xl bg-[#F7F9FC] border border-[#DFE6F1]">
           <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-full overflow-hidden bg-[#5038F5]/10 border border-[#DFE6F1] flex items-center justify-center font-bold text-base text-[#5038F5] shrink-0">
-              {employee.avatarUrl ? (
-                <img
-                  src={employee.avatarUrl}
-                  alt={employee.fullName}
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                employee.fullName.charAt(0)
-              )}
-            </div>
+            <Avatar name={employee.fullName} url={employee.avatarUrl} size="lg" />
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-bold text-[#111827]">
                   {employee.fullName}
                 </h3>
-                <Badge
-                  variant={
-                    employee.status === 'Active'
-                      ? 'success'
-                      : employee.status === 'On Leave'
-                      ? 'warning'
-                      : 'neutral'
-                  }
-                >
-                  {employee.status}
+                <Badge variant={statusBadgeVariant(employee.status)}>{EMPLOYMENT_STATUS_LABEL[employee.status]}</Badge>
+                <Badge variant={account.variant} size="sm">
+                  Login: {account.label}
                 </Badge>
               </div>
               <p className="text-xs text-[#7185A5] mt-0.5">{employee.designation}</p>
             </div>
           </div>
 
-          {currentUser.role !== 'employee' && (
+          {onEdit && (
             <Button
               variant="outline"
               size="sm"
@@ -113,7 +110,7 @@ export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({
             <div>
               <span className="text-[#7185A5] block text-[10px]">Phone Number</span>
               <span className="font-medium text-[#111827]">
-                {employee.phoneNumber || 'Not provided'}
+                {employee.phone || 'Not provided'}
               </span>
             </div>
           </div>
@@ -126,6 +123,7 @@ export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({
               </span>
             </div>
           </div>
+          {canViewSalary && (
           <div className="flex items-center gap-2.5 p-3 rounded-lg border border-[#DFE6F1] bg-white">
             <CreditCard className="w-4 h-4 text-[#7185A5]" />
             <div>
@@ -135,6 +133,7 @@ export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({
               </span>
             </div>
           </div>
+          )}
         </div>
 
         {/* Salary Information (Visible only to authorized roles) */}
@@ -148,7 +147,7 @@ export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({
                 </span>
               </div>
               <span className="text-sm font-mono font-bold text-[#5038F5]">
-                {formatCurrency(employee.monthlySalary, settings.defaultCurrency)} / month
+                {formatCurrency(Number(employee.monthlySalary), settings.defaultCurrency)} / month
               </span>
             </div>
 
@@ -207,7 +206,7 @@ export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({
           </div>
         ) : (
           <div className="p-3 bg-[#F1F5F9] rounded-lg text-center text-xs text-[#7185A5]">
-            Compensation details are restricted to authorized management personnel.
+            Compensation details are restricted to administrators.
           </div>
         )}
 

@@ -16,8 +16,8 @@ import { ChangePasswordPage } from './components/auth/ChangePasswordPage';
 import { PageLoading, RedirectIfSignedIn, RequireAuth, RequirePasswordChange, RequireRole } from './routes/guards';
 
 // Pages are split into their own chunks and loaded on first visit.
-const named = <T extends Record<string, React.ComponentType<any>>>(load: () => Promise<T>, name: keyof T) =>
-  lazy(() => load().then(module => ({ default: module[name] })));
+const named = <T, K extends keyof T>(load: () => Promise<T>, name: K) =>
+  lazy(() => load().then(module => ({ default: module[name] as React.ComponentType })));
 
 const DashboardView = named(() => import('./components/dashboard/DashboardView'), 'DashboardView');
 const EmployeeDashboardView = named(() => import('./components/dashboard/EmployeeDashboardView'), 'EmployeeDashboardView');

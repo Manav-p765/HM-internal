@@ -1,14 +1,24 @@
 import React, { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router';
 import { useApp } from '../../context/AppContext';
-import { Employee, Department } from '../../types';
+import { employeesApi } from '../../api/employees';
+import { useApiData } from '../../api/useApiData';
+import { Department, EMPLOYMENT_STATUS_LABEL } from '../../types';
 import { Card } from '../common/Card';
 import { Badge } from '../common/Badge';
-import { Search, Mail, Phone, Calendar, Building, Plus } from 'lucide-react';
-import { formatDate } from '../../utils/formatters';
+import { Avatar } from '../common/Avatar';
+import { EmptyState } from '../common/EmptyState';
+import { LoadError } from '../common/LoadError';
+import { Search, Mail, Building, Plus, Users } from 'lucide-react';
 import { Button } from '../common/Button';
+import { statusBadgeVariant } from '../employees/employeeDisplay';
 
+// Everyone can see the directory; it has no phone numbers or salary data (GET /api/employees/directory).
 export const TeamDirectoryView: React.FC = () => {
-  const { employees, currentUser, setIsAddEmployeeOpen } = useApp();
+  const { currentUser, setIsAddEmployeeOpen } = useApp();
+  const navigate = useNavigate();
+  const directory = useApiData(() => employeesApi.directory(), []);
+  const employees = directory.data ?? [];
 
   const [search, setSearch] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState<'all' | Department>('all');
@@ -39,12 +49,15 @@ export const TeamDirectoryView: React.FC = () => {
           </p>
         </div>
 
-        {currentUser.role !== 'employee' && (
+        {currentUser.role === 'admin' && (
           <Button
             variant="primary"
             size="sm"
             icon={<Plus className="w-3.5 h-3.5" />}
-            onClick={() => setIsAddEmployeeOpen(true)}
+            onClick={() => {
+              navigate('/employees');
+              setIsAddEmployeeOpen(true);
+            }}
           >
             Add Team Member
           </Button>
@@ -82,6 +95,26 @@ export const TeamDirectoryView: React.FC = () => {
         </div>
       </Card>
 
+      {directory.error && (
+        <Card padding="none">
+          <LoadError message={directory.error} onRetry={directory.reload} />
+        </Card>
+      )}
+      {directory.isLoading && !directory.data && (
+        <p className="py-12 text-center text-xs text-[#7185A5]" role="status">
+          Loading team...
+        </p>
+      )}
+      {directory.data && filtered.length === 0 && (
+        <Card padding="none">
+          <EmptyState
+            icon={<Users className="w-6 h-6" />}
+            title={employees.length === 0 ? 'No team members yet' : 'No one matches'}
+            description={employees.length === 0 ? 'Employees appear here once they are added.' : 'Try a different name or department.'}
+          />
+        </Card>
+      )}
+
       {/* Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {filtered.map(emp => (
@@ -89,35 +122,15 @@ export const TeamDirectoryView: React.FC = () => {
             <div>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-11 h-11 rounded-full overflow-hidden bg-[#5038F5]/10 border border-[#DFE6F1] flex items-center justify-center font-bold text-sm text-[#5038F5] shrink-0">
-                    {emp.avatarUrl ? (
-                      <img
-                        src={emp.avatarUrl}
-                        alt={emp.fullName}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      emp.fullName.charAt(0)
-                    )}
-                  </div>
+                  <Avatar name={emp.fullName} url={emp.avatarUrl} size="lg" />
                   <div>
                     <h3 className="text-sm font-bold text-[#111827]">{emp.fullName}</h3>
                     <p className="text-xs text-[#7185A5]">{emp.designation}</p>
                   </div>
                 </div>
 
-                <Badge
-                  variant={
-                    emp.status === 'Active'
-                      ? 'success'
-                      : emp.status === 'On Leave'
-                      ? 'warning'
-                      : 'neutral'
-                  }
-                  size="sm"
-                >
-                  {emp.status}
+                <Badge variant={statusBadgeVariant(emp.status)} size="sm">
+                  {EMPLOYMENT_STATUS_LABEL[emp.status]}
                 </Badge>
               </div>
 
@@ -132,24 +145,8 @@ export const TeamDirectoryView: React.FC = () => {
                     {emp.workEmail}
                   </a>
                 </div>
-                {emp.phoneNumber && (
-                  <div className="flex items-center gap-2 text-[#475569]">
-                    <Phone className="w-3.5 h-3.5 text-[#7185A5]" />
-                    <span>{emp.phoneNumber}</span>
-                  </div>
-                )}
-                <div className="flex items-center gap-2 text-[#7185A5] text-[11px]">
-                  <Calendar className="w-3.5 h-3.5" />
-                  <span>Joined {formatDate(emp.joiningDate)}</span>
-                </div>
               </div>
             </div>
-
-            {emp.notes && (
-              <div className="mt-3 pt-2 text-[11px] text-[#7185A5] italic line-clamp-2">
-                "{emp.notes}"
-              </div>
-            )}
           </Card>
         ))}
       </div>
