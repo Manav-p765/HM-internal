@@ -370,6 +370,28 @@ describe('lifecycle', () => {
 // Payments
 // ---------------------------------------------------------------------------
 describe('payments', () => {
+  it('a zero-total invoice cannot be sent (it could never be paid)', async () => {
+    const free = await createInvoice({ items: [item('Courtesy review', 1, 0)] });
+    expect(free.total).toBe('0.00');
+    const res = await agents.admin.post(`/api/invoices/${free.id}/send`).expect(409);
+    expect(res.body.code).toBe('INVOICE_INCOMPLETE');
+  });
+
+  it('inconsistent data never produces a 500: a negative balance is an overpayment; a paid invoice cannot be cancelled', async () => {
+    const invoice = await sentInvoice(); // 2360.00
+    // Paid more than the total by some other path (e.g. a future ledger API): balance -5.00.
+    await query(
+      `INSERT INTO transactions (txn_date, type, category, description, amount, payment_method, invoice_id, created_by)
+       VALUES ($1, 'income', 'Invoice Payment', 'x', 2365.00, 'UPI', $2, $3)`,
+      [TODAY, invoice.id, ids.adminUser],
+    );
+    expect((await pay(invoice.id, '1.00').expect(409)).body.code).toBe('OVERPAYMENT');
+    // A paid invoice without payments (manual data fix) still can't be cancelled.
+    const paid = await sentInvoice();
+    await query(`UPDATE invoices SET status = 'paid' WHERE id = $1`, [paid.id]);
+    expect((await agents.admin.post(`/api/invoices/${paid.id}/cancel`).send({ reason: 'x' }).expect(409)).body.code).toBe('INVALID_STATUS');
+  });
+
   it('partial then full payment flips to paid; each payment is exactly one income transaction', async () => {
     const invoice = await sentInvoice({ items: [item('A', 3, '33.33')] }); // 117.99
     const first = await pay(invoice.id, '17.99').expect(201);
@@ -417,6 +439,7 @@ describe('payments', () => {
     await bad({ amount: '1.001' }, 'amount');
     await bad({ paymentMethod: 'Bitcoin' }, 'paymentMethod');
     await bad({ txnDate: '2026-10-15' }, 'txnDate'); // tomorrow
+    await bad({ txnDate: '2026-10-13' }, 'txnDate'); // before the invoice date (2026-10-14)
   });
 
   it('reversal deletes that transaction, is audited with the amount, and flips paid back to sent', async () => {
@@ -427,7 +450,14 @@ describe('payments', () => {
     const res = await agents.admin.delete(`/api/invoices/${invoice.id}/payments/${b.body.paymentId}`).expect(200);
     expect(res.body.invoice).toMatchObject({ status: 'sent', derivedStatus: 'partially_paid', amountPaid: '360.00', balance: '2000.00' });
     expect((await query('SELECT id FROM transactions')).map(r => r.id)).toEqual([a.body.paymentId]);
-    expect((await auditRows('invoice.payment_reversed'))[0].metadata).toEqual({ transactionId: b.body.paymentId, amount: '2000.00' });
+    // The ledger row is gone, so the audit row keeps what it said.
+    expect((await auditRows('invoice.payment_reversed'))[0].metadata).toEqual({
+      transactionId: b.body.paymentId,
+      amount: '2000.00',
+      txnDate: TODAY,
+      paymentMethod: 'UPI',
+      referenceNumber: 'UTR-FAKE-1',
+    });
     // Another invoice's payment can't be reversed through this one (404, like a missing id).
     const other = await sentInvoice();
     await agents.admin.delete(`/api/invoices/${other.id}/payments/${a.body.paymentId}`).expect(404);

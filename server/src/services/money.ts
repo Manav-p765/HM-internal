@@ -97,13 +97,18 @@ export const quantityValue = decimalString('Quantity', { min: 'positive', maxHun
 export const percentValue = (label = 'Tax rate') =>
   decimalString(label, { min: 'nonnegative', maxHundredths: 10000n, maxLabel: '100' });
 
-// Compare two decimal strings: -1, 0, 1.
+// Signed variant for computed values such as a balance ("-5.00").
+function toSignedHundredths(value: string): bigint {
+  return value.startsWith('-') ? -toHundredths(value.slice(1)) : toHundredths(value);
+}
+
+// Compare two decimal strings (either may be negative): -1, 0, 1.
 export function compareMoney(a: string, b: string): number {
-  const x = toHundredths(a);
-  const y = toHundredths(b);
+  const x = toSignedHundredths(a);
+  const y = toSignedHundredths(b);
   return x < y ? -1 : x > y ? 1 : 0;
 }
 
 export function subtractMoney(a: string, b: string): string {
-  return formatHundredths(toHundredths(a) - toHundredths(b));
+  return formatHundredths(toSignedHundredths(a) - toSignedHundredths(b));
 }

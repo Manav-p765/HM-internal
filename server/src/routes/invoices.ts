@@ -442,6 +442,8 @@ invoicesRouter.post('/:id/send', ['admin', 'manager'], async (req, res) => {
     if (current.status !== 'draft') throw new HttpError(409, 'Only a draft can be sent', 'INVALID_STATUS');
     const { rows } = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM invoice_items WHERE invoice_id = $1', [id]);
     if (rows[0].n === 0) throw new HttpError(409, 'Add at least one line item before sending', 'INVOICE_INCOMPLETE');
+    // A zero total could never be paid (payments must be greater than 0), so it would stay "sent" forever.
+    if (compareMoney(current.total, '0.00') <= 0) throw new HttpError(409, 'The invoice total must be more than zero', 'INVOICE_INCOMPLETE');
     if (!current.clientName.trim()) throw new HttpError(409, 'Enter a client name before sending', 'INVOICE_INCOMPLETE');
     await db.query(`UPDATE invoices SET status = 'sent', sent_at = $2 WHERE id = $1`, [id, now()]);
   });
@@ -461,6 +463,7 @@ invoicesRouter.post('/:id/cancel', ['admin'], async (req, res) => {
   await withTransaction(async db => {
     const current = await lockInvoice(db, id);
     if (current.status === 'cancelled') throw new HttpError(409, 'This invoice is already cancelled', 'INVALID_STATUS');
+    if (current.status !== 'draft' && current.status !== 'sent') throw new HttpError(409, 'Only a draft or sent invoice can be cancelled', 'INVALID_STATUS');
     if (compareMoney(await paidSoFar(db, id), '0.00') > 0) {
       throw new HttpError(409, 'Reverse the payments before cancelling this invoice', 'HAS_PAYMENTS');
     }
@@ -496,6 +499,11 @@ invoicesRouter.post('/:id/payments', ['admin'], async (req, res) => {
     const current = await lockInvoice(db, id);
     if (current.status === 'draft') throw new HttpError(409, 'Send the invoice before recording a payment', 'INVALID_STATUS');
     if (current.status === 'cancelled') throw new HttpError(409, 'This invoice is cancelled', 'INVALID_STATUS');
+    if (body.txnDate < current.invoiceDate) {
+      throw new HttpError(400, 'The payment date cannot be before the invoice date', 'VALIDATION_ERROR', [
+        { path: 'txnDate', message: 'The payment date cannot be before the invoice date' },
+      ]);
+    }
     const balance = subtractMoney(current.total, await paidSoFar(db, id));
     if (compareMoney(body.amount, balance) > 0) {
       throw new HttpError(409, `The payment is more than the balance due (${balance})`, 'OVERPAYMENT');
@@ -530,18 +538,25 @@ invoicesRouter.delete('/:id/payments/:txnId', ['admin'], async (req, res) => {
   if (!txnResult.success) throw new HttpError(404, 'Payment not found', 'NOT_FOUND');
   const txnId = txnResult.data;
 
-  const amount = await withTransaction(async db => {
+  const removed = await withTransaction(async db => {
     const current = await lockInvoice(db, id);
-    const { rows } = await db.query<{ amount: string }>(
-      `DELETE FROM transactions WHERE id = $1 AND invoice_id = $2 RETURNING amount::text AS amount`,
+    const { rows } = await db.query<{ amount: string; txnDate: string; paymentMethod: string; referenceNumber: string | null }>(
+      `DELETE FROM transactions WHERE id = $1 AND invoice_id = $2
+        RETURNING amount::text AS amount, txn_date AS "txnDate", payment_method AS "paymentMethod", reference_number AS "referenceNumber"`,
       [txnId, id],
     );
     if (!rows[0]) throw new HttpError(404, 'Payment not found', 'NOT_FOUND');
     if (current.status === 'paid') await db.query(`UPDATE invoices SET status = 'sent' WHERE id = $1`, [id]);
-    return rows[0].amount;
+    return rows[0];
   });
 
-  await audit(req, { action: 'invoice.payment_reversed', entityType: 'invoice', entityId: id, metadata: { transactionId: txnId, amount } });
+  // The ledger row is deleted, so the audit row keeps what it said.
+  await audit(req, {
+    action: 'invoice.payment_reversed',
+    entityType: 'invoice',
+    entityId: id,
+    metadata: { transactionId: txnId, ...removed },
+  });
   res.json({ invoice: await loadInvoice(id) });
 });
 
