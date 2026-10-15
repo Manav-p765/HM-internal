@@ -1,6 +1,8 @@
 import type { Request, RequestHandler } from 'express';
 import { query } from '../db.js';
 import { HttpError } from './errors.js';
+import { now } from '../services/clock.js';
+import { SESSION_LIFETIME_MS } from '../session.js';
 
 export type Role = 'admin' | 'manager' | 'employee' | 'client';
 
@@ -53,7 +55,11 @@ export function destroySession(req: Request): Promise<void> {
 // takes effect immediately. Does NOT apply the forced-password-change gate.
 export const requireSession: RequestHandler = async (req, _res, next) => {
   const userId = req.session.userId;
-  const user = userId ? await loadSessionUser(userId) : null;
+  // Absolute lifetime: a sign-in older than SESSION_LIFETIME_MS (or one from before loginAt existed)
+  // is over, however recently it was used.
+  const loginAt = req.session.loginAt;
+  const expired = !loginAt || now().getTime() - loginAt > SESSION_LIFETIME_MS;
+  const user = userId && !expired ? await loadSessionUser(userId) : null;
   if (!user) {
     if (userId) await destroySession(req);
     throw new HttpError(401, 'Not signed in', 'UNAUTHENTICATED');

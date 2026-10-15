@@ -2,18 +2,25 @@ import type { Request } from 'express';
 import { query } from '../db.js';
 import type { SessionUser } from '../middleware/auth.js';
 import { audit } from './audit.js';
-import { now, istDate } from './clock.js';
+import { now, istDate, istMinutesOfDay } from './clock.js';
+
+// No automatic punch-in before this time of day (Asia/Kolkata), so a tab left open overnight or a
+// scripted request just after midnight can't start the working day early.
+export const AUTO_PUNCH_IN_EARLIEST_IST = { hour: 6, minute: 0 };
 
 // Automatic punch-in: an employee-role user with a linked, active employee record gets today's (IST)
-// attendance row the first time they are seen that day: at login, and on the first /api/auth/me or
-// presence heartbeat of a new IST day. Idempotent (ON CONFLICT DO NOTHING). The session remembers the
-// last day it checked so the insert is attempted once per session per day, not on every request.
+// attendance row on a successful login or a presence heartbeat (POST), at or after the earliest time
+// above. Never from a GET. Idempotent (ON CONFLICT DO NOTHING); punch_in is the actual creation time.
+// The session remembers the day it succeeded so the insert runs once per session per day; before the
+// cutoff nothing is remembered, so the first login/heartbeat after it creates the record.
 // Never throws: a failure is logged (no secrets) and the caller carries on.
 export async function autoPunchIn(req: Request, user: SessionUser): Promise<void> {
   if (user.role !== 'employee' || !user.employeeId) return;
   const at = now();
   const today = istDate(at);
   if (req.session.punchCheckedOn === today) return;
+  const { hour, minute } = AUTO_PUNCH_IN_EARLIEST_IST;
+  if (istMinutesOfDay(at) < hour * 60 + minute) return;
 
   try {
     const inserted = await query<{ id: string }>(

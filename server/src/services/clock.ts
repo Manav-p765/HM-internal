@@ -29,6 +29,12 @@ export function istDate(at: Date): string {
   return new Date(at.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
 }
 
+// Minutes since midnight in Asia/Kolkata (0-1439) of the given instant.
+export function istMinutesOfDay(at: Date): number {
+  const shifted = new Date(at.getTime() + IST_OFFSET_MS);
+  return shifted.getUTCHours() * 60 + shifted.getUTCMinutes();
+}
+
 export function todayIst(): string {
   return istDate(now());
 }

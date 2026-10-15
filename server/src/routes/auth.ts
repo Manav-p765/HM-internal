@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { audit } from '../services/audit.js';
 import { autoPunchIn } from '../services/attendance.js';
+import { now } from '../services/clock.js';
 import { sendPasswordResetEmail } from '../services/mail.js';
 import {
   DUMMY_HASH,
@@ -66,6 +67,7 @@ authRouter.post('/login', 'public', loginLimiter, async (req, res) => {
 
   await regenerateSession(req); // new session id on privilege change (session fixation)
   req.session.userId = user.id;
+  req.session.loginAt = now().getTime(); // the 12-hour session lifetime starts here
   await query('UPDATE users SET last_login_at = now() WHERE id = $1', [user.id]);
   await audit(req, { action: 'auth.login_success', actorUserId: user.id, entityType: 'user', entityId: user.id });
 
@@ -90,8 +92,8 @@ authRouter.post('/logout', 'public', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/auth/me
 // ---------------------------------------------------------------------------
-authRouter.get('/me', 'session', async (req, res) => {
-  await autoPunchIn(req, req.user!); // the first request of a new IST day punches an employee in
+// Read-only: no automatic punch-in here (state changes only on POST: login and presence heartbeat).
+authRouter.get('/me', 'session', (req, res) => {
   res.json({ user: req.user });
 });
 
@@ -122,8 +124,11 @@ authRouter.post('/change-password', 'session', async (req, res) => {
 
   // Sign out every other device and give this one a fresh session id.
   await deleteUserSessions(userId);
+  // A new session id, but the same sign-in: the 12-hour lifetime still counts from the original login.
+  const loginAt = req.session.loginAt;
   await regenerateSession(req);
   req.session.userId = userId;
+  req.session.loginAt = loginAt;
 
   await audit(req, { action: 'auth.password_changed', entityType: 'user', entityId: userId });
   res.json({ user: await loadSessionUser(userId) });

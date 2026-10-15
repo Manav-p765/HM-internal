@@ -168,7 +168,9 @@ attendanceRouter.get('/', ['admin', 'manager'], async (req, res) => {
   const today = istDate(at);
   const date = parsed.data.date ?? today;
 
-  // Active employees, plus anyone (even inactive now) who has a record on that date.
+  // Active employees, plus anyone (even inactive now) who has a record on that date. Employees whose
+  // login is an admin or manager are left out: they have no automatic punch-in, so they would always
+  // count as absent. Employees without a login are included.
   const rows = await query<RosterRow>(
     `SELECT e.id AS "employeeId", e.employee_code AS code, e.full_name AS "fullName", e.department, e.designation,
             e.avatar_url AS "avatarUrl",
@@ -184,7 +186,8 @@ attendanceRouter.get('/', ['admin', 'manager'], async (req, res) => {
           WHERE l.employee_id = e.id AND l.status = 'approved' AND $1::date BETWEEN l.start_date AND l.end_date
           ORDER BY (l.day_type = 'full') DESC LIMIT 1
        ) l ON true
-      WHERE e.status <> 'inactive' OR a.id IS NOT NULL
+      WHERE (e.status <> 'inactive' OR a.id IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM users u WHERE u.employee_id = e.id AND u.role IN ('admin', 'manager'))
       ORDER BY e.full_name, e.employee_code`,
     [date],
   );

@@ -142,26 +142,49 @@ describe('automatic punch-in', () => {
     expect(rows[0].punch_in.toISOString()).toBe(T0.toISOString());
   });
 
-  it('the first /auth/me of the next IST day creates a new record on the same session', async () => {
-    setClock(new Date('2026-10-15T03:45:00Z'));
-    await agents.employee.get('/api/auth/me').expect(200);
-    expect((await records(ids.empA)).map(r => r.work_date)).toEqual([DAY, '2026-10-15']);
+  it('GET /auth/me is read-only: it never creates a record, even on a new IST day', async () => {
+    await query('DELETE FROM attendance_records');
+    setClock(new Date('2026-10-14T16:30:00Z')); // 22:00 IST on the 14th
+    const agent = await signIn('b@example.test');
+    setClock(new Date('2026-10-15T01:00:00Z')); // 06:30 IST on the 15th, same sign-in (8.5 h later)
+    await agent.get('/api/auth/me').expect(200);
+    expect((await records(ids.empB)).map(r => r.work_date)).toEqual([DAY]);
+    expect(await query(`SELECT 1 FROM attendance_records WHERE work_date = '2026-10-15'`)).toHaveLength(0);
+    // The first heartbeat (a POST) of the new day does punch in.
+    await agent.post('/api/presence/heartbeat').expect(200);
+    expect((await records(ids.empB)).map(r => r.work_date)).toEqual([DAY, '2026-10-15']);
   });
 
-  it('the first heartbeat of a new IST day also punches in', async () => {
-    setClock(new Date('2026-10-15T03:45:00Z'));
-    await agents.employee.post('/api/presence/heartbeat').expect(200);
-    expect((await records(ids.empA)).map(r => r.work_date)).toEqual([DAY, '2026-10-15']);
-  });
-
-  it('IST midnight edge: 23:59:59 IST belongs to the old day, 00:00:00 IST to the new one', async () => {
+  it('IST midnight and the 06:00 cutoff: 23:59:59 is the old day; nothing before 06:00; 06:00:00 creates it', async () => {
     await query('DELETE FROM attendance_records');
     setClock(new Date('2026-10-14T18:29:59Z')); // 23:59:59 IST on the 14th
     const agent = await signIn('b@example.test');
     expect((await records(ids.empB)).map(r => r.work_date)).toEqual([DAY]);
-    setClock(new Date('2026-10-14T18:30:00Z')); // 00:00:00 IST on the 15th
-    await agent.get('/api/auth/me').expect(200);
-    expect((await records(ids.empB)).map(r => r.work_date)).toEqual([DAY, '2026-10-15']);
+
+    setClock(new Date('2026-10-14T18:30:00Z')); // 00:00 IST on the 15th
+    await agent.post('/api/presence/heartbeat').expect(200);
+    setClock(new Date('2026-10-15T00:29:59Z')); // 05:59:59 IST
+    await agent.post('/api/presence/heartbeat').expect(200);
+    expect((await records(ids.empB)).map(r => r.work_date)).toEqual([DAY]);
+
+    setClock(new Date('2026-10-15T00:30:00Z')); // 06:00:00 IST
+    await agent.post('/api/presence/heartbeat').expect(200);
+    const rows = await records(ids.empB);
+    expect(rows.map(r => r.work_date)).toEqual([DAY, '2026-10-15']);
+    expect(rows[1].punch_in.toISOString()).toBe('2026-10-15T00:30:00.000Z'); // actual creation time
+  });
+
+  it('login at 05:59 IST succeeds without a record; login at 06:00 IST creates it', async () => {
+    await query('DELETE FROM attendance_records');
+    setClock(new Date('2026-10-15T00:29:00Z')); // 05:59 IST
+    const early = await request(app).post('/api/auth/login').send({ email: 'a@example.test', password: PASSWORD });
+    expect(early.status).toBe(200);
+    expect(await records(ids.empA)).toHaveLength(0);
+    setClock(new Date('2026-10-15T00:30:00Z')); // 06:00 IST
+    await signIn('a@example.test');
+    const rows = await records(ids.empA);
+    expect(rows.map(r => r.work_date)).toEqual(['2026-10-15']);
+    expect(rows[0].punch_in.toISOString()).toBe('2026-10-15T00:30:00.000Z');
   });
 
   it('a failing insert is logged without secrets and never fails the login', async () => {
@@ -255,13 +278,18 @@ describe('roster and corrections', () => {
     );
   }
 
-  it('GET / gives every active employee a status for the selected date with correct counts', async () => {
-    await approvedLeave(ids.managerEmp, DAY, DAY);
+  it('GET / covers employee-role and login-less employees only, with matching counts', async () => {
+    // An employee without a login is included; one whose login is an admin is excluded, like the manager.
+    const noLogin = await employee('Nora NoLogin');
+    const adminEmp = await employee('Adi Admin');
+    await user('admin2@example.test', 'admin', { employeeId: adminEmp });
+    await approvedLeave(noLogin, DAY, DAY);
+    await approvedLeave(ids.managerEmp, DAY, DAY); // excluded: not counted as on leave either
     setClock(at(30));
     const res = await agents.manager.get(`/api/attendance?date=${DAY}`).expect(200);
     const byName = Object.fromEntries(res.body.employees.map((e: { fullName: string; status: string }) => [e.fullName, e.status]));
-    // A and B were punched in by their logins; the inactive employee is not listed.
-    expect(byName).toEqual({ 'Avery A': 'present', 'Blake B': 'present', 'Morgan Manager': 'on_leave' });
+    // A and B were punched in by their logins; inactive, manager- and admin-linked employees are not listed.
+    expect(byName).toEqual({ 'Avery A': 'present', 'Blake B': 'present', 'Nora NoLogin': 'on_leave' });
     expect(res.body.summary).toEqual({ total: 3, present: 2, absent: 0, onApprovedLeave: 1, halfDayLeave: 0, currentlyWorking: 2, incomplete: 0 });
     expect(JSON.stringify(res.body)).not.toContain('Private reason');
 
@@ -269,12 +297,14 @@ describe('roster and corrections', () => {
     await approvedLeave(ids.empA, '2026-10-13', '2026-10-13', 'half');
     const yesterday = await agents.admin.get('/api/attendance?date=2026-10-13').expect(200);
     expect(yesterday.body.summary).toMatchObject({ total: 3, present: 0, absent: 3, onApprovedLeave: 0, halfDayLeave: 1, currentlyWorking: 0 });
+    expect(yesterday.body.employees.map((e: { fullName: string }) => e.fullName)).not.toContain('Morgan Manager');
   });
 
   it('defaults to today (IST) and validates the date', async () => {
     setClock(new Date('2026-10-14T19:00:00Z')); // already the 15th in IST
-    expect((await agents.admin.get('/api/attendance').expect(200)).body.date).toBe('2026-10-15');
-    await agents.admin.get('/api/attendance?date=2026-02-30x').expect(400);
+    const admin = await signIn('admin@example.test'); // a fresh sign-in (the 09:30 one would be 15 h old)
+    expect((await admin.get('/api/attendance').expect(200)).body.date).toBe('2026-10-15');
+    await admin.get('/api/attendance?date=2026-02-30x').expect(400);
   });
 
   it('PUT corrects a record, keeps before/after in the audit log and returns the history', async () => {

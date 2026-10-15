@@ -8,10 +8,16 @@ const PgStore = connectPgSimple(session);
 declare module 'express-session' {
   interface SessionData {
     userId?: string;
+    // When the user signed in (ms since epoch, from services/clock.ts). The session ends
+    // SESSION_LIFETIME_MS after this, however active it is (checked in requireSession).
+    loginAt?: number;
     // IST date on which the automatic punch-in was last attempted for this session (services/attendance.ts).
     punchCheckedOn?: string;
   }
 }
+
+// Absolute lifetime of a sign-in, for every role. Activity (requests, presence heartbeats) never extends it.
+export const SESSION_LIFETIME_MS = 12 * 60 * 60 * 1000;
 
 export const sessionMiddleware = session({
   name: 'hm.sid',
@@ -23,11 +29,13 @@ export const sessionMiddleware = session({
   secret: config.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  rolling: true,
+  // Not rolling: the cookie expires SESSION_LIFETIME_MS after it was issued. The server-side check on
+  // loginAt (requireSession) is what enforces the limit; the cookie expiry just matches it.
+  rolling: false,
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
     secure: config.isProduction,
-    maxAge: 12 * 60 * 60 * 1000, // 12h, refreshed on activity
+    maxAge: SESSION_LIFETIME_MS,
   },
 });
