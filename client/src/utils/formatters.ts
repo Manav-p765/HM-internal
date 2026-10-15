@@ -1,30 +1,6 @@
 /**
- * Currency, Date, and Reporting formatters
+ * Date and reporting formatters. Money is formatted by formatMoney() in utils/money.ts (server strings).
  */
-
-export function formatCurrency(amount: number, currencyCode: string = 'INR'): string {
-  const safeAmount = Math.round((Number(amount) || 0) * 100) / 100;
-  
-  if (currencyCode === 'INR') {
-    // Format with Indian numbering system (lakhs, crores)
-    return '₹' + new Intl.NumberFormat('en-IN', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
-    }).format(safeAmount);
-  }
-
-  const symbols: Record<string, string> = {
-    USD: '$',
-    EUR: '€',
-    GBP: '£',
-  };
-
-  const symbol = symbols[currencyCode] || currencyCode + ' ';
-  return symbol + new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  }).format(safeAmount);
-}
 
 export function formatDate(dateString?: string): string {
   if (!dateString) return '—';
@@ -80,11 +56,19 @@ export function exportToCSV(filename: string, headers: string[], rows: (string |
   document.body.removeChild(link);
 }
 
-export function roundToTwoDecimals(num: number): number {
-  return Math.round((Number(num) || 0) * 100) / 100;
-}
 
 // Times are shown in the company time zone (IST), whatever the browser's zone is.
+// The IST calendar date ('YYYY-MM-DD') of a timestamp. Never slice a UTC ISO string for this: between
+// 00:00 and 05:30 IST that gives the previous day. (India has no daylight saving: always UTC+05:30.)
+export function istDateOf(iso: string): string {
+  return new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(0, 10);
+}
+
+// A timestamp shown as a date, in IST ("16 Oct 2026").
+export function formatDateIst(iso?: string | null): string {
+  return iso ? formatDate(istDateOf(iso)) : '—';
+}
+
 export function formatTimeIst(iso?: string | null): string {
   if (!iso) return '—';
   return new Date(iso).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });

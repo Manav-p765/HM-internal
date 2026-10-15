@@ -20,8 +20,8 @@ import {
   Clock,
   Edit2,
 } from 'lucide-react';
-import { formatCurrency, formatDate } from '../../utils/formatters';
-import { CURRENCY } from '../../utils/money';
+import { formatDate } from '../../utils/formatters';
+import { formatMoney } from '../../utils/money';
 
 interface EmployeeDetailModalProps {
   employeeId: string; // from /employees/:id
@@ -144,7 +144,7 @@ export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({ employ
                 </span>
               </div>
               <span className="text-sm font-mono font-bold text-[#5038F5]">
-                {formatCurrency(Number(employee.monthlySalary), CURRENCY)} / month
+                {formatMoney(String(employee.monthlySalary))} / month
               </span>
             </div>
 

@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import {
-  Transaction,
   UserProfile,
   ActivityLog,
   AuditLog,
@@ -20,11 +19,7 @@ interface AppContextType {
   // Signed-in user (from the server session via AuthContext, mapped to the shape the views use)
   currentUser: UserProfile;
 
-  // Transactions & Accounting
-  transactions: Transaction[];
-  addTransaction: (txn: Omit<Transaction, 'id' | 'createdAt'>) => Transaction;
-  updateTransaction: (txn: Transaction) => void;
-  deleteTransaction: (id: string) => void;
+  // The ledger and reports live on the server (api/transactions.ts, api/reports.ts); pages fetch them.
 
   // Invoices and company settings live on the server (api/invoices.ts, api/settings.ts); pages fetch them.
 
@@ -41,8 +36,6 @@ interface AppContextType {
   dismissToast: (id: string) => void;
 
   // Quick Action Modals
-  isAddTransactionOpen: boolean;
-  setIsAddTransactionOpen: (open: boolean) => void;
   isAddEmployeeOpen: boolean;
   setIsAddEmployeeOpen: (open: boolean) => void;
 }
@@ -56,17 +49,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     throw new Error('AppProvider requires a signed-in user');
   }
 
-  const [transactions, setTransactions] = useState<Transaction[]>(StorageService.getTransactions());
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(StorageService.getActivityLogs());
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(StorageService.getAuditLogs());
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   // Quick Action Modal states
-  const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(false);
   const [isAddEmployeeOpen, setIsAddEmployeeOpen] = useState(false);
 
   const refreshData = () => {
-    setTransactions(StorageService.getTransactions());
     setActivityLogs(StorageService.getActivityLogs());
     setAuditLogs(StorageService.getAuditLogs());
   };
@@ -107,25 +97,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     role: currentUser.role,
   };
 
-  const addTransaction = (txn: Omit<Transaction, 'id' | 'createdAt'>): Transaction => {
-    const created = StorageService.addTransaction(txn);
-    refreshData();
-    showToast('success', `${txn.type === 'income' ? 'Income' : 'Expense'} transaction recorded`);
-    return created;
-  };
-
-  const updateTransaction = (txn: Transaction) => {
-    StorageService.updateTransaction(txn);
-    refreshData();
-    showToast('success', 'Transaction updated successfully');
-  };
-
-  const deleteTransaction = (id: string) => {
-    StorageService.deleteTransaction(id);
-    refreshData();
-    showToast('info', 'Transaction deleted');
-  };
-
   const logAuditAction = (entry: Parameters<typeof StorageService.logAuditAction>[0]) => {
     const log = StorageService.logAuditAction({
       ...entry,
@@ -142,18 +113,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     <AppContext.Provider
       value={{
         currentUser,
-        transactions,
-        addTransaction,
-        updateTransaction,
-        deleteTransaction,
         auditLogs,
         activityLogs,
         logAuditAction,
         toasts,
         showToast,
         dismissToast,
-        isAddTransactionOpen,
-        setIsAddTransactionOpen,
         isAddEmployeeOpen,
         setIsAddEmployeeOpen,
       }}

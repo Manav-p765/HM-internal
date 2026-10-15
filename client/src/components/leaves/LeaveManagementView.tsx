@@ -15,7 +15,7 @@ import { FormField } from '../common/FormField';
 import { Avatar } from '../common/Avatar';
 import { LEAVE_STATUS_VARIANT, LeaveDetails, dayTypeLabel, daysLabel } from './LeaveDetails';
 import { CalendarCheck, Check, CheckCircle2, Download, Eye, Search, X, XCircle } from 'lucide-react';
-import { exportToCSV, formatDate } from '../../utils/formatters';
+import { exportToCSV, formatDate, formatDateIst, istDateOf } from '../../utils/formatters';
 
 const PAGE_SIZE = 50;
 
@@ -105,7 +105,7 @@ export const LeaveManagementView: React.FC = () => {
       l.startDate,
       l.endDate,
       l.totalDays,
-      l.appliedAt.slice(0, 10),
+      istDateOf(l.appliedAt),
       LEAVE_STATUS_LABEL[l.status],
       l.reason,
       l.reviewedByName ?? '',
@@ -250,7 +250,7 @@ export const LeaveManagementView: React.FC = () => {
                       )}
                     </td>
                     <td className="py-3 px-4 text-center whitespace-nowrap font-mono font-bold text-[#5038F5]">{daysLabel(req.totalDays)}</td>
-                    <td className="py-3 px-4 text-[#7185A5] whitespace-nowrap">{formatDate(req.appliedAt.slice(0, 10))}</td>
+                    <td className="py-3 px-4 text-[#7185A5] whitespace-nowrap">{formatDateIst(req.appliedAt)}</td>
                     <td className="py-3 px-4 text-center whitespace-nowrap">
                       <Badge variant={LEAVE_STATUS_VARIANT[req.status]}>{LEAVE_STATUS_LABEL[req.status]}</Badge>
                     </td>

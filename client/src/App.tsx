@@ -185,6 +185,7 @@ export default function App() {
 
             <Route element={<RequireRole roles={['admin']} />}>
               <Route path="/accounting" element={<AccountingView />} />
+              <Route path="/accounting/new" element={<AccountingView />} />
               <Route path="/salary" element={<SalaryView />} />
               <Route path="/settings" element={<SettingsView />} />
               <Route path="/settings/users" element={<SettingsView />} />

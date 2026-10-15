@@ -6,7 +6,6 @@ import { useApiData } from '../../api/useApiData';
 import { DEPARTMENTS } from '../../types';
 import { useApp } from '../../context/AppContext';
 import { Card } from '../common/Card';
-import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
 import {
   TrendingUp,
@@ -16,9 +15,6 @@ import {
   Users,
   Banknote,
   ArrowRight,
-  Plus,
-  Calendar,
-  Building,
   Clock,
   UserCheck,
   CheckCircle2,
@@ -26,25 +22,31 @@ import {
   CalendarDays,
   CalendarCheck,
 } from 'lucide-react';
-import { formatCurrency, formatDate, formatMinutes, formatMonthYear, formatTimeIst } from '../../utils/formatters';
+import { formatDate, formatMinutes, formatMonthYear, formatTimeIst } from '../../utils/formatters';
 import { attendanceApi } from '../../api/attendance';
 import { leavesApi } from '../../api/leaves';
 import { LEAVE_TYPE_LABEL } from '../../types/attendance';
 import { invoicesApi } from '../../api/invoices';
 import { salaryApi } from '../../api/salary';
+import { reportsApi } from '../../api/reports';
+import { transactionsApi } from '../../api/transactions';
+import { PeriodPreset } from '../../types/ledger';
+import { TrendBars } from '../reports/TrendBars';
 import { invoiceLabel } from '../../types/invoices';
 import { InvoiceStatusBadge } from '../invoices/InvoiceStatusBadge';
-import { CURRENCY, formatMoney } from '../../utils/money';
+import { formatMoney } from '../../utils/money';
 import { COMPANY_BRAND } from '../../utils/company';
 
-type DateFilterOption = 'this_month' | 'last_month' | 'this_year' | 'all_time';
+// Admin finance cards: a server period preset (resolved from the IST date and the company financial year).
+const FINANCE_PERIODS: { id: PeriodPreset; label: string }[] = [
+  { id: 'this_month', label: 'This Month' },
+  { id: 'last_month', label: 'Last Month' },
+  { id: 'this_fy', label: 'This FY' },
+];
 
 export const DashboardView: React.FC = () => {
-  const {
-    transactions,
-    setIsAddTransactionOpen,
-    currentUser,
-  } = useApp();
+  const { currentUser } = useApp();
+  const isAdmin = currentUser.role === 'admin';
   const navigate = useNavigate();
   // Admin/manager dashboard: roster from the API (up to 200 for the department breakdown).
   const roster = useApiData(() => employeesApi.list({ limit: 200 }), []);
@@ -58,60 +60,14 @@ export const DashboardView: React.FC = () => {
   const onLeaveToday = attendanceToday.data?.employees.filter(e => e.status === 'on_leave') ?? [];
   const employees = roster.data?.employees ?? [];
 
-  const [dateFilter, setDateFilter] = useState<DateFilterOption>('this_month');
-
-  // Calculate date boundaries
-  const dateRange = useMemo(() => {
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth(); // 0-indexed
-
-    if (dateFilter === 'this_month') {
-      const start = new Date(currentYear, currentMonth, 1).toISOString().split('T')[0];
-      const end = new Date(currentYear, currentMonth + 1, 0).toISOString().split('T')[0];
-      return { start, end, label: 'This Month' };
-    }
-
-    if (dateFilter === 'last_month') {
-      const start = new Date(currentYear, currentMonth - 1, 1).toISOString().split('T')[0];
-      const end = new Date(currentYear, currentMonth, 0).toISOString().split('T')[0];
-      return { start, end, label: 'Last Month' };
-    }
-
-    if (dateFilter === 'this_year') {
-      const start = `${currentYear}-01-01`;
-      const end = `${currentYear}-12-31`;
-      return { start, end, label: 'This Year' };
-    }
-
-    // All time
-    return { start: '1970-01-01', end: '2099-12-31', label: 'All Time' };
-  }, [dateFilter]);
-
-  // Filtered transactions for calculation
-  const filteredTransactions = useMemo(() => {
-    return transactions.filter(t => t.date >= dateRange.start && t.date <= dateRange.end);
-  }, [transactions, dateRange]);
-
-  // Financial calculations strictly per master prompt instructions:
-  // - Total Income = sum of recorded income transactions
-  // - Total Expenses = sum of recorded expense transactions
-  // - Net Balance = Total Income minus Total Expenses
-  // - Outstanding Invoices = total unpaid and partially unpaid invoice balances
-  // - Pending Salary Payments = recorded salary amounts that have not been marked as paid
-  const totalIncome = useMemo(() => {
-    return filteredTransactions
-      .filter(t => t.type === 'income')
-      .reduce((sum, t) => sum + t.amount, 0);
-  }, [filteredTransactions]);
-
-  const totalExpenses = useMemo(() => {
-    return filteredTransactions
-      .filter(t => t.type === 'expense')
-      .reduce((sum, t) => sum + t.amount, 0);
-  }, [filteredTransactions]);
-
-  const netBalance = totalIncome - totalExpenses;
+  const [financePeriod, setFinancePeriod] = useState<PeriodPreset>('this_month');
+  const periodLabel = FINANCE_PERIODS.find(p => p.id === financePeriod)?.label ?? '';
+  // Income, expenses and net (cash basis), the 6-month trend and the latest ledger entries: from the server,
+  // and only for admins (managers never call the ledger or report APIs).
+  const pl = useApiData(() => (isAdmin ? reportsApi.profitLoss({ preset: financePeriod }) : Promise.resolve(null)), [isAdmin, financePeriod]);
+  const trend = useApiData(() => (isAdmin ? reportsApi.trend(6) : Promise.resolve(null)), [isAdmin]);
+  const recentLedger = useApiData(() => (isAdmin ? transactionsApi.list({ limit: 5 }) : Promise.resolve(null)), [isAdmin]);
+  const plTotals = pl.data?.totals;
 
   const outstandingInvoices = invoiceSummary ? formatMoney(invoiceSummary.outstandingTotal) : '—';
   const overdueInvoices = invoiceSummary ? formatMoney(invoiceSummary.overdueTotal) : '—';
@@ -138,34 +94,6 @@ export const DashboardView: React.FC = () => {
   const expectedTodayCount = Math.max(0, (attendanceToday.data?.summary.total ?? 0) - onLeaveToday.length);
   const attendanceRate = Math.round((presentTodayCount / Math.max(1, expectedTodayCount)) * 100);
 
-  // Monthly Income vs Expenses breakdown for the last 6 months
-  const monthlyBarData = useMemo(() => {
-    const months: { [key: string]: { label: string; income: number; expense: number } } = {};
-    const now = new Date();
-
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      const label = d.toLocaleDateString('en-US', { month: 'short' });
-      months[key] = { label, income: 0, expense: 0 };
-    }
-
-    transactions.forEach(t => {
-      const monthKey = t.date.substring(0, 7);
-      if (months[monthKey]) {
-        if (t.type === 'income') months[monthKey].income += t.amount;
-        if (t.type === 'expense') months[monthKey].expense += t.amount;
-      }
-    });
-
-    return Object.values(months);
-  }, [transactions]);
-
-  const maxMonthlyVal = Math.max(
-    ...monthlyBarData.map(m => Math.max(m.income, m.expense)),
-    100000
-  );
-
   const isManager = currentUser.role === 'manager';
 
   return (
@@ -183,21 +111,15 @@ export const DashboardView: React.FC = () => {
           </p>
         </div>
 
-        {/* Date Filter Segmented Tabs */}
+        {/* Finance period (admin) */}
+        {isAdmin && (
         <div className="flex items-center gap-1 p-1 bg-white border border-[#DFE6F1] rounded-lg shadow-xs self-start sm:self-auto">
-          {(
-            [
-              { id: 'this_month', label: 'This Month' },
-              { id: 'last_month', label: 'Last Month' },
-              { id: 'this_year', label: 'This Year' },
-              { id: 'all_time', label: 'All Time' },
-            ] as const
-          ).map(tab => (
+          {FINANCE_PERIODS.map(tab => (
             <button
               key={tab.id}
-              onClick={() => setDateFilter(tab.id)}
+              onClick={() => setFinancePeriod(tab.id)}
               className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-                dateFilter === tab.id
+                financePeriod === tab.id
                   ? 'bg-[#5038F5] text-white shadow-xs'
                   : 'text-[#7185A5] hover:text-[#111827]'
               }`}
@@ -206,6 +128,7 @@ export const DashboardView: React.FC = () => {
             </button>
           ))}
         </div>
+        )}
       </div>
 
       {/* Task KPIs (from the API) */}
@@ -381,11 +304,11 @@ export const DashboardView: React.FC = () => {
                 </div>
               </div>
               <div className="mt-2">
-                <span className="text-2xl font-mono font-bold text-[#111827]">
-                  {formatCurrency(totalIncome, CURRENCY)}
+                <span className="text-2xl font-mono font-bold text-[#111827]" data-testid="kpi-income">
+                  {plTotals ? formatMoney(plTotals.income) : '—'}
                 </span>
                 <p className="text-[11px] text-[#7185A5] mt-1">
-                  Recorded revenue · {dateRange.label}
+                  Cash received · {periodLabel}
                 </p>
               </div>
             </Card>
@@ -399,11 +322,11 @@ export const DashboardView: React.FC = () => {
                 </div>
               </div>
               <div className="mt-2">
-                <span className="text-2xl font-mono font-bold text-[#111827]">
-                  {formatCurrency(totalExpenses, CURRENCY)}
+                <span className="text-2xl font-mono font-bold text-[#111827]" data-testid="kpi-expense">
+                  {plTotals ? formatMoney(plTotals.expense) : '—'}
                 </span>
                 <p className="text-[11px] text-[#7185A5] mt-1">
-                  Payroll, infra & operations · {dateRange.label}
+                  Salaries and operating costs · {periodLabel}
                 </p>
               </div>
             </Card>
@@ -418,14 +341,13 @@ export const DashboardView: React.FC = () => {
               </div>
               <div className="mt-2">
                 <span
-                  className={`text-2xl font-mono font-bold ${
-                    netBalance >= 0 ? 'text-[#047857]' : 'text-[#E11D48]'
-                  }`}
+                  className={`text-2xl font-mono font-bold ${plTotals?.net.startsWith('-') ? 'text-[#E11D48]' : 'text-[#047857]'}`}
+                  data-testid="kpi-net"
                 >
-                  {formatCurrency(netBalance, CURRENCY)}
+                  {plTotals ? formatMoney(plTotals.net) : '—'}
                 </span>
                 <p className="text-[11px] text-[#7185A5] mt-1">
-                  Net operating profit for {dateRange.label}
+                  Cash basis · {periodLabel}
                 </p>
               </div>
             </Card>
@@ -564,67 +486,21 @@ export const DashboardView: React.FC = () => {
                 Monthly Income vs Expenses
               </h3>
               <p className="text-xs text-[#7185A5]">
-                6-month cash flow trajectory across recorded business transactions
+                Last 6 months from the ledger (voided and reversed entries excluded)
               </p>
             </div>
-            <div className="flex items-center gap-4 text-xs font-medium">
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-[#5038F5]" />
-                <span className="text-[#111827]">Income</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-[#DFE6F1]" />
-                <span className="text-[#7185A5]">Expenses</span>
-              </div>
-            </div>
+            <button onClick={() => navigate('/reports')} className="text-xs font-semibold text-[#5038F5] hover:underline cursor-pointer self-start">
+              Reports &rarr;
+            </button>
           </div>
 
-          {/* Visual Bar Chart */}
-          <div className="space-y-4">
-            <div className="grid grid-cols-6 gap-2 sm:gap-6 items-end h-44 pt-4 border-b border-[#DFE6F1]">
-              {monthlyBarData.map((m, idx) => {
-                const incomeHeight = maxMonthlyVal > 0 ? (m.income / maxMonthlyVal) * 100 : 0;
-                const expenseHeight = maxMonthlyVal > 0 ? (m.expense / maxMonthlyVal) * 100 : 0;
-
-                return (
-                  <div key={idx} className="flex flex-col items-center h-full justify-end group">
-                    <div className="w-full flex items-end justify-center gap-1 sm:gap-2 h-full">
-                      {/* Income bar */}
-                      <div
-                        className="w-1/2 max-w-[28px] bg-[#5038F5] rounded-t transition-all group-hover:brightness-110 relative"
-                        style={{ height: `${Math.max(incomeHeight, 4)}%` }}
-                        title={`Income: ${formatCurrency(m.income, CURRENCY)}`}
-                      />
-                      {/* Expense bar */}
-                      <div
-                        className="w-1/2 max-w-[28px] bg-[#DFE6F1] rounded-t transition-all group-hover:bg-[#CBD5E1] relative"
-                        style={{ height: `${Math.max(expenseHeight, 4)}%` }}
-                        title={`Expense: ${formatCurrency(m.expense, CURRENCY)}`}
-                      />
-                    </div>
-                    <span className="text-[11px] font-semibold text-[#7185A5] mt-2">
-                      {m.label}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Tabular details below chart for accessibility & precision */}
-            <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 pt-2 text-center text-xs">
-              {monthlyBarData.map((m, idx) => (
-                <div key={idx} className="p-2 rounded-lg bg-[#F7F9FC] border border-[#DFE6F1]">
-                  <div className="font-semibold text-[#111827]">{m.label}</div>
-                  <div className="font-mono text-[#047857] text-[11px] mt-0.5">
-                    +{formatCurrency(m.income, CURRENCY)}
-                  </div>
-                  <div className="font-mono text-[#E11D48] text-[11px]">
-                    -{formatCurrency(m.expense, CURRENCY)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          {trend.error ? (
+            <p className="py-6 text-center text-xs text-[#7185A5]">The trend could not be loaded.</p>
+          ) : !trend.data ? (
+            <p className="py-6 text-center text-xs text-[#7185A5]">Loading…</p>
+          ) : (
+            <TrendBars months={trend.data.months} testId="dashboard-trend" />
+          )}
         </Card>
       )}
 
@@ -684,33 +560,31 @@ export const DashboardView: React.FC = () => {
             </div>
 
             <div className="divide-y divide-[#DFE6F1] mt-1">
-              {transactions.slice(0, 5).map(txn => (
-                <div key={txn.id} className="py-3 flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-xs font-semibold text-[#111827] truncate">
-                      {txn.description}
+              {!recentLedger.data ? (
+                <p className="py-6 text-center text-xs text-[#7185A5]">{recentLedger.error ? 'Transactions could not be loaded.' : 'Loading…'}</p>
+              ) : recentLedger.data.transactions.length === 0 ? (
+                <p className="py-6 text-center text-xs text-[#7185A5]">No transactions yet.</p>
+              ) : (
+                recentLedger.data.transactions.map(txn => (
+                  <div key={txn.id} className="py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-[#111827] truncate">{txn.description}</div>
+                      <div className="text-[11px] text-[#7185A5] mt-0.5 flex items-center gap-1.5">
+                        <span>{formatDate(txn.txnDate)}</span>
+                        <span>·</span>
+                        <span className="truncate">{txn.category}</span>
+                      </div>
                     </div>
-                    <div className="text-[11px] text-[#7185A5] mt-0.5 flex items-center gap-1.5">
-                      <span>{formatDate(txn.date)}</span>
-                      <span>·</span>
-                      <span>{txn.category}</span>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span
-                      className={`text-xs font-mono font-bold ${
-                        txn.type === 'income' ? 'text-[#047857]' : 'text-[#111827]'
-                      }`}
-                    >
-                      {txn.type === 'income' ? '+' : '-'}
-                      {formatCurrency(txn.amount, CURRENCY)}
-                    </span>
-                    <div className="text-[10px] text-[#7185A5] mt-0.5">
-                      {txn.paymentMethod}
+                    <div className="text-right shrink-0">
+                      <span className={`text-xs font-mono font-bold ${txn.type === 'income' ? 'text-[#047857]' : 'text-[#111827]'}`}>
+                        {txn.type === 'income' ? '+' : '−'}
+                        {formatMoney(txn.amount)}
+                      </span>
+                      <div className="text-[10px] text-[#7185A5] mt-0.5">{txn.paymentMethod}</div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </Card>
         )}

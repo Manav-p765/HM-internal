@@ -39,6 +39,8 @@ function removeLegacyAuthStorage() {
       // Salaries and payslips moved to the API (/api/salary).
       'monks_salaries_v2',
       'monks_salary_slips_v2',
+      // The ledger moved to the API (/api/transactions).
+      'monks_transactions_v2',
     ];
     legacy.forEach(key => localStorage.removeItem(key));
     Object.keys(localStorage)

@@ -17,7 +17,6 @@ import {
 } from 'lucide-react';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
-import { formatCurrency, formatDate } from '../../utils/formatters';
 
 interface TopNavProps {
   onMobileMenuToggle: () => void;
@@ -34,8 +33,6 @@ export const TopNav: React.FC<TopNavProps> = ({
   const { pathname } = useLocation();
   const {
     currentUser,
-    transactions,
-    setIsAddTransactionOpen,
     setIsAddEmployeeOpen,
   } = useApp();
 
@@ -55,7 +52,6 @@ export const TopNav: React.FC<TopNavProps> = ({
   const isAdmin = currentUser.role === 'admin';
   const salaryMonth = useApiData(() => (isAdmin ? salaryApi.list() : Promise.resolve(null)), [isAdmin]);
   const pendingSalaryCount = salaryMonth.data ? salaryMonth.data.summary.headcount - salaryMonth.data.summary.paidCount : 0;
-  const recentTransactions = transactions.slice(0, 3);
 
   const notificationCount = overdueTotalCount + (isAdmin ? pendingSalaryCount : 0);
 
@@ -111,10 +107,7 @@ export const TopNav: React.FC<TopNavProps> = ({
         variant="primary"
         size="sm"
         icon={<Plus className="w-4 h-4" />}
-        onClick={() => {
-          navigate('/accounting');
-          setIsAddTransactionOpen(true);
-        }}
+        onClick={() => navigate('/accounting/new')}
       >
         Add Transaction
       </Button>

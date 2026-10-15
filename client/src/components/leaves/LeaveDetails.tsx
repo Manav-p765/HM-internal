@@ -1,7 +1,7 @@
 import React from 'react';
 import { HALF_DAY_LABEL, LEAVE_STATUS_LABEL, LEAVE_TYPE_LABEL, LeaveRequest, LeaveStatus } from '../../types/attendance';
 import { CheckCircle2, Clock, User, XCircle } from 'lucide-react';
-import { formatDate } from '../../utils/formatters';
+import { formatDate, formatDateIst } from '../../utils/formatters';
 
 export const LEAVE_STATUS_VARIANT: Record<LeaveStatus, 'success' | 'warning' | 'error' | 'neutral'> = {
   approved: 'success',
@@ -35,7 +35,7 @@ export const LeaveDetails: React.FC<{ leave: LeaveRequest; showEmployee?: boolea
         {leave.status === 'rejected' && <XCircle className="w-4 h-4" />}
         <span>Status: {LEAVE_STATUS_LABEL[leave.status]}</span>
       </div>
-      <span className="font-mono text-[11px] opacity-75">Applied on {formatDate(leave.appliedAt.slice(0, 10))}</span>
+      <span className="font-mono text-[11px] opacity-75">Applied on {formatDateIst(leave.appliedAt)}</span>
     </div>
 
     <div className="grid grid-cols-2 gap-3 p-4 rounded-xl bg-[#F7F9FC] border border-[#DFE6F1]">
@@ -86,7 +86,7 @@ export const LeaveDetails: React.FC<{ leave: LeaveRequest; showEmployee?: boolea
           <span className="font-semibold text-[#111827] flex items-center gap-1.5">
             <User className="w-3.5 h-3.5 text-[#5038F5]" /> Reviewed by {leave.reviewedByName}
           </span>
-          <span className="text-[#7185A5] text-[11px]">{leave.reviewedAt && formatDate(leave.reviewedAt.slice(0, 10))}</span>
+          <span className="text-[#7185A5] text-[11px]">{leave.reviewedAt && formatDateIst(leave.reviewedAt)}</span>
         </div>
         {leave.reviewerComment && (
           <div>

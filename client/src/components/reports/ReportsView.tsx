@@ -1,540 +1,434 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
+import { Link } from 'react-router';
 import { useApp } from '../../context/AppContext';
+import { reportsApi } from '../../api/reports';
+import { useApiData } from '../../api/useApiData';
+import { AGING_LABEL, CategoryTotal, PeriodParams, ReportPeriod } from '../../types/ledger';
+import { INVOICE_STATUS_LABEL } from '../../types/invoices';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
-import { Badge } from '../common/Badge';
-import {
-  BarChart3,
-  TrendingUp,
-  TrendingDown,
-  Scale,
-  Receipt,
-  Banknote,
-  Download,
-  Calendar,
-  AlertCircle,
-  FileSpreadsheet,
-} from 'lucide-react';
-import { formatCurrency, formatDate, exportToCSV } from '../../utils/formatters';
-import { invoicesApi } from '../../api/invoices';
-import { salaryApi } from '../../api/salary';
-import { SALARY_STATUS_LABEL } from '../../types/salary';
-import { useApiData } from '../../api/useApiData';
+import { LoadError } from '../common/LoadError';
+import { PeriodPicker } from '../common/PeriodPicker';
 import { InvoiceStatusBadge } from '../invoices/InvoiceStatusBadge';
-import { INVOICE_STATUS_LABEL, invoiceLabel } from '../../types/invoices';
-import { CURRENCY, formatMoney, sumMoney } from '../../utils/money';
+import { TrendBars } from './TrendBars';
+import { BarChart3, Banknote, Download, FileText, Printer, Scale } from 'lucide-react';
+import { formatDate, formatMonthYear } from '../../utils/formatters';
+import { formatMoney } from '../../utils/money';
 
-type ReportType = 'income' | 'expense' | 'pnl' | 'invoices' | 'salary';
+type Tab = 'pnl' | 'trend' | 'invoices' | 'salary';
 
+const TABS: { id: Tab; label: string; icon: React.ReactNode; adminOnly: boolean }[] = [
+  { id: 'pnl', label: 'Profit & Loss', icon: <Scale className="w-4 h-4 hidden sm:block" />, adminOnly: true },
+  { id: 'trend', label: 'Trend', icon: <BarChart3 className="w-4 h-4 hidden sm:block" />, adminOnly: true },
+  { id: 'invoices', label: 'Invoices', icon: <FileText className="w-4 h-4 hidden sm:block" />, adminOnly: false },
+  { id: 'salary', label: 'Salary', icon: <Banknote className="w-4 h-4 hidden sm:block" />, adminOnly: true },
+];
+
+const periodText = (p: ReportPeriod) => `${formatDate(p.from)} – ${formatDate(p.to)}`;
+
+const th = 'py-2.5 px-2 sm:px-3 font-semibold';
+const td = 'py-2.5 px-2 sm:px-3';
+
+// /reports (admin: every tab; manager: Invoices only). Every figure comes from /api/reports, computed in SQL
+// on the server; nothing is added up here. Each tab exports the same data as CSV and prints without the app
+// chrome (.no-print).
 export const ReportsView: React.FC = () => {
-  const { transactions, currentUser } = useApp();
-  // Salary data is admin only on the server; managers don't get the salary report.
+  const { currentUser } = useApp();
   const isAdmin = currentUser.role === 'admin';
+  const tabs = TABS.filter(t => isAdmin || !t.adminOnly);
+  const [tab, setTab] = useState<Tab>(isAdmin ? 'pnl' : 'invoices');
+  const [period, setPeriod] = useState<PeriodParams>({ preset: 'this_fy' });
+  const [months, setMonths] = useState(12);
 
-  const [activeReport, setActiveReport] = useState<ReportType>('pnl');
-
-  // Date filters
-  const now = new Date();
-  const firstDayOfYear = `${now.getFullYear()}-01-01`;
-  const todayStr = now.toISOString().split('T')[0];
-
-  const [startDate, setStartDate] = useState(firstDayOfYear);
-  const [endDate, setEndDate] = useState(todayStr);
-
-  // 1. Transactions in range
-  const rangeTransactions = useMemo(() => {
-    return transactions.filter(t => {
-      if (startDate && t.date < startDate) return false;
-      if (endDate && t.date > endDate) return false;
-      return true;
-    });
-  }, [transactions, startDate, endDate]);
-
-  const incomeTxns = useMemo(() => {
-    return rangeTransactions.filter(t => t.type === 'income');
-  }, [rangeTransactions]);
-
-  const expenseTxns = useMemo(() => {
-    return rangeTransactions.filter(t => t.type === 'expense');
-  }, [rangeTransactions]);
-
-  const totalIncome = useMemo(() => {
-    return incomeTxns.reduce((sum, t) => sum + t.amount, 0);
-  }, [incomeTxns]);
-
-  const totalExpense = useMemo(() => {
-    return expenseTxns.reduce((sum, t) => sum + t.amount, 0);
-  }, [expenseTxns]);
-
-  const netProfitLoss = totalIncome - totalExpense;
-
-  // 2. Invoices in range: from the API (only while this report is open). Phase 10 rewrites reports;
-  // until then the list is capped at the API maximum of 200 and cancelled invoices are excluded.
-  const invoiceReport = useApiData(
-    () =>
-      activeReport === 'invoices'
-        ? invoicesApi.list({ from: startDate || undefined, to: endDate || undefined, limit: 200 })
-        : Promise.resolve(null),
-    [activeReport, startDate, endDate],
-  );
-  const rangeInvoices = useMemo(
-    () => (invoiceReport.data?.invoices ?? []).filter(i => i.status !== 'cancelled'),
-    [invoiceReport.data],
-  );
-  const invoiceReportTruncated = (invoiceReport.data?.total ?? 0) > (invoiceReport.data?.invoices.length ?? 0);
-  const totalInvoicedValue = sumMoney(rangeInvoices.map(i => i.total));
-  const totalInvoicePaidValue = sumMoney(rangeInvoices.map(i => i.amountPaid));
-  const totalInvoiceOutstandingValue = sumMoney(rangeInvoices.map(i => i.balance));
-
-  // 3. Salaries: every payroll month touched by the range (at most 24), from the server, loaded only
-  // while the salary report is open. Totals are the server's month summaries added up exactly.
-  const salaryMonths = useMemo(() => {
-    const months: string[] = [];
-    if (!startDate || !endDate || startDate > endDate) return months;
-    let [y, m] = startDate.slice(0, 7).split('-').map(Number);
-    const last = endDate.slice(0, 7);
-    while (months.length < 24) {
-      const month = `${y}-${String(m).padStart(2, '0')}`;
-      if (month > last) break;
-      months.push(month);
-      m += 1;
-      if (m > 12) {
-        m = 1;
-        y += 1;
-      }
-    }
-    return months;
-  }, [startDate, endDate]);
-  const salaryReport = useApiData(
-    () => (isAdmin && activeReport === 'salary' ? Promise.all(salaryMonths.map(month => salaryApi.list(month))) : Promise.resolve(null)),
-    [isAdmin, activeReport, salaryMonths.join(',')],
-  );
-  const rangeSalaries = useMemo(() => (salaryReport.data ?? []).flatMap(list => list.salaries), [salaryReport.data]);
-  const salarySummaries = (salaryReport.data ?? []).map(list => list.summary);
-  const totalSalaryCommitted = sumMoney(salarySummaries.map(s => s.totalPayable));
-  const totalSalaryPaid = sumMoney(salarySummaries.map(s => s.totalPaid));
-  const totalSalaryPending = sumMoney(salarySummaries.map(s => s.totalPending));
-
-  // Category breakdown for expenses
-  const expenseByCategory = useMemo(() => {
-    const map: Record<string, number> = {};
-    expenseTxns.forEach(t => {
-      map[t.category] = (map[t.category] || 0) + t.amount;
-    });
-    return Object.entries(map).sort((a, b) => b[1] - a[1]);
-  }, [expenseTxns]);
-
-  // Category breakdown for income
-  const incomeByCategory = useMemo(() => {
-    const map: Record<string, number> = {};
-    incomeTxns.forEach(t => {
-      map[t.category] = (map[t.category] || 0) + t.amount;
-    });
-    return Object.entries(map).sort((a, b) => b[1] - a[1]);
-  }, [incomeTxns]);
-
-  // CSV Export
-  const handleExportCSV = () => {
-    if (activeReport === 'income') {
-      const headers = ['Date', 'Category', 'Description', 'Method', 'Reference', `Amount (${CURRENCY})`];
-      const rows = incomeTxns.map(t => [t.date, t.category, t.description, t.paymentMethod, t.referenceNumber || '', t.amount]);
-      exportToCSV(`income_report_${startDate}_to_${endDate}`, headers, rows);
-    } else if (activeReport === 'expense') {
-      const headers = ['Date', 'Category', 'Description', 'Method', 'Reference', `Amount (${CURRENCY})`];
-      const rows = expenseTxns.map(t => [t.date, t.category, t.description, t.paymentMethod, t.referenceNumber || '', t.amount]);
-      exportToCSV(`expense_report_${startDate}_to_${endDate}`, headers, rows);
-    } else if (activeReport === 'pnl') {
-      const headers = ['Metric', `Amount (${CURRENCY})`, 'Notes'];
-      const rows = [
-        ['Total Recognized Income', totalIncome, 'Recorded cash inflows in period'],
-        ['Total Recognized Expenses', totalExpense, 'Recorded operational expenses and disbursed salaries'],
-        ['Net Operating Profit / (Loss)', netProfitLoss, 'Recognized Income minus Recognized Expenses'],
-      ];
-      exportToCSV(`pnl_summary_${startDate}_to_${endDate}`, headers, rows);
-    } else if (activeReport === 'invoices') {
-      const headers = ['Invoice #', 'Client', 'Date', 'Due Date', `Billed Total (${CURRENCY})`, `Paid (${CURRENCY})`, `Outstanding (${CURRENCY})`, 'Status'];
-      const rows = rangeInvoices.map(i => [invoiceLabel(i), i.clientName, i.invoiceDate, i.dueDate, i.total, i.amountPaid, i.balance, INVOICE_STATUS_LABEL[i.derivedStatus]]);
-      exportToCSV(`invoice_payment_report_${startDate}_to_${endDate}`, headers, rows);
-    } else if (activeReport === 'salary') {
-      const headers = ['Employee', 'Department', 'Month', `Base (${CURRENCY})`, `Adjustments (${CURRENCY})`, `Final Payable (${CURRENCY})`, 'Status', 'Payment Date'];
-      const rows = rangeSalaries.map(s => [s.employeeName, s.department, s.month, s.baseSalary, s.adjustments, s.netPayable, SALARY_STATUS_LABEL[s.status], s.paidOn || '']);
-      exportToCSV(`salary_report_${startDate}_to_${endDate}`, headers, rows);
-    }
-  };
-
-  const reportsList = [
-    { id: 'pnl', label: 'Profit & Loss Summary', icon: <Scale className="w-4 h-4" /> },
-    { id: 'income', label: 'Income Report', icon: <TrendingUp className="w-4 h-4" /> },
-    { id: 'expense', label: 'Expense Report', icon: <TrendingDown className="w-4 h-4" /> },
-    { id: 'invoices', label: 'Invoice Payment Report', icon: <Receipt className="w-4 h-4" /> },
-    { id: 'salary', label: 'Monthly Salary Report', icon: <Banknote className="w-4 h-4" /> },
-  ].filter(tab => isAdmin || tab.id !== 'salary') as { id: ReportType; label: string; icon: React.ReactNode }[];
+  const csvReport = tab === 'pnl' ? 'profit-loss' : tab === 'invoices' ? 'invoices' : tab === 'salary' ? 'salary' : null;
 
   return (
     <div className="space-y-6">
-      {/* Disclaimer Banner per master prompt */}
-      <div className="p-3 bg-[#F1F5F9] border border-[#DFE6F1] rounded-xl flex items-center justify-between text-xs text-[#475569]">
-        <div className="flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 text-[#5038F5] shrink-0" />
-          <span>
-            <strong>Basic Internal Management Reports:</strong> Generated from internal company ledger and payroll records for management tracking, not formal audited financial statements.
-          </span>
-        </div>
-      </div>
-
-      {/* Header & Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">
-            Financial & Operational Reports
-          </h1>
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">Reports</h1>
           <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">
-            Audit trailing revenue, overhead breakdowns, client receivables, and salary distributions
+            {isAdmin ? 'Profit & loss, trend, invoices and salaries from the server ledger' : 'Invoice status, aging and top clients'}
           </p>
         </div>
-
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 bg-white px-2.5 py-1 rounded-lg border border-[#DFE6F1]">
-            <Calendar className="w-3.5 h-3.5 text-[#7185A5]" />
-            <input
-              type="date"
-              value={startDate}
-              onChange={e => setStartDate(e.target.value)}
-              className="text-xs bg-transparent focus:outline-none"
-            />
-            <span className="text-xs text-[#7185A5]">to</span>
-            <input
-              type="date"
-              value={endDate}
-              onChange={e => setEndDate(e.target.value)}
-              className="text-xs bg-transparent focus:outline-none"
-            />
-          </div>
-
-          <Button
-            variant="outline"
-            size="sm"
-            icon={<Download className="w-3.5 h-3.5" />}
-            onClick={handleExportCSV}
-          >
-            Export CSV
+        <div className="flex items-center gap-2 flex-wrap no-print">
+          {csvReport && (
+            <a
+              href={reportsApi.csvUrl(csvReport, period)}
+              download
+              className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-[#DFE6F1] bg-white text-[#111827] hover:bg-[#F8FAFC]"
+              data-testid="report-csv"
+            >
+              <Download className="w-3.5 h-3.5" /> Export CSV
+            </a>
+          )}
+          <Button variant="outline" size="sm" icon={<Printer className="w-3.5 h-3.5" />} onClick={() => window.print()}>
+            Print
           </Button>
         </div>
       </div>
 
-      {/* Report Switcher Tabs */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-[#DFE6F1]">
-        {reportsList.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveReport(tab.id as ReportType)}
-            className={`flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-              activeReport === tab.id
-                ? 'bg-[#5038F5] text-white shadow-xs'
-                : 'text-[#475569] hover:text-[#111827] hover:bg-white'
-            }`}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 no-print">
+        <div className="flex gap-1 p-1 bg-white border border-[#DFE6F1] rounded-lg overflow-x-auto" role="tablist" aria-label="Report">
+          {tabs.map(t => (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={tab === t.id}
+              onClick={() => setTab(t.id)}
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-md whitespace-nowrap cursor-pointer ${
+                tab === t.id ? 'bg-[#5038F5] text-white' : 'text-[#7185A5] hover:text-[#111827]'
+              }`}
+            >
+              {t.icon}
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {tab === 'trend' ? (
+          <select
+            value={months}
+            onChange={e => setMonths(Number(e.target.value))}
+            className="text-xs px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5] self-start"
+            aria-label="Months"
           >
-            {tab.icon}
-            {tab.label}
-          </button>
-        ))}
+            {[6, 12, 24].map(n => (
+              <option key={n} value={n}>
+                Last {n} months
+              </option>
+            ))}
+          </select>
+        ) : (
+          <PeriodPicker value={period} onChange={setPeriod} />
+        )}
       </div>
 
-      {/* REPORT 1: PROFIT & LOSS SUMMARY */}
-      {activeReport === 'pnl' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Card padding="md">
-              <span className="text-xs font-semibold text-[#7185A5] block">Recognized Income</span>
-              <span className="text-2xl font-mono font-bold text-[#047857] block mt-2">
-                {formatCurrency(totalIncome, CURRENCY)}
-              </span>
-              <p className="text-[11px] text-[#7185A5] mt-1">{incomeTxns.length} income transactions</p>
-            </Card>
+      {tab === 'pnl' && isAdmin && <ProfitLossTab period={period} />}
+      {tab === 'trend' && isAdmin && <TrendTab months={months} />}
+      {tab === 'invoices' && <InvoicesTab period={period} />}
+      {tab === 'salary' && isAdmin && <SalaryTab period={period} />}
+    </div>
+  );
+};
 
-            <Card padding="md">
-              <span className="text-xs font-semibold text-[#7185A5] block">Recognized Expenses</span>
-              <span className="text-2xl font-mono font-bold text-[#E11D48] block mt-2">
-                {formatCurrency(totalExpense, CURRENCY)}
-              </span>
-              <p className="text-[11px] text-[#7185A5] mt-1">{expenseTxns.length} expense transactions</p>
-            </Card>
+const PrintHeading: React.FC<{ title: string; sub: string }> = ({ title, sub }) => (
+  <div className="hidden print:block mb-4">
+    <h2 className="text-lg font-bold">{title}</h2>
+    <p className="text-xs">{sub}</p>
+  </div>
+);
 
-            <Card padding="md">
-              <span className="text-xs font-semibold text-[#7185A5] block">Net Operating Profit</span>
-              <span
-                className={`text-2xl font-mono font-bold block mt-2 ${
-                  netProfitLoss >= 0 ? 'text-[#047857]' : 'text-[#E11D48]'
-                }`}
-              >
-                {formatCurrency(netProfitLoss, CURRENCY)}
-              </span>
-              <p className="text-[11px] text-[#7185A5] mt-1">
-                Margin: {totalIncome > 0 ? `${Math.round((netProfitLoss / totalIncome) * 100)}%` : '0%'}
-              </p>
-            </Card>
-          </div>
+const Loading: React.FC<{ error: string | null; reload: () => void }> = ({ error, reload }) =>
+  error ? <LoadError message={error} onRetry={reload} /> : <div className="py-10 text-center text-xs text-[#7185A5]">Loading report…</div>;
 
-          <Card padding="md">
-            <h3 className="text-sm font-bold text-[#111827] mb-4">
-              P&L Operational Breakdown
-            </h3>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center py-2 border-b border-[#DFE6F1] text-xs font-semibold text-[#111827]">
-                <span>1. Total Recognized Revenue</span>
-                <span className="font-mono text-[#047857]">
-                  +{formatCurrency(totalIncome, CURRENCY)}
-                </span>
-              </div>
-              <div className="flex justify-between items-center py-2 border-b border-[#DFE6F1] text-xs font-semibold text-[#111827]">
-                <span>2. Total Recognized Expenses</span>
-                <span className="font-mono text-[#E11D48]">
-                  -{formatCurrency(totalExpense, CURRENCY)}
-                </span>
-              </div>
-              <div className="flex justify-between items-center py-3 bg-[#F7F9FC] px-3 rounded-lg text-sm font-bold text-[#111827]">
-                <span>Net Surplus / (Deficit)</span>
-                <span className={`font-mono ${netProfitLoss >= 0 ? 'text-[#047857]' : 'text-[#E11D48]'}`}>
-                  {formatCurrency(netProfitLoss, CURRENCY)}
-                </span>
-              </div>
-            </div>
-          </Card>
+const Kpi: React.FC<{ label: string; value: string; tone?: string; sub?: string; testId?: string }> = ({ label, value, tone = 'text-[#111827]', sub, testId }) => (
+  <Card padding="md">
+    <span className="text-xs font-semibold text-[#7185A5] block">{label}</span>
+    <span className={`text-sm sm:text-2xl font-mono font-bold block mt-2 whitespace-nowrap ${tone}`} data-testid={testId}>
+      {value}
+    </span>
+    {sub && <span className="text-[11px] text-[#7185A5]">{sub}</span>}
+  </Card>
+);
+
+// ---------------------------------------------------------------------------
+const CategoryTable: React.FC<{ title: string; rows: CategoryTotal[]; total: string; tone: string; testId: string }> = ({ title, rows, total, tone, testId }) => (
+  <Card padding="none" className="overflow-hidden">
+    <table className="w-full text-left text-xs" data-testid={testId}>
+      <caption className="text-left px-3 pt-3 pb-2 text-sm font-bold text-[#111827]">{title}</caption>
+      <thead className="bg-[#F7F9FC] border-y border-[#DFE6F1] text-[#7185A5]">
+        <tr>
+          <th className={th}>Category</th>
+          <th className={`${th} text-right`}>Entries</th>
+          <th className={`${th} text-right`}>Amount</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-[#DFE6F1]">
+        {rows.length === 0 && (
+          <tr>
+            <td colSpan={3} className={`${td} text-center text-[#7185A5]`}>
+              Nothing in this period.
+            </td>
+          </tr>
+        )}
+        {rows.map(r => (
+          <tr key={r.category}>
+            <td className={`${td} text-[#111827]`}>{r.category}</td>
+            <td className={`${td} text-right text-[#7185A5]`}>{r.count}</td>
+            <td className={`${td} text-right font-mono whitespace-nowrap ${tone}`}>{formatMoney(r.total)}</td>
+          </tr>
+        ))}
+      </tbody>
+      <tfoot className="border-t-2 border-[#DFE6F1]">
+        <tr>
+          <td className={`${td} font-bold text-[#111827]`} colSpan={2}>
+            Total
+          </td>
+          <td className={`${td} text-right font-mono font-bold whitespace-nowrap ${tone}`}>{formatMoney(total)}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </Card>
+);
+
+const ProfitLossTab: React.FC<{ period: PeriodParams }> = ({ period }) => {
+  const report = useApiData(() => reportsApi.profitLoss(period), [JSON.stringify(period)]);
+  const r = report.data;
+  if (!r) return <Loading error={report.error} reload={report.reload} />;
+  return (
+    <div className="space-y-4" data-testid="pnl-report">
+      <PrintHeading title="Profit & Loss (cash basis)" sub={periodText(r.period)} />
+      <p className="text-xs text-[#7185A5] no-print">
+        <span className="inline-block px-2 py-0.5 mr-2 rounded bg-[#5038F5]/10 text-[#5038F5] font-semibold" data-testid="cash-basis">
+          Cash basis
+        </span>
+        Money received and paid between {periodText(r.period)}, by transaction date. Voided and reversed entries are excluded.
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+        <Kpi label="Income" value={formatMoney(r.totals.income)} tone="text-[#047857]" testId="pnl-income" />
+        <Kpi label="Expenses" value={formatMoney(r.totals.expense)} tone="text-[#B45309]" testId="pnl-expense" />
+        <Kpi label="Net" value={formatMoney(r.totals.net)} tone={r.totals.net.startsWith('-') ? 'text-[#E11D48]' : 'text-[#111827]'} testId="pnl-net" />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <CategoryTable title="Income by category" rows={r.income} total={r.totals.income} tone="text-[#047857]" testId="pnl-income-table" />
+        <CategoryTable title="Expenses by category" rows={r.expense} total={r.totals.expense} tone="text-[#111827]" testId="pnl-expense-table" />
+      </div>
+    </div>
+  );
+};
+
+const TrendTab: React.FC<{ months: number }> = ({ months }) => {
+  const report = useApiData(() => reportsApi.trend(months), [months]);
+  if (!report.data) return <Loading error={report.error} reload={report.reload} />;
+  return (
+    <Card padding="sm" className="sm:p-5">
+      <PrintHeading title={`Income vs expenses, last ${months} months`} sub={`As of ${formatDate(report.data.today)}`} />
+      <h3 className="text-sm font-bold text-[#111827] mb-1 no-print">Income vs expenses by month</h3>
+      <p className="text-xs text-[#7185A5] mb-4 no-print">Cash basis; voided and reversed entries excluded.</p>
+      <TrendBars months={report.data.months} testId="report-trend" />
+    </Card>
+  );
+};
+
+const InvoicesTab: React.FC<{ period: PeriodParams }> = ({ period }) => {
+  const report = useApiData(() => reportsApi.invoices(period), [JSON.stringify(period)]);
+  const r = report.data;
+  if (!r) return <Loading error={report.error} reload={report.reload} />;
+  return (
+    <div className="space-y-4" data-testid="invoice-report">
+      <PrintHeading title="Invoices" sub={`${periodText(r.period)} · aging as of ${formatDate(r.today)}`} />
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+        <Kpi label="Invoiced (sent and paid)" value={formatMoney(r.summary.invoiced)} sub={`${r.summary.count} invoices dated in the period`} testId="inv-invoiced" />
+        <Kpi label="Collected on them" value={formatMoney(r.summary.collected)} tone="text-[#047857]" testId="inv-collected" />
+        <Kpi label="Still outstanding" value={formatMoney(r.summary.outstanding)} tone="text-[#B45309]" testId="inv-outstanding" />
+      </div>
+
+      <Card padding="none" className="overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-[11px] sm:text-xs" data-testid="status-table">
+            <caption className="text-left px-3 pt-3 pb-2 text-sm font-bold text-[#111827]">By status ({periodText(r.period)})</caption>
+            <thead className="bg-[#F7F9FC] border-y border-[#DFE6F1] text-[#7185A5]">
+              <tr>
+                <th className={th}>Status</th>
+                <th className={`${th} text-right`}>
+                  <span className="sm:hidden" aria-hidden>#</span>
+                  <span className="sr-only sm:not-sr-only">Invoices</span>
+                </th>
+                <th className={`${th} text-right`}>Total</th>
+                <th className={`${th} text-right`}>Outstanding</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#DFE6F1]">
+              {r.byStatus.map(s => (
+                <tr key={s.status}>
+                  <td className={td}>
+                    <InvoiceStatusBadge status={s.status} size="sm" />
+                    <span className="sr-only">{INVOICE_STATUS_LABEL[s.status]}</span>
+                  </td>
+                  <td className={`${td} text-right`}>{s.count}</td>
+                  <td className={`${td} text-right font-mono whitespace-nowrap`}>{formatMoney(s.total)}</td>
+                  <td className={`${td} text-right font-mono whitespace-nowrap`}>{formatMoney(s.outstanding)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      )}
+      </Card>
 
-      {/* REPORT 2: INCOME REPORT */}
-      {activeReport === 'income' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Card padding="md">
-              <span className="text-xs font-semibold text-[#7185A5] block">Total Inflow</span>
-              <span className="text-2xl font-mono font-bold text-[#047857] block mt-1">
-                {formatCurrency(totalIncome, CURRENCY)}
-              </span>
-            </Card>
-            <Card padding="md">
-              <span className="text-xs font-semibold text-[#7185A5] block">Top Inflow Category</span>
-              <span className="text-lg font-bold text-[#111827] block mt-1">
-                {incomeByCategory[0] ? incomeByCategory[0][0] : 'None'}
-              </span>
-              <span className="text-xs font-mono text-[#7185A5]">
-                {incomeByCategory[0] ? formatCurrency(incomeByCategory[0][1], CURRENCY) : '—'}
-              </span>
-            </Card>
-          </div>
-
-          <Card padding="md">
-            <h3 className="text-sm font-bold text-[#111827] mb-3">Revenue By Category</h3>
-            <div className="space-y-2">
-              {incomeByCategory.map(([cat, amount]) => {
-                const pct = totalIncome > 0 ? (amount / totalIncome) * 100 : 0;
-                return (
-                  <div key={cat} className="space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span className="font-medium text-[#111827]">{cat}</span>
-                      <span className="font-mono font-bold text-[#047857]">
-                        {formatCurrency(amount, CURRENCY)} ({Math.round(pct)}%)
-                      </span>
-                    </div>
-                    <div className="w-full h-2 rounded-full bg-[#F1F5F9] overflow-hidden">
-                      <div className="h-full bg-[#047857] rounded-full" style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
+      <Card padding="none" className="overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs" data-testid="aging-table">
+            <caption className="text-left px-3 pt-3 pb-2 text-sm font-bold text-[#111827]">
+              Outstanding by age (as of {formatDate(r.today)}, every open invoice)
+            </caption>
+            <thead className="bg-[#F7F9FC] border-y border-[#DFE6F1] text-[#7185A5]">
+              <tr>
+                <th className={th}>Age</th>
+                <th className={`${th} text-right`}>Invoices</th>
+                <th className={`${th} text-right`}>Balance</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#DFE6F1]">
+              {r.aging.map(a => (
+                <tr key={a.bucket} data-testid={`aging-${a.bucket}`}>
+                  <td className={`${td} text-[#111827]`}>{AGING_LABEL[a.bucket]}</td>
+                  <td className={`${td} text-right`}>{a.count}</td>
+                  <td className={`${td} text-right font-mono whitespace-nowrap ${a.bucket === 'not_due' ? '' : a.count ? 'text-[#E11D48]' : ''}`}>{formatMoney(a.balance)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      )}
-
-      {/* REPORT 3: EXPENSE REPORT */}
-      {activeReport === 'expense' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Card padding="md">
-              <span className="text-xs font-semibold text-[#7185A5] block">Total Overhead Expenses</span>
-              <span className="text-2xl font-mono font-bold text-[#E11D48] block mt-1">
-                {formatCurrency(totalExpense, CURRENCY)}
-              </span>
-            </Card>
-            <Card padding="md">
-              <span className="text-xs font-semibold text-[#7185A5] block">Top Expense Category</span>
-              <span className="text-lg font-bold text-[#111827] block mt-1">
-                {expenseByCategory[0] ? expenseByCategory[0][0] : 'None'}
-              </span>
-              <span className="text-xs font-mono text-[#7185A5]">
-                {expenseByCategory[0] ? formatCurrency(expenseByCategory[0][1], CURRENCY) : '—'}
-              </span>
-            </Card>
+        {r.openInvoices.length > 0 && (
+          <div className="overflow-x-auto border-t border-[#DFE6F1]">
+            <table className="w-full text-left text-[11px] sm:text-xs" data-testid="open-invoices">
+              <caption className="sr-only">Open invoices</caption>
+              <thead className="text-[#7185A5]">
+                <tr>
+                  <th className={th}>Invoice</th>
+                  <th className={th}>Client</th>
+                  <th className={`${th} hidden sm:table-cell`}>Due</th>
+                  <th className={`${th} text-right`}>Overdue</th>
+                  <th className={`${th} text-right`}>Balance</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#DFE6F1]">
+                {r.openInvoices.map(i => (
+                  <tr key={i.id}>
+                    <td className={`${td} font-mono whitespace-nowrap`}>
+                      <Link to={`/invoices/${i.id}`} className="text-[#5038F5] hover:underline">
+                        {i.invoiceNumber}
+                      </Link>
+                    </td>
+                    <td className={td}>{i.clientName}</td>
+                    <td className={`${td} whitespace-nowrap hidden sm:table-cell`}>{formatDate(i.dueDate)}</td>
+                    <td className={`${td} text-right`}>{i.daysOverdue || '—'}</td>
+                    <td className={`${td} text-right font-mono whitespace-nowrap`}>{formatMoney(i.balance)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {r.openInvoicesTruncated && <p className="px-3 py-2 text-[11px] text-[#7185A5]">Showing the first 200 open invoices; the totals above cover all of them.</p>}
           </div>
+        )}
+      </Card>
 
-          <Card padding="md">
-            <h3 className="text-sm font-bold text-[#111827] mb-3">Expenses By Category</h3>
-            <div className="space-y-2.5">
-              {expenseByCategory.map(([cat, amount]) => {
-                const pct = totalExpense > 0 ? (amount / totalExpense) * 100 : 0;
-                return (
-                  <div key={cat} className="space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span className="font-medium text-[#111827]">{cat}</span>
-                      <span className="font-mono font-bold text-[#E11D48]">
-                        {formatCurrency(amount, CURRENCY)} ({Math.round(pct)}%)
-                      </span>
-                    </div>
-                    <div className="w-full h-2 rounded-full bg-[#F1F5F9] overflow-hidden">
-                      <div className="h-full bg-[#E11D48] rounded-full" style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {(
+          [
+            ['Top clients by invoiced (period)', r.topClients.byInvoiced],
+            ['Top clients by outstanding (today)', r.topClients.byOutstanding],
+          ] as const
+        ).map(([title, rows]) => (
+          <Card key={title} padding="none" className="overflow-hidden">
+            <table className="w-full text-left text-xs">
+              <caption className="text-left px-3 pt-3 pb-2 text-sm font-bold text-[#111827]">{title}</caption>
+              <thead className="bg-[#F7F9FC] border-y border-[#DFE6F1] text-[#7185A5]">
+                <tr>
+                  <th className={th}>Client</th>
+                  <th className={`${th} text-right`}>Invoices</th>
+                  <th className={`${th} text-right`}>Amount</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#DFE6F1]">
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className={`${td} text-center text-[#7185A5]`}>
+                      None.
+                    </td>
+                  </tr>
+                )}
+                {rows.map(c => (
+                  <tr key={c.clientName}>
+                    <td className={`${td} text-[#111827]`}>{c.clientName}</td>
+                    <td className={`${td} text-right`}>{c.count}</td>
+                    <td className={`${td} text-right font-mono whitespace-nowrap`}>{formatMoney(c.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </Card>
-        </div>
-      )}
+        ))}
+      </div>
+    </div>
+  );
+};
 
-      {/* REPORT 4: INVOICE PAYMENT REPORT */}
-      {activeReport === 'invoices' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Card padding="md">
-              <span className="text-xs font-semibold text-[#7185A5] block">Total Invoiced</span>
-              <span className="text-2xl font-mono font-bold text-[#111827] block mt-1">
-                {formatMoney(totalInvoicedValue)}
-              </span>
-            </Card>
-            <Card padding="md">
-              <span className="text-xs font-semibold text-[#7185A5] block">Actual Payments Received</span>
-              <span className="text-2xl font-mono font-bold text-[#047857] block mt-1">
-                {formatMoney(totalInvoicePaidValue)}
-              </span>
-            </Card>
-            <Card padding="md">
-              <span className="text-xs font-semibold text-[#7185A5] block">Remaining Outstanding</span>
-              <span className="text-2xl font-mono font-bold text-[#B45309] block mt-1">
-                {formatMoney(totalInvoiceOutstandingValue)}
-              </span>
-            </Card>
-          </div>
-
-          <Card padding="none" className="overflow-hidden">
-            <div className="p-4 border-b border-[#DFE6F1]">
-              <h3 className="text-sm font-bold text-[#111827]">
-                Invoice Audit Ledger
-              </h3>
-              <p className="text-xs text-[#7185A5]">
-                Comparing billed deliverables against confirmed received settlements
-              </p>
-              {invoiceReport.error && <p className="text-xs text-[#E11D48] mt-1">{invoiceReport.error}</p>}
-              {invoiceReportTruncated && (
-                <p className="text-xs text-[#B45309] mt-1">Showing the first 200 invoices in this range; narrow the dates to see the rest.</p>
+const SalaryTab: React.FC<{ period: PeriodParams }> = ({ period }) => {
+  const report = useApiData(() => reportsApi.salary(period), [JSON.stringify(period)]);
+  const r = report.data;
+  if (!r) return <Loading error={report.error} reload={report.reload} />;
+  return (
+    <div className="space-y-4" data-testid="salary-report">
+      <PrintHeading title="Salaries paid" sub={periodText(r.period)} />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <Kpi label="Paid in the period" value={formatMoney(r.totals.paid)} tone="text-[#047857]" sub={`${r.totals.count} salary payments`} testId="salary-paid" />
+        <Kpi label="People paid" value={String(r.totals.headcount)} />
+        <Kpi label="Pending (months in the period)" value={formatMoney(r.pending.total)} tone="text-[#B45309]" sub={`${r.pending.count} unpaid rows`} />
+        <Kpi label="Basis" value="Paid date" sub="Un-paid (reversed) salaries are excluded" />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card padding="none" className="overflow-hidden">
+          <table className="w-full text-left text-xs" data-testid="salary-by-month">
+            <caption className="text-left px-3 pt-3 pb-2 text-sm font-bold text-[#111827]">By salary month</caption>
+            <thead className="bg-[#F7F9FC] border-y border-[#DFE6F1] text-[#7185A5]">
+              <tr>
+                <th className={th}>Month</th>
+                <th className={`${th} text-right`}>Payments</th>
+                <th className={`${th} text-right`}>Paid</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#DFE6F1]">
+              {r.byMonth.length === 0 && (
+                <tr>
+                  <td colSpan={3} className={`${td} text-center text-[#7185A5]`}>
+                    No salaries paid in this period.
+                  </td>
+                </tr>
               )}
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-[#F7F9FC] border-b border-[#DFE6F1] text-[#7185A5]">
-                  <tr>
-                    <th className="py-2.5 px-4">Invoice #</th>
-                    <th className="py-2.5 px-4">Client</th>
-                    <th className="py-2.5 px-4">Date</th>
-                    <th className="py-2.5 px-4 text-right">Invoiced</th>
-                    <th className="py-2.5 px-4 text-right">Collected</th>
-                    <th className="py-2.5 px-4 text-right">Outstanding</th>
-                    <th className="py-2.5 px-4 text-center">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#DFE6F1]">
-                  {rangeInvoices.map(inv => (
-                    <tr key={inv.id}>
-                      <td className="py-2.5 px-4 font-mono font-bold">{invoiceLabel(inv)}</td>
-                      <td className="py-2.5 px-4 font-medium">{inv.clientName}</td>
-                      <td className="py-2.5 px-4 text-[#7185A5]">{formatDate(inv.invoiceDate)}</td>
-                      <td className="py-2.5 px-4 text-right font-mono">{formatMoney(inv.total)}</td>
-                      <td className="py-2.5 px-4 text-right font-mono text-[#047857]">{formatMoney(inv.amountPaid)}</td>
-                      <td className="py-2.5 px-4 text-right font-mono text-[#B45309]">{formatMoney(inv.balance)}</td>
-                      <td className="py-2.5 px-4 text-center">
-                        <InvoiceStatusBadge status={inv.derivedStatus} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </div>
-      )}
-
-      {/* REPORT 5: MONTHLY SALARY REPORT */}
-      {activeReport === 'salary' && isAdmin && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Card padding="md">
-              <span className="text-xs font-semibold text-[#7185A5] block">Total Salary Committed</span>
-              <span className="text-2xl font-mono font-bold text-[#111827] block mt-1">
-                {formatMoney(totalSalaryCommitted)}
-              </span>
-            </Card>
-            <Card padding="md">
-              <span className="text-xs font-semibold text-[#7185A5] block">Disbursed (Paid)</span>
-              <span className="text-2xl font-mono font-bold text-[#047857] block mt-1">
-                {formatMoney(totalSalaryPaid)}
-              </span>
-            </Card>
-            <Card padding="md">
-              <span className="text-xs font-semibold text-[#7185A5] block">Pending Payouts</span>
-              <span className="text-2xl font-mono font-bold text-[#B45309] block mt-1">
-                {formatMoney(totalSalaryPending)}
-              </span>
-            </Card>
-          </div>
-
-          <Card padding="none" className="overflow-hidden">
-            <div className="p-4 border-b border-[#DFE6F1]">
-              <h3 className="text-sm font-bold text-[#111827]">
-                Salary Payment Distribution
-              </h3>
-              <p className="text-xs text-[#7185A5]">
-                Payroll rows for every month in the selected period{salaryMonths.length === 24 ? ' (first 24 months)' : ''}
-              </p>
-              {salaryReport.error && <p className="text-xs text-[#E11D48] mt-1">{salaryReport.error}</p>}
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-[#F7F9FC] border-b border-[#DFE6F1] text-[#7185A5]">
-                  <tr>
-                    <th className="py-2.5 px-4">Employee</th>
-                    <th className="py-2.5 px-4">Department</th>
-                    <th className="py-2.5 px-4">Month</th>
-                    <th className="py-2.5 px-4 text-right">Base</th>
-                    <th className="py-2.5 px-4 text-right">Adjustments</th>
-                    <th className="py-2.5 px-4 text-right">Payable</th>
-                    <th className="py-2.5 px-4 text-center">Status</th>
-                    <th className="py-2.5 px-4">Disbursed Date</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#DFE6F1]">
-                  {rangeSalaries.map(sal => (
-                    <tr key={sal.id}>
-                      <td className="py-2.5 px-4 font-semibold text-[#111827]">{sal.employeeName}</td>
-                      <td className="py-2.5 px-4">{sal.department}</td>
-                      <td className="py-2.5 px-4 text-[#7185A5] font-mono">{sal.month}</td>
-                      <td className="py-2.5 px-4 text-right font-mono">{formatMoney(sal.baseSalary)}</td>
-                      <td className="py-2.5 px-4 text-right font-mono">{formatMoney(sal.adjustments)}</td>
-                      <td className="py-2.5 px-4 text-right font-mono font-bold">{formatMoney(sal.netPayable)}</td>
-                      <td className="py-2.5 px-4 text-center">
-                        <Badge variant={sal.status === 'paid' ? 'success' : 'warning'}>
-                          {SALARY_STATUS_LABEL[sal.status]}
-                        </Badge>
-                      </td>
-                      <td className="py-2.5 px-4 text-[#7185A5]">{sal.paidOn ? formatDate(sal.paidOn) : '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </div>
-      )}
+              {r.byMonth.map(m => (
+                <tr key={m.month}>
+                  <td className={`${td} text-[#111827]`}>
+                    <Link to={`/salary?month=${m.month}`} className="hover:underline">
+                      {formatMonthYear(m.month)}
+                    </Link>
+                  </td>
+                  <td className={`${td} text-right`}>{m.count}</td>
+                  <td className={`${td} text-right font-mono whitespace-nowrap`}>{formatMoney(m.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+        <Card padding="none" className="overflow-hidden">
+          <table className="w-full text-left text-xs" data-testid="salary-by-department">
+            <caption className="text-left px-3 pt-3 pb-2 text-sm font-bold text-[#111827]">By department</caption>
+            <thead className="bg-[#F7F9FC] border-y border-[#DFE6F1] text-[#7185A5]">
+              <tr>
+                <th className={th}>Department</th>
+                <th className={`${th} text-right`}>People</th>
+                <th className={`${th} text-right`}>Paid</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#DFE6F1]">
+              {r.byDepartment.length === 0 && (
+                <tr>
+                  <td colSpan={3} className={`${td} text-center text-[#7185A5]`}>
+                    No salaries paid in this period.
+                  </td>
+                </tr>
+              )}
+              {r.byDepartment.map(d => (
+                <tr key={d.department}>
+                  <td className={`${td} text-[#111827]`}>{d.department}</td>
+                  <td className={`${td} text-right`}>{d.headcount}</td>
+                  <td className={`${td} text-right font-mono whitespace-nowrap`}>{formatMoney(d.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      </div>
     </div>
   );
 };

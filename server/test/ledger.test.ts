@@ -301,7 +301,16 @@ describe('list', () => {
     await query('UPDATE transactions SET reversed_at = $2, reversed_by = $3, reverse_reason = $4 WHERE id = $1', [inv.txn, T0, ids.admin, 'Bounced (fake)']);
     expect((await list()).totals.income).toBe('250.50');
 
-    for (const q of ['?type=transfer', '?source=other', '?from=2026-13-01', '?limit=0', '?from=2026-10-10&to=2026-10-01', '?includeVoided=maybe']) {
+    // Presets are resolved on the server (IST date, financial year from company_settings).
+    const month = await list('?preset=this_month');
+    expect(month.period).toEqual({ from: '2026-10-01', to: '2026-10-31' });
+    expect(month.totals).toEqual((await list('?from=2026-10-01&to=2026-10-31')).totals);
+    await query('UPDATE company_settings SET financial_year_start_month = 4');
+    expect((await list('?preset=this_fy')).period).toEqual({ from: '2026-04-01', to: '2027-03-31' });
+    expect((await list('')).period).toEqual({ from: null, to: null });
+    expect((await agents.admin.get('/api/transactions?preset=this_month&from=2026-10-01').expect(400)).body.details[0].path).toBe('preset');
+
+    for (const q of ['?preset=yesterday', '?type=transfer', '?source=other', '?from=2026-13-01', '?limit=0', '?from=2026-10-10&to=2026-10-01', '?includeVoided=maybe']) {
       await agents.admin.get(`/api/transactions${q}`).expect(400);
     }
   });

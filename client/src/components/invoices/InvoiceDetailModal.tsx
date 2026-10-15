@@ -14,7 +14,7 @@ import { InvoiceStatusBadge } from './InvoiceStatusBadge';
 import { RecordPaymentModal } from './RecordPaymentModal';
 import { CancelInvoiceModal } from './CancelInvoiceModal';
 import { Printer, CreditCard, CheckCircle2, Send, Edit2, Trash2, Ban, Undo2 } from 'lucide-react';
-import { formatDate } from '../../utils/formatters';
+import { formatDate, formatDateIst } from '../../utils/formatters';
 import { formatMoney, trimRate } from '../../utils/money';
 
 interface InvoiceDetailModalProps {
@@ -99,7 +99,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
               <div className="flex items-center gap-2 flex-wrap">
                 <InvoiceStatusBadge status={invoice.derivedStatus} />
                 <span className="text-xs text-[#7185A5]">
-                  {invoice.sentAt ? `Sent ${formatDate(invoice.sentAt.slice(0, 10))}` : `Created ${formatDate(invoice.createdAt.slice(0, 10))}`}
+                  {invoice.sentAt ? `Sent ${formatDateIst(invoice.sentAt)}` : `Created ${formatDateIst(invoice.createdAt)}`}
                 </span>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
@@ -136,7 +136,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
 
             {invoice.status === 'cancelled' && (
               <div className="p-3 text-xs bg-[#F7F9FC] border border-[#DFE6F1] text-[#475569] rounded-lg">
-                Cancelled {invoice.cancelledAt ? formatDate(invoice.cancelledAt.slice(0, 10)) : ''}: {invoice.cancelReason}
+                Cancelled {invoice.cancelledAt ? formatDateIst(invoice.cancelledAt) : ''}: {invoice.cancelReason}
               </div>
             )}
 
@@ -255,7 +255,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
                             </tr>
                             <tr className="bg-[#F7F9FC]/60">
                               <td colSpan={isAdmin ? 6 : 5} className="pb-2 pt-0.5 px-3 text-[11px] text-[#7185A5]">
-                                Reversed by {p.reversedByName ?? 'unknown'} on {formatDate(p.reversedAt.slice(0, 10))}: {p.reverseReason}
+                                Reversed by {p.reversedByName ?? 'unknown'} on {formatDateIst(p.reversedAt)}: {p.reverseReason}
                               </td>
                             </tr>
                           </React.Fragment>

@@ -5,6 +5,7 @@ import { audit } from '../services/audit.js';
 import { now, todayIst } from '../services/clock.js';
 import { CSV_ROW_CAP, sendCsv, toCsv } from '../services/csv.js';
 import { moneyAmount, toHundredths } from '../services/money.js';
+import { PeriodError, PRESETS, resolvePeriod } from '../services/period.js';
 import { createRouter } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
 import { isoDate, likePattern, optionalText, pageQuery } from './shared.js';
@@ -84,8 +85,23 @@ const filterQuery = z.object({
   source: z.enum(['manual', 'invoice', 'salary']).optional(),
   search: z.string().trim().max(100).optional(),
   includeVoided: booleanParam,
+  // A report preset (this_month, last_month, this_fy, last_fy) instead of from/to, resolved on the server.
+  preset: z.enum(PRESETS).optional(),
 });
 type Filters = z.infer<typeof filterQuery>;
+
+// A preset becomes from/to (IST date, company financial year); with from/to as well it is a 400.
+async function withPeriod<T extends Filters>(f: T): Promise<T> {
+  if (!f.preset) return f;
+  const [settings] = await query<{ fy: number }>('SELECT financial_year_start_month AS fy FROM company_settings');
+  try {
+    const period = resolvePeriod({ preset: f.preset, from: f.from, to: f.to }, todayIst(), settings?.fy ?? 4);
+    return { ...f, from: period.from, to: period.to };
+  } catch (err) {
+    if (err instanceof PeriodError) throw new HttpError(400, err.message, 'VALIDATION_ERROR', [{ path: err.path, message: err.message }]);
+    throw err;
+  }
+}
 
 function parseQuery<T extends z.ZodType>(schema: T, raw: unknown): z.infer<T> {
   const parsed = schema.safeParse(raw);
@@ -126,7 +142,7 @@ function whereFor(f: Filters, params: unknown[], { voided }: { voided: boolean }
 const listQuery = filterQuery.extend(pageQuery.shape);
 
 transactionsRouter.get('/', ['admin'], async (req, res) => {
-  const f = parseQuery(listQuery, req.query);
+  const f = await withPeriod(parseQuery(listQuery, req.query));
   const params: unknown[] = [];
   const where = whereFor(f, params, { voided: f.includeVoided ?? false });
   const totalsParams: unknown[] = [];
@@ -149,14 +165,14 @@ transactionsRouter.get('/', ['admin'], async (req, res) => {
       totalsParams,
     ),
   ]);
-  res.json({ today: todayIst(), transactions, total, limit: f.limit, offset: f.offset, totals });
+  res.json({ today: todayIst(), transactions, total, limit: f.limit, offset: f.offset, totals, period: { from: f.from ?? null, to: f.to ?? null } });
 });
 
 // ---------------------------------------------------------------------------
 // GET /api/transactions/export.csv  (admin): same filters, at most CSV_ROW_CAP rows.
 // ---------------------------------------------------------------------------
 transactionsRouter.get('/export.csv', ['admin'], async (req, res) => {
-  const f = parseQuery(filterQuery, req.query);
+  const f = await withPeriod(parseQuery(filterQuery, req.query));
   const params: unknown[] = [];
   const where = whereFor(f, params, { voided: f.includeVoided ?? false });
   const rows = await query<Record<string, string | null>>(

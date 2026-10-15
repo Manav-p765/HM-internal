@@ -14,7 +14,7 @@ import { ConfirmDialog } from '../common/ConfirmDialog';
 import { ApplyLeaveModal } from './ApplyLeaveModal';
 import { LEAVE_STATUS_VARIANT, LeaveDetails, dayTypeLabel, daysLabel } from './LeaveDetails';
 import { Calendar, Edit2, Eye, Filter, Plus, Trash2 } from 'lucide-react';
-import { formatDate } from '../../utils/formatters';
+import { formatDate, formatDateIst } from '../../utils/formatters';
 
 export const EmployeeLeaveView: React.FC = () => {
   const { showToast } = useApp();
@@ -174,7 +174,7 @@ export const EmployeeLeaveView: React.FC = () => {
                     <td className="py-3 px-4 text-[#111827] whitespace-nowrap font-medium">{formatDate(req.startDate)}</td>
                     <td className="py-3 px-4 text-[#111827] whitespace-nowrap font-medium">{formatDate(req.endDate)}</td>
                     <td className="py-3 px-4 text-center whitespace-nowrap font-mono font-bold text-[#5038F5]">{daysLabel(req.totalDays)}</td>
-                    <td className="py-3 px-4 text-[#7185A5] whitespace-nowrap">{formatDate(req.appliedAt.slice(0, 10))}</td>
+                    <td className="py-3 px-4 text-[#7185A5] whitespace-nowrap">{formatDateIst(req.appliedAt)}</td>
                     <td className="py-3 px-4 text-center whitespace-nowrap">
                       <Badge variant={LEAVE_STATUS_VARIANT[req.status]}>{LEAVE_STATUS_LABEL[req.status]}</Badge>
                     </td>

@@ -1,102 +1,17 @@
 import {
-  Transaction,
   ActivityLog,
   AuditLog,
   AuditActionType,
   UserRole,
 } from '../types';
-import { roundToTwoDecimals } from '../utils/formatters';
 
 const STORAGE_KEYS = {
-  // v2: the invoice payments that used to live here are income transactions on the server now
-  // (invoices, payments and company settings moved to /api/invoices and /api/settings).
-  TRANSACTIONS: 'monks_transactions_v2',
-  // Salaries and payslips moved to the API (/api/salary); their old keys are removed in AuthContext.
+  // The ledger (transactions, categories), invoices, salaries and settings live on the server; the old
+  // monks_transactions_* and monks_salar* keys are removed at sign-in (AuthContext). Only the activity and
+  // audit logs below are still local.
   ACTIVITY_LOGS: 'monks_activity_logs_v1',
   AUDIT_LOGS: 'monks_audit_logs_v1',
 };
-
-// Employees live in Postgres now (/api/employees); there is no local employee seed.
-const INITIAL_TRANSACTIONS: Transaction[] = [
-  {
-    id: 'TXN-2026-088',
-    date: '2026-10-04',
-    type: 'expense',
-    category: 'Hosting and Infrastructure',
-    description: 'AWS Cloud & Google Cloud Platform Monthly Infrastructure',
-    amount: 48500,
-    paymentMethod: 'Credit Card',
-    referenceNumber: 'CC-9012',
-    notes: 'Production clusters and staging environments.',
-    createdBy: 'Alex Monks',
-    createdAt: '2026-10-04T14:15:00.000Z',
-  },
-  {
-    id: 'TXN-2026-087',
-    date: '2026-10-05',
-    type: 'expense',
-    category: 'Software and Tools',
-    description: 'GitHub Enterprise & Figma Organization Annual Licenses',
-    amount: 32000,
-    paymentMethod: 'Credit Card',
-    referenceNumber: 'CC-9012',
-    notes: 'Team collaboration licenses.',
-    createdBy: 'Alex Monks',
-    createdAt: '2026-10-05T11:00:00.000Z',
-  },
-  {
-    id: 'TXN-2026-086',
-    date: '2026-09-30',
-    type: 'expense',
-    category: 'Salaries',
-    description: 'September 2026 Team Payroll Disbursement',
-    amount: 765000,
-    paymentMethod: 'Bank Transfer',
-    referenceNumber: 'CMS-BATCH-SEP26',
-    notes: 'Batch salary payout for September 2026.',
-    createdBy: 'Priya Sharma',
-    createdAt: '2026-09-30T17:00:00.000Z',
-  },
-  {
-    id: 'TXN-2026-085',
-    date: '2026-09-28',
-    type: 'income',
-    category: 'Service Revenue',
-    description: 'Design Sprint & Technical Discovery — Omnichannel Retail',
-    amount: 380000,
-    paymentMethod: 'Bank Transfer',
-    referenceNumber: 'RTGS-OMN8812',
-    notes: 'Completed sprint deliverable.',
-    createdBy: 'Priya Sharma',
-    createdAt: '2026-09-28T16:20:00.000Z',
-  },
-  {
-    id: 'TXN-2026-084',
-    date: '2026-09-15',
-    type: 'expense',
-    category: 'Office Expenses',
-    description: 'BKC Studio Lease Maintenance & High-Speed Lease Line',
-    amount: 65000,
-    paymentMethod: 'Bank Transfer',
-    referenceNumber: 'CHQ-002914',
-    notes: 'Maker Maxity monthly facility cost.',
-    createdBy: 'Priya Sharma',
-    createdAt: '2026-09-15T12:00:00.000Z',
-  },
-  {
-    id: 'TXN-2026-082',
-    date: '2026-09-02',
-    type: 'expense',
-    category: 'Marketing',
-    description: 'Tech Conference Booth & Industry Sponsorship',
-    amount: 45000,
-    paymentMethod: 'UPI',
-    referenceNumber: 'UPI-9844201',
-    notes: 'TechSparks Mumbai conference sponsorship.',
-    createdBy: 'Karan Singhania',
-    createdAt: '2026-09-02T10:10:00.000Z',
-  },
-];
 
 const INITIAL_ACTIVITY_LOGS: ActivityLog[] = [
   {
@@ -198,70 +113,6 @@ const INITIAL_AUDIT_LOGS: AuditLog[] = [
 export class StorageService {
   // Who is signed in (from the server session); set by AppProvider and used to attribute audit entries.
   static currentActor: { id: string; name: string; email: string; role: UserRole } | null = null;
-
-  // ----------------------------------------------------
-  // TRANSACTIONS & AUDIT LOGS
-  // ----------------------------------------------------
-
-  static getTransactions(): Transaction[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.TRANSACTIONS);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(INITIAL_TRANSACTIONS));
-      return INITIAL_TRANSACTIONS;
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return INITIAL_TRANSACTIONS;
-    }
-  }
-
-  static saveTransactions(transactions: Transaction[]): void {
-    localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(transactions));
-  }
-
-  static addTransaction(txn: Omit<Transaction, 'id' | 'createdAt'>): Transaction {
-    const transactions = this.getTransactions();
-    const highestId = transactions.reduce((max, t) => {
-      const match = t.id.match(/TXN-\d+-(\d+)/);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        return num > max ? num : max;
-      }
-      return max;
-    }, 90);
-    const newId = `TXN-2026-${String(highestId + 1).padStart(3, '0')}`;
-    const newTransaction: Transaction = {
-      ...txn,
-      id: newId,
-      amount: roundToTwoDecimals(txn.amount),
-      createdAt: new Date().toISOString(),
-    };
-    transactions.unshift(newTransaction);
-    this.saveTransactions(transactions);
-    this.addLog(txn.createdBy, 'manager', 'Added Transaction', `${txn.type.toUpperCase()}: ${txn.description} (${roundToTwoDecimals(txn.amount)})`, 'transaction');
-    return newTransaction;
-  }
-
-  static updateTransaction(txn: Transaction): void {
-    const transactions = this.getTransactions();
-    const index = transactions.findIndex(t => t.id === txn.id);
-    if (index !== -1) {
-      transactions[index] = {
-        ...txn,
-        amount: roundToTwoDecimals(txn.amount),
-      };
-      this.saveTransactions(transactions);
-      this.addLog(txn.createdBy, 'manager', 'Updated Transaction', `Updated transaction ${txn.id}`, 'transaction');
-    }
-  }
-
-  static deleteTransaction(id: string): void {
-    const transactions = this.getTransactions();
-    const filtered = transactions.filter(t => t.id !== id);
-    this.saveTransactions(filtered);
-    this.addLog('User', 'admin', 'Deleted Transaction', `Deleted transaction ${id}`, 'transaction');
-  }
 
   // ----------------------------------------------------
   // AUDIT LOGS (TAMPER-EVIDENT ACCOUNTABILITY SYSTEM)

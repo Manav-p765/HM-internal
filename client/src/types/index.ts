@@ -12,45 +12,7 @@ export interface UserProfile {
   employeeId?: string; // Links to Employee record
 }
 
-export type TransactionType = 'income' | 'expense';
-
-export type IncomeCategory =
-  | 'Client Payments'
-  | 'Service Revenue'
-  | 'Other Income';
-
-export type ExpenseCategory =
-  | 'Salaries'
-  | 'Software and Tools'
-  | 'Marketing'
-  | 'Office Expenses'
-  | 'Hosting and Infrastructure'
-  | 'Travel'
-  | 'Other Expenses';
-
-export type TransactionCategory = IncomeCategory | ExpenseCategory;
-
-export type PaymentMethod =
-  | 'Bank Transfer'
-  | 'UPI'
-  | 'Credit Card'
-  | 'Cheque'
-  | 'Cash';
-
-export interface Transaction {
-  id: string;
-  date: string; // YYYY-MM-DD
-  type: TransactionType;
-  category: TransactionCategory;
-  description: string;
-  amount: number;
-  paymentMethod: PaymentMethod;
-  referenceNumber?: string;
-  notes?: string;
-  linkedInvoiceId?: string;
-  createdBy: string;
-  createdAt: string;
-}
+// Ledger transactions, categories and reports: types/ledger.ts (API shapes).
 
 // ---- Client companies (shapes returned by /api/clients) ----
 

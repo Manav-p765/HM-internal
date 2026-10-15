@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { useApp } from '../../context/AppContext';
 import { salaryApi } from '../../api/salary';
 import { useApiData } from '../../api/useApiData';
@@ -25,7 +26,10 @@ function shiftMonth(month: string, n: number): string {
 // the current IST month as reported by the API.
 export const SalaryView: React.FC = () => {
   const { showToast } = useApp();
-  const [month, setMonth] = useState<string | undefined>(undefined);
+  // ?month=YYYY-MM (links from the ledger and reports) opens that month; otherwise the current one.
+  const [searchParams] = useSearchParams();
+  const linked = searchParams.get('month');
+  const [month, setMonth] = useState<string | undefined>(linked && /^\d{4}-(0[1-9]|1[0-2])$/.test(linked) ? linked : undefined);
   const list = useApiData(() => salaryApi.list(month), [month]);
   const currentMonth = list.data?.month ?? month ?? '';
 
@@ -143,16 +147,16 @@ export const SalaryView: React.FC = () => {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4" data-testid="salary-summary">
         <Card padding="md">
           <span className="text-xs font-semibold text-[#7185A5] block">Total payable</span>
-          <span className="text-lg sm:text-2xl font-mono font-bold text-[#111827] block mt-2 break-all">{summary ? formatMoney(summary.totalPayable) : '—'}</span>
+          <span className="text-sm sm:text-2xl font-mono font-bold text-[#111827] block mt-2 whitespace-nowrap">{summary ? formatMoney(summary.totalPayable) : '—'}</span>
         </Card>
         <Card padding="md">
           <span className="text-xs font-semibold text-[#7185A5] block">Paid</span>
-          <span className="text-lg sm:text-2xl font-mono font-bold text-[#047857] block mt-2 break-all">{summary ? formatMoney(summary.totalPaid) : '—'}</span>
+          <span className="text-sm sm:text-2xl font-mono font-bold text-[#047857] block mt-2 whitespace-nowrap">{summary ? formatMoney(summary.totalPaid) : '—'}</span>
           <span className="text-[11px] text-[#047857]">{summary ? `${summary.paidCount} paid` : ''}</span>
         </Card>
         <Card padding="md">
           <span className="text-xs font-semibold text-[#7185A5] block">Pending</span>
-          <span className="text-lg sm:text-2xl font-mono font-bold text-[#B45309] block mt-2 break-all">{summary ? formatMoney(summary.totalPending) : '—'}</span>
+          <span className="text-sm sm:text-2xl font-mono font-bold text-[#B45309] block mt-2 whitespace-nowrap">{summary ? formatMoney(summary.totalPending) : '—'}</span>
           <span className="text-[11px] text-[#B45309]">{summary ? `${summary.headcount - summary.paidCount} pending` : ''}</span>
         </Card>
         <Card padding="md">

@@ -1,406 +1,394 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { useApp } from '../../context/AppContext';
-import { Transaction, TransactionType } from '../../types';
+import { transactionsApi, LedgerFilters } from '../../api/transactions';
+import { useApiData } from '../../api/useApiData';
+import { LedgerRow, PERIOD_PRESET_LABEL, PERIOD_PRESETS, PeriodPreset, TxnSource, TxnType } from '../../types/ledger';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
-import { ConfirmDialog } from '../common/ConfirmDialog';
-import { TransactionModal } from './TransactionModal';
 import { EmptyState } from '../common/EmptyState';
-import {
-  TrendingUp,
-  TrendingDown,
-  Scale,
-  Plus,
-  Download,
-  Search,
-  Filter,
-  Edit2,
-  Trash2,
-  Receipt,
-  FileSpreadsheet,
-} from 'lucide-react';
-import { formatCurrency, formatDate, exportToCSV } from '../../utils/formatters';
-import { CURRENCY } from '../../utils/money';
-import { COMPANY_BRAND } from '../../utils/company';
+import { LoadError } from '../common/LoadError';
+import { ReasonDialog } from '../common/ReasonDialog';
+import { TransactionModal } from './TransactionModal';
+import { CategoriesManager } from './CategoriesManager';
+import { Ban, Download, Edit2, Plus, Search, Tags, WalletCards } from 'lucide-react';
+import { formatDate, formatDateIst, formatMonthYear } from '../../utils/formatters';
+import { formatMoney } from '../../utils/money';
 
+const PAGE_SIZE = 50;
+const selectClass = 'text-xs px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5] min-w-0';
+
+type PeriodChoice = 'all' | PeriodPreset | 'custom';
+
+// Source badge: Manual, or a link to the invoice / salary month that owns the row.
+const SourceBadge: React.FC<{ row: LedgerRow }> = ({ row }) => {
+  if (row.source === 'invoice' && row.invoiceId) {
+    return (
+      <Link to={`/invoices/${row.invoiceId}`} className="inline-flex" title="Open the invoice" data-testid="source-link">
+        <Badge variant="purple" size="sm">
+          Invoice {row.invoiceNumber}
+        </Badge>
+      </Link>
+    );
+  }
+  if (row.source === 'salary' && row.salaryMonth) {
+    return (
+      <Link to={`/salary?month=${row.salaryMonth}`} className="inline-flex" title={`Salary of ${row.salaryEmployeeName ?? ''}`} data-testid="source-link">
+        <Badge variant="info" size="sm">
+          Salary {formatMonthYear(row.salaryMonth)}
+        </Badge>
+      </Link>
+    );
+  }
+  return (
+    <Badge variant="neutral" size="sm">
+      Manual
+    </Badge>
+  );
+};
+
+const signed = (row: LedgerRow) => `${row.type === 'income' ? '+' : '−'}${formatMoney(row.amount)}`;
+
+// /accounting (admin): the server ledger. Every money movement is listed; invoice and salary payments are
+// linked rows (changed only on their own pages); manual rows are added, edited and voided here. Totals come
+// from the server for the whole filtered set and never include voided rows. /accounting/new opens the form.
 export const AccountingView: React.FC = () => {
-  const {
-    transactions,
-    deleteTransaction,
-    currentUser,
-    isAddTransactionOpen,
-    setIsAddTransactionOpen,
-  } = useApp();
+  const { showToast } = useApp();
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const creating = pathname === '/accounting/new';
 
-  const [transactionToEdit, setTransactionToEdit] = useState<Transaction | null>(null);
-  const [transactionToDelete, setTransactionToDelete] = useState<Transaction | null>(null);
-
-  // Filters
+  const [type, setType] = useState<'' | TxnType>('');
+  const [category, setCategory] = useState('');
+  const [source, setSource] = useState<'' | TxnSource>('');
+  const [period, setPeriod] = useState<PeriodChoice>('all');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [typeFilter, setTypeFilter] = useState<'all' | 'income' | 'expense'>('all');
-  const [categoryFilter, setCategoryFilter] = useState('all');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [includeVoided, setIncludeVoided] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const [editing, setEditing] = useState<LedgerRow | null>(null);
+  const [toVoid, setToVoid] = useState<LedgerRow | null>(null);
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
 
-  // Extract all categories in data
-  const allCategories = useMemo(() => {
-    const set = new Set<string>();
-    transactions.forEach(t => set.add(t.category));
-    return Array.from(set).sort();
-  }, [transactions]);
+  // Search waits for a pause in typing.
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
-  // Filtered transactions
-  const filteredTransactions = useMemo(() => {
-    return transactions.filter(t => {
-      if (typeFilter !== 'all' && t.type !== typeFilter) return false;
-      if (categoryFilter !== 'all' && t.category !== categoryFilter) return false;
-      if (startDate && t.date < startDate) return false;
-      if (endDate && t.date > endDate) return false;
-      if (search.trim()) {
-        const query = search.toLowerCase();
-        const matchesDesc = t.description.toLowerCase().includes(query);
-        const matchesCat = t.category.toLowerCase().includes(query);
-        const matchesId = t.id.toLowerCase().includes(query);
-        const matchesRef = (t.referenceNumber || '').toLowerCase().includes(query);
-        if (!matchesDesc && !matchesCat && !matchesId && !matchesRef) return false;
-      }
-      return true;
-    });
-  }, [transactions, typeFilter, categoryFilter, startDate, endDate, search]);
-
-  // Summary Metrics
-  const totalIncome = useMemo(() => {
-    return filteredTransactions
-      .filter(t => t.type === 'income')
-      .reduce((sum, t) => sum + t.amount, 0);
-  }, [filteredTransactions]);
-
-  const totalExpense = useMemo(() => {
-    return filteredTransactions
-      .filter(t => t.type === 'expense')
-      .reduce((sum, t) => sum + t.amount, 0);
-  }, [filteredTransactions]);
-
-  const netBalance = totalIncome - totalExpense;
-
-  const handleExportCSV = () => {
-    const headers = [
-      'Transaction ID',
-      'Date',
-      'Type',
-      'Category',
-      'Description',
-      `Amount (${CURRENCY})`,
-      'Payment Method',
-      'Reference Number',
-      'Created By',
-      'Notes',
-    ];
-
-    const rows = filteredTransactions.map(t => [
-      t.id,
-      t.date,
-      t.type.toUpperCase(),
-      t.category,
-      t.description,
-      t.amount,
-      t.paymentMethod,
-      t.referenceNumber || '',
-      t.createdBy,
-      t.notes || '',
-    ]);
-
-    exportToCSV(`accounting_ledger_${COMPANY_BRAND.toLowerCase().replace(/\s+/g, '_')}`, headers, rows);
+  const filters: LedgerFilters = {
+    type: type || undefined,
+    category: category || undefined,
+    source: source || undefined,
+    search: search || undefined,
+    includeVoided: includeVoided || undefined,
+    ...(period === 'custom' ? { from: from || undefined, to: to || undefined } : period === 'all' ? {} : { preset: period }),
   };
+  const key = JSON.stringify(filters);
+  useEffect(() => setOffset(0), [key]);
+
+  const list = useApiData(() => transactionsApi.list({ ...filters, limit: PAGE_SIZE, offset }), [key, offset]);
+  const categories = useApiData(() => transactionsApi.categories(), []);
+  const data = list.data;
+  const today = data?.today ?? '';
+
+  const exportHref = transactionsApi.exportUrl(filters);
+
+  const handleVoid = async (reason: string) => {
+    if (!toVoid) return;
+    await transactionsApi.void(toVoid.id, reason);
+    showToast('info', 'Transaction voided');
+    setToVoid(null);
+    await list.reload();
+  };
+
+  const formOpen = creating || editing !== null;
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">
-            Accounting & Transactions
-          </h1>
-          <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">
-            Record, audit, and categorize company cash flow in {CURRENCY}
-          </p>
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">Accounting & Ledger</h1>
+          <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">Every income and expense, including invoice and salary payments</p>
         </div>
-
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            icon={<Download className="w-3.5 h-3.5" />}
-            onClick={handleExportCSV}
-          >
-            Export CSV
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="outline" size="sm" icon={<Tags className="w-3.5 h-3.5" />} onClick={() => setCategoriesOpen(true)}>
+            Categories
           </Button>
-          {currentUser.role !== 'employee' && (
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<Plus className="w-3.5 h-3.5" />}
-              onClick={() => {
-                setTransactionToEdit(null);
-                setIsAddTransactionOpen(true);
-              }}
-            >
-              Add Transaction
-            </Button>
-          )}
+          <a
+            href={exportHref}
+            download
+            className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-[#DFE6F1] bg-white text-[#111827] hover:bg-[#F8FAFC]"
+            data-testid="export-csv"
+          >
+            <Download className="w-3.5 h-3.5" /> Export CSV
+          </a>
+          <Button variant="primary" size="sm" icon={<Plus className="w-3.5 h-3.5" />} onClick={() => navigate('/accounting/new')}>
+            Add transaction
+          </Button>
         </div>
       </div>
 
-      {/* This page still reads the browser-local ledger; invoice payments and salary payments are recorded
-          on the server and are not listed here until the ledger moves too. */}
-      <div className="p-3 rounded-xl bg-[#5038F5]/5 border border-[#5038F5]/20 text-xs text-[#475569]" role="note" data-testid="ledger-note">
-        <span className="font-semibold text-[#111827]">Ledger moves to the server in the next release.</span> Invoice payments and
-        salary payments are already recorded on the server (see Invoices and Salary) and are not listed on this page yet.
-      </div>
-
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card padding="md">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#7185A5]">Filtered Income</span>
-            <div className="w-8 h-8 rounded-lg bg-[#047857]/10 text-[#047857] flex items-center justify-center">
-              <TrendingUp className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2">
-            <span className="text-2xl font-mono font-bold text-[#111827]">
-              {formatCurrency(totalIncome, CURRENCY)}
-            </span>
-            <p className="text-[11px] text-[#7185A5] mt-1">
-              {filteredTransactions.filter(t => t.type === 'income').length} income records
-            </p>
-          </div>
-        </Card>
-
-        <Card padding="md">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#7185A5]">Filtered Expenses</span>
-            <div className="w-8 h-8 rounded-lg bg-[#E11D48]/10 text-[#E11D48] flex items-center justify-center">
-              <TrendingDown className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2">
-            <span className="text-2xl font-mono font-bold text-[#111827]">
-              {formatCurrency(totalExpense, CURRENCY)}
-            </span>
-            <p className="text-[11px] text-[#7185A5] mt-1">
-              {filteredTransactions.filter(t => t.type === 'expense').length} expense records
-            </p>
-          </div>
-        </Card>
-
-        <Card padding="md">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#7185A5]">Current Net Balance</span>
-            <div className="w-8 h-8 rounded-lg bg-[#5038F5]/10 text-[#5038F5] flex items-center justify-center">
-              <Scale className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2">
-            <span
-              className={`text-2xl font-mono font-bold ${
-                netBalance >= 0 ? 'text-[#047857]' : 'text-[#E11D48]'
-              }`}
-            >
-              {formatCurrency(netBalance, CURRENCY)}
-            </span>
-            <p className="text-[11px] text-[#7185A5] mt-1">
-              Net operating surplus
-            </p>
-          </div>
-        </Card>
-      </div>
-
-      {/* Filter and Search Bar */}
+      {/* Filters */}
       <Card padding="sm">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          <div className="relative">
+        <div className="flex flex-wrap items-center gap-2" aria-label="Filters">
+          <div className="relative flex-1 min-w-[12rem]">
             <Search className="w-4 h-4 text-[#7185A5] absolute left-3 top-1/2 -translate-y-1/2" />
             <input
-              type="text"
-              placeholder="Search description, reference, ID..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full text-xs pl-9 pr-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
+              placeholder="Search description or reference…"
+              className="w-full text-xs pl-9 pr-3 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+              aria-label="Search transactions"
             />
           </div>
-
-          <div>
-            <select
-              value={typeFilter}
-              onChange={e => setTypeFilter(e.target.value as any)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-            >
-              <option value="all">All Types (Income & Expense)</option>
-              <option value="income">Income Only</option>
-              <option value="expense">Expenses Only</option>
-            </select>
-          </div>
-
-          <div>
-            <select
-              value={categoryFilter}
-              onChange={e => setCategoryFilter(e.target.value)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-            >
-              <option value="all">All Categories</option>
-              {allCategories.map(cat => (
-                <option key={cat} value={cat}>
-                  {cat}
+          <select value={type} onChange={e => setType(e.target.value as '' | TxnType)} className={selectClass} aria-label="Type filter">
+            <option value="">All types</option>
+            <option value="income">Income</option>
+            <option value="expense">Expense</option>
+          </select>
+          <select value={category} onChange={e => setCategory(e.target.value)} className={selectClass} aria-label="Category filter">
+            <option value="">All categories</option>
+            {(categories.data ?? [])
+              .filter(c => !type || c.type === type)
+              .map(c => (
+                <option key={c.id} value={c.name}>
+                  {c.name}
+                  {c.active ? '' : ' (inactive)'}
                 </option>
               ))}
-            </select>
-          </div>
-
-          <div>
-            <input
-              type="date"
-              placeholder="From Date"
-              value={startDate}
-              onChange={e => setStartDate(e.target.value)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-            />
-          </div>
-
-          <div>
-            <input
-              type="date"
-              placeholder="To Date"
-              value={endDate}
-              onChange={e => setEndDate(e.target.value)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-            />
-          </div>
+          </select>
+          <select value={source} onChange={e => setSource(e.target.value as '' | TxnSource)} className={selectClass} aria-label="Source filter">
+            <option value="">All sources</option>
+            <option value="manual">Manual</option>
+            <option value="invoice">Invoice payments</option>
+            <option value="salary">Salary payments</option>
+          </select>
+          <select value={period} onChange={e => setPeriod(e.target.value as PeriodChoice)} className={selectClass} aria-label="Period filter">
+            <option value="all">All dates</option>
+            {PERIOD_PRESETS.map(p => (
+              <option key={p} value={p}>
+                {PERIOD_PRESET_LABEL[p]}
+              </option>
+            ))}
+            <option value="custom">Custom range…</option>
+          </select>
+          {period === 'custom' && (
+            <span className="flex items-center gap-1.5">
+              <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={selectClass} aria-label="From date" />
+              <span className="text-xs text-[#7185A5]">to</span>
+              <input type="date" value={to} onChange={e => setTo(e.target.value)} className={selectClass} aria-label="To date" />
+            </span>
+          )}
+          <label className="flex items-center gap-1.5 text-xs text-[#475569] cursor-pointer select-none">
+            <input type="checkbox" checked={includeVoided} onChange={e => setIncludeVoided(e.target.checked)} aria-label="Show voided" />
+            Show voided
+          </label>
         </div>
       </Card>
 
-      {/* Transactions Table */}
+      {/* Totals for the filtered set (server) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4" data-testid="ledger-totals">
+        <Card padding="md">
+          <span className="text-xs font-semibold text-[#7185A5] block">Income</span>
+          <span className="text-sm sm:text-2xl font-mono font-bold text-[#047857] block mt-2 whitespace-nowrap" data-testid="total-income">
+            {data ? formatMoney(data.totals.income) : '—'}
+          </span>
+        </Card>
+        <Card padding="md">
+          <span className="text-xs font-semibold text-[#7185A5] block">Expenses</span>
+          <span className="text-sm sm:text-2xl font-mono font-bold text-[#B45309] block mt-2 whitespace-nowrap" data-testid="total-expense">
+            {data ? formatMoney(data.totals.expense) : '—'}
+          </span>
+        </Card>
+        <Card padding="md">
+          <span className="text-xs font-semibold text-[#7185A5] block">Net</span>
+          <span
+            className={`text-sm sm:text-2xl font-mono font-bold block mt-2 whitespace-nowrap ${data?.totals.net.startsWith('-') ? 'text-[#E11D48]' : 'text-[#111827]'}`}
+            data-testid="total-net"
+          >
+            {data ? formatMoney(data.totals.net) : '—'}
+          </span>
+        </Card>
+        <Card padding="md">
+          <span className="text-xs font-semibold text-[#7185A5] block">Entries counted</span>
+          <span className="text-lg sm:text-2xl font-mono font-bold text-[#111827] block mt-2">{data ? data.totals.count : '—'}</span>
+          {data?.period.from && (
+            <span className="text-[11px] text-[#7185A5]">
+              {formatDate(data.period.from)} – {formatDate(data.period.to ?? '')}
+            </span>
+          )}
+        </Card>
+      </div>
+
+      {/* Rows */}
       <Card padding="none" className="overflow-hidden">
-        {filteredTransactions.length === 0 ? (
+        {list.error ? (
+          <LoadError message={list.error} onRetry={list.reload} />
+        ) : !data ? (
+          <div className="py-10 text-center text-xs text-[#7185A5]">Loading transactions…</div>
+        ) : data.transactions.length === 0 ? (
           <EmptyState
-            icon={<Receipt className="w-6 h-6" />}
-            title="No transactions found"
-            description="No transactions match your current search and filter settings."
-            actionLabel={currentUser.role !== 'employee' ? 'Add Transaction' : undefined}
-            onAction={() => {
-              setTransactionToEdit(null);
-              setIsAddTransactionOpen(true);
-            }}
+            icon={<WalletCards className="w-6 h-6" />}
+            title="No transactions"
+            description="Nothing matches these filters."
+            actionLabel="Add transaction"
+            onAction={() => navigate('/accounting/new')}
           />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-[#F7F9FC] border-b border-[#DFE6F1] text-[#7185A5] font-semibold">
-                <tr>
-                  <th className="py-3 px-4">Transaction ID</th>
-                  <th className="py-3 px-4">Date</th>
-                  <th className="py-3 px-4">Type</th>
-                  <th className="py-3 px-4">Category</th>
-                  <th className="py-3 px-4">Description</th>
-                  <th className="py-3 px-4">Payment Method</th>
-                  <th className="py-3 px-4">Reference</th>
-                  <th className="py-3 px-4 text-right">Amount</th>
-                  {currentUser.role !== 'employee' && (
-                    <th className="py-3 px-4 text-right w-24">Actions</th>
-                  )}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#DFE6F1]">
-                {filteredTransactions.map(txn => (
-                  <tr key={txn.id} className="hover:bg-[#F7F9FC]/60 transition-colors">
-                    <td className="py-3 px-4 font-mono font-medium text-[#111827]">
-                      {txn.id}
-                    </td>
-                    <td className="py-3 px-4 text-[#7185A5] whitespace-nowrap">
-                      {formatDate(txn.date)}
-                    </td>
-                    <td className="py-3 px-4">
-                      <Badge variant={txn.type === 'income' ? 'success' : 'error'}>
-                        {txn.type === 'income' ? '+ Income' : '- Expense'}
-                      </Badge>
-                    </td>
-                    <td className="py-3 px-4 font-medium text-[#111827]">
-                      {txn.category}
-                    </td>
-                    <td className="py-3 px-4 text-[#475569] max-w-xs truncate" title={txn.description}>
-                      {txn.description}
-                    </td>
-                    <td className="py-3 px-4 text-[#7185A5] whitespace-nowrap">
-                      {txn.paymentMethod}
-                    </td>
-                    <td className="py-3 px-4 font-mono text-[#7185A5] whitespace-nowrap">
-                      {txn.referenceNumber || '—'}
-                    </td>
-                    <td
-                      className={`py-3 px-4 text-right font-mono font-bold whitespace-nowrap ${
-                        txn.type === 'income' ? 'text-[#047857]' : 'text-[#111827]'
-                      }`}
-                    >
-                      {txn.type === 'income' ? '+' : '-'}
-                      {formatCurrency(txn.amount, CURRENCY)}
-                    </td>
-                    {currentUser.role !== 'employee' && (
-                      <td className="py-3 px-4 text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => {
-                              setTransactionToEdit(txn);
-                              setIsAddTransactionOpen(true);
-                            }}
-                            className="p-1.5 text-[#7185A5] hover:text-[#5038F5] hover:bg-[#F1F5F9] rounded cursor-pointer"
-                            title="Edit Transaction"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => setTransactionToDelete(txn)}
-                            className="p-1.5 text-[#7185A5] hover:text-[#E11D48] hover:bg-[#F1F5F9] rounded cursor-pointer"
-                            title="Delete Transaction"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    )}
+          <>
+            {/* Table (md and up) */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left text-xs" data-testid="ledger-table">
+                <thead className="bg-[#F7F9FC] border-b border-[#DFE6F1] text-[#7185A5] font-semibold">
+                  <tr>
+                    <th className="py-3 px-3">Date</th>
+                    <th className="py-3 px-3">Description</th>
+                    <th className="py-3 px-3">Category</th>
+                    <th className="py-3 px-3">Source</th>
+                    <th className="py-3 px-3">Method</th>
+                    <th className="py-3 px-3 text-right">Amount</th>
+                    <th className="py-3 px-3 text-right">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-[#DFE6F1]">
+                  {data.transactions.map(row => (
+                    <tr key={row.id} className={row.voidedAt ? 'bg-[#F7F9FC]/70 text-[#94A3B8]' : 'hover:bg-[#F7F9FC]/60'} data-testid={`ledger-row-${row.id}`} data-voided={row.voidedAt ? 'true' : undefined}>
+                      <td className={`py-3 px-3 whitespace-nowrap ${row.voidedAt ? 'line-through' : 'text-[#475569]'}`}>{formatDate(row.txnDate)}</td>
+                      <td className="py-3 px-3 max-w-[22rem]">
+                        <div className={`font-medium ${row.voidedAt ? 'line-through' : 'text-[#111827]'}`}>{row.description}</div>
+                        {(row.referenceNumber || row.notes) && (
+                          <div className="text-[10px] text-[#7185A5] truncate">{[row.referenceNumber, row.notes].filter(Boolean).join(' · ')}</div>
+                        )}
+                        {row.voidedAt && (
+                          <div className="text-[10px] text-[#7185A5] no-underline" data-testid="void-info">
+                            {row.source === 'manual' ? 'Voided' : 'Reversed'} by {row.voidedByName ?? 'unknown'} on {formatDateIst(row.voidedAt)}: {row.voidReason}
+                          </div>
+                        )}
+                      </td>
+                      <td className={`py-3 px-3 ${row.voidedAt ? 'line-through' : 'text-[#475569]'}`}>{row.category}</td>
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        <SourceBadge row={row} />
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap text-[#7185A5]">{row.paymentMethod}</td>
+                      <td
+                        className={`py-3 px-3 text-right font-mono font-semibold whitespace-nowrap ${
+                          row.voidedAt ? 'line-through' : row.type === 'income' ? 'text-[#047857]' : 'text-[#111827]'
+                        }`}
+                      >
+                        {signed(row)}
+                      </td>
+                      <td className="py-3 px-3 text-right whitespace-nowrap">
+                        <RowActions row={row} onEdit={() => setEditing(row)} onVoid={() => setToVoid(row)} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Cards (small screens) */}
+            <ul className="md:hidden divide-y divide-[#DFE6F1]" data-testid="ledger-cards">
+              {data.transactions.map(row => (
+                <li key={row.id} className={`p-3 text-xs ${row.voidedAt ? 'bg-[#F7F9FC]/70 text-[#94A3B8]' : ''}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className={`font-medium break-words ${row.voidedAt ? 'line-through' : 'text-[#111827]'}`}>{row.description}</div>
+                      <div className="text-[11px] text-[#7185A5] mt-0.5">
+                        {formatDate(row.txnDate)} · {row.category} · {row.paymentMethod}
+                      </div>
+                    </div>
+                    <span className={`font-mono font-semibold whitespace-nowrap ${row.voidedAt ? 'line-through' : row.type === 'income' ? 'text-[#047857]' : 'text-[#111827]'}`}>
+                      {signed(row)}
+                    </span>
+                  </div>
+                  {row.voidedAt && (
+                    <div className="text-[10px] text-[#7185A5] mt-1">
+                      {row.source === 'manual' ? 'Voided' : 'Reversed'} by {row.voidedByName ?? 'unknown'} on {formatDateIst(row.voidedAt)}: {row.voidReason}
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between gap-2 mt-2">
+                    <SourceBadge row={row} />
+                    <RowActions row={row} onEdit={() => setEditing(row)} onVoid={() => setToVoid(row)} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            {/* Pagination */}
+            {data.total > PAGE_SIZE && (
+              <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[#DFE6F1] text-xs text-[#7185A5]">
+                <span>
+                  {offset + 1}–{Math.min(offset + PAGE_SIZE, data.total)} of {data.total}
+                </span>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
+                    Previous
+                  </Button>
+                  <Button variant="outline" size="sm" disabled={offset + PAGE_SIZE >= data.total} onClick={() => setOffset(offset + PAGE_SIZE)}>
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </Card>
 
-      {/* Transaction Modal */}
-      <TransactionModal
-        isOpen={isAddTransactionOpen}
-        onClose={() => {
-          setIsAddTransactionOpen(false);
-          setTransactionToEdit(null);
-        }}
-        transactionToEdit={transactionToEdit}
-      />
+      {formOpen && today && (
+        <TransactionModal
+          existing={editing}
+          today={today}
+          onClose={() => {
+            setEditing(null);
+            if (creating) navigate('/accounting');
+          }}
+          onSaved={() => {
+            setEditing(null);
+            if (creating) navigate('/accounting');
+            list.reload();
+          }}
+        />
+      )}
+      {toVoid && (
+        <ReasonDialog
+          title="Void transaction"
+          message={`Void "${toVoid.description}" (${signed(toVoid)}, ${formatDate(toVoid.txnDate)})? It stays in the ledger, struck through, and no longer counts in any total.`}
+          confirmLabel="Void"
+          reasonLabel="Reason for voiding"
+          onClose={() => setToVoid(null)}
+          onConfirm={handleVoid}
+        />
+      )}
+      {categoriesOpen && (
+        <CategoriesManager
+          onClose={() => setCategoriesOpen(false)}
+          onChanged={() => {
+            categories.reload();
+            list.reload();
+          }}
+        />
+      )}
+    </div>
+  );
+};
 
-      {/* Delete Confirmation Dialog */}
-      <ConfirmDialog
-        isOpen={!!transactionToDelete}
-        onClose={() => setTransactionToDelete(null)}
-        onConfirm={() => {
-          if (transactionToDelete) {
-            deleteTransaction(transactionToDelete.id);
-            setTransactionToDelete(null);
-          }
-        }}
-        title="Delete Transaction"
-        message={`Are you sure you want to delete transaction "${transactionToDelete?.id}" (${transactionToDelete?.description})? This financial ledger entry will be removed.`}
-        confirmLabel="Delete"
-        isDestructive={true}
-      />
+// Manual rows: Edit and Void. Linked rows: nothing here (they change on the invoice or salary page).
+const RowActions: React.FC<{ row: LedgerRow; onEdit: () => void; onVoid: () => void }> = ({ row, onEdit, onVoid }) => {
+  if (row.voidedAt) return <span className="text-[10px] font-semibold uppercase tracking-wider">{row.source === 'manual' ? 'Voided' : 'Reversed'}</span>;
+  if (row.source !== 'manual') return <span className="text-[10px] text-[#94A3B8]">Linked</span>;
+  return (
+    <div className="inline-flex items-center gap-1">
+      <button onClick={onEdit} className="p-1.5 text-[#7185A5] hover:text-[#5038F5] hover:bg-[#F1F5F9] rounded cursor-pointer" aria-label={`Edit ${row.description}`}>
+        <Edit2 className="w-3.5 h-3.5" />
+      </button>
+      <button onClick={onVoid} className="p-1.5 text-[#7185A5] hover:text-[#E11D48] hover:bg-[#E11D48]/10 rounded cursor-pointer" aria-label={`Void ${row.description}`}>
+        <Ban className="w-3.5 h-3.5" />
+      </button>
     </div>
   );
 };

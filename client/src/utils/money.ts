@@ -73,6 +73,25 @@ export function previewNetAfterLine(netPayable: string, kind: 'earning' | 'deduc
   return fromHundredths(kind === 'earning' ? net + value : net - value);
 }
 
+// DISPLAY ONLY (chart bar heights): `value` as a percentage of `max`, both non-negative server amounts.
+// 0 when max is 0 or either value isn't a valid amount. Never used for a figure that is shown as money.
+export function sharePercent(value: string, max: string): number {
+  const v = toHundredths(value);
+  const m = toHundredths(max);
+  if (v === null || m === null || m === 0n) return 0;
+  return Number((v * 10000n) / m) / 100;
+}
+
+// DISPLAY ONLY: the largest of some non-negative server amounts ("0.00" when none), to scale chart bars.
+export function maxAmount(values: string[]): string {
+  let best = 0n;
+  for (const v of values) {
+    const h = toHundredths(v);
+    if (h !== null && h > best) best = h;
+  }
+  return fromHundredths(best);
+}
+
 // Exact sum of server amounts for report footers (no floats). Invalid entries count as 0.
 export function sumMoney(values: string[]): string {
   return fromHundredths(values.reduce<bigint>((sum, v) => sum + (toHundredths(v) ?? 0n), 0n));
