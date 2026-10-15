@@ -1,8 +1,5 @@
 import {
-  CompanySettings,
   Employee,
-  Invoice,
-  InvoicePayment,
   SalaryRecord,
   SalarySlip,
   Transaction,
@@ -14,50 +11,17 @@ import {
 import { roundToTwoDecimals } from '../utils/formatters';
 
 const STORAGE_KEYS = {
-  SETTINGS: 'monks_company_settings_v1',
-  TRANSACTIONS: 'monks_transactions_v1',
-  INVOICES: 'monks_invoices_v1',
+  // v2: the invoice payments that used to live here are income transactions on the server now
+  // (invoices, payments and company settings moved to /api/invoices and /api/settings).
+  TRANSACTIONS: 'monks_transactions_v2',
   SALARIES: 'monks_salaries_v2',
   SALARY_SLIPS: 'monks_salary_slips_v2',
   ACTIVITY_LOGS: 'monks_activity_logs_v1',
   AUDIT_LOGS: 'monks_audit_logs_v1',
 };
 
-// Initial Seed Settings for Hybrid Monks
-const INITIAL_SETTINGS: CompanySettings = {
-  companyName: 'Hybrid Monks',
-  companyLogoText: 'HM',
-  companyAddress: 'Level 4, Maker Maxity, Bandra Kurla Complex, Mumbai 400051',
-  companyEmail: 'accounts@hybridmonks.com',
-  companyPhone: '+91 22 6123 4567',
-  companyGstin: '27AABCH1234F1Z8',
-  defaultCurrency: 'INR',
-  financialYearStartMonth: 4, // April
-  invoicePrefix: 'INV-2026-',
-  taxRatePercentage: 18,
-  companyTimezone: 'Asia/Kolkata',
-  workStartTime: '09:30',
-  workEndTime: '18:30',
-  expectedDailyHours: 8.0,
-  weeklyWorkingDays: 5,
-};
-
 // Employees live in Postgres now (/api/employees); there is no local employee seed.
 const INITIAL_TRANSACTIONS: Transaction[] = [
-  {
-    id: 'TXN-2026-089',
-    date: '2026-10-02',
-    type: 'income',
-    category: 'Client Payments',
-    description: 'Q3 Retainer Milestone — FinTech Global Inc',
-    amount: 540000,
-    paymentMethod: 'Bank Transfer',
-    referenceNumber: 'NEFT-FT99824',
-    notes: 'Received against invoice INV-2026-001.',
-    linkedInvoiceId: 'inv-001',
-    createdBy: 'Priya Sharma',
-    createdAt: '2026-10-02T10:30:00.000Z',
-  },
   {
     id: 'TXN-2026-088',
     date: '2026-10-04',
@@ -124,20 +88,6 @@ const INITIAL_TRANSACTIONS: Transaction[] = [
     createdAt: '2026-09-15T12:00:00.000Z',
   },
   {
-    id: 'TXN-2026-083',
-    date: '2026-09-08',
-    type: 'income',
-    category: 'Client Payments',
-    description: 'Frontend Architecture Deliverable — HealthBridge Labs',
-    amount: 420000,
-    paymentMethod: 'Bank Transfer',
-    referenceNumber: 'NEFT-HB44102',
-    notes: 'Received against invoice INV-2026-002.',
-    linkedInvoiceId: 'inv-002',
-    createdBy: 'Priya Sharma',
-    createdAt: '2026-09-08T15:45:00.000Z',
-  },
-  {
     id: 'TXN-2026-082',
     date: '2026-09-02',
     type: 'expense',
@@ -149,158 +99,6 @@ const INITIAL_TRANSACTIONS: Transaction[] = [
     notes: 'TechSparks Mumbai conference sponsorship.',
     createdBy: 'Karan Singhania',
     createdAt: '2026-09-02T10:10:00.000Z',
-  },
-];
-
-const INITIAL_INVOICES: Invoice[] = [
-  {
-    id: 'inv-001',
-    invoiceNumber: 'INV-2026-001',
-    clientName: 'FinTech Global Inc',
-    clientEmail: 'billing@fintechglobal.io',
-    clientAddress: '100 Financial Centre, London EC2N 1HQ',
-    invoiceDate: '2026-09-15',
-    dueDate: '2026-10-01',
-    items: [
-      {
-        id: 'item-1',
-        description: 'Enterprise Cloud Architecture & Core API System',
-        quantity: 1,
-        unitPrice: 457627.12,
-        subtotal: 457627.12,
-      },
-    ],
-    subtotal: 457627.12,
-    taxRate: 18,
-    taxAmount: 82372.88,
-    totalAmount: 540000,
-    amountPaid: 540000,
-    outstandingAmount: 0,
-    status: 'Paid',
-    notes: 'Payment received in full via wire transfer on 02 Oct 2026.',
-    payments: [
-      {
-        id: 'pay-001',
-        date: '2026-10-02',
-        amount: 540000,
-        paymentMethod: 'Bank Transfer',
-        reference: 'NEFT-FT99824',
-        notes: 'Full payment received.',
-        recordedBy: 'Priya Sharma',
-        createdAt: '2026-10-02T10:30:00.000Z',
-      },
-    ],
-    createdAt: '2026-09-15T11:00:00.000Z',
-    updatedAt: '2026-10-02T10:30:00.000Z',
-  },
-  {
-    id: 'inv-002',
-    invoiceNumber: 'INV-2026-002',
-    clientName: 'HealthBridge Labs',
-    clientEmail: 'accounts@healthbridge.co',
-    clientAddress: '7th Floor, Cyber City, Gurugram 122002',
-    invoiceDate: '2026-09-01',
-    dueDate: '2026-09-20',
-    items: [
-      {
-        id: 'item-2-1',
-        description: 'Full-Stack Patient Portal Design System',
-        quantity: 1,
-        unitPrice: 355932.20,
-        subtotal: 355932.20,
-      },
-    ],
-    subtotal: 355932.20,
-    taxRate: 18,
-    taxAmount: 64067.80,
-    totalAmount: 420000,
-    amountPaid: 420000,
-    outstandingAmount: 0,
-    status: 'Paid',
-    notes: 'Completed delivery sign-off on 08 Sep 2026.',
-    payments: [
-      {
-        id: 'pay-002',
-        date: '2026-09-08',
-        amount: 420000,
-        paymentMethod: 'Bank Transfer',
-        reference: 'NEFT-HB44102',
-        notes: 'Received via NEFT.',
-        recordedBy: 'Priya Sharma',
-        createdAt: '2026-09-08T15:45:00.000Z',
-      },
-    ],
-    createdAt: '2026-09-01T09:30:00.000Z',
-    updatedAt: '2026-09-08T15:45:00.000Z',
-  },
-  {
-    id: 'inv-003',
-    invoiceNumber: 'INV-2026-003',
-    clientName: 'Apex Mobility Solutions',
-    clientEmail: 'finance@apexmobility.in',
-    clientAddress: 'Plot 45, MIDC Industrial Area, Pune 411018',
-    invoiceDate: '2026-09-20',
-    dueDate: '2026-10-05',
-    items: [
-      {
-        id: 'item-3-1',
-        description: 'Fleet Tracking Dashboard & Telemetry Visualizer',
-        quantity: 1,
-        unitPrice: 271186.44,
-        subtotal: 271186.44,
-      },
-    ],
-    subtotal: 271186.44,
-    taxRate: 18,
-    taxAmount: 48813.56,
-    totalAmount: 320000,
-    amountPaid: 120000,
-    outstandingAmount: 200000,
-    status: 'Overdue',
-    notes: 'Initial advance received (₹1,20,000). Remaining balance ₹2,00,000 is overdue since 05 Oct 2026.',
-    payments: [
-      {
-        id: 'pay-003',
-        date: '2026-09-22',
-        amount: 120000,
-        paymentMethod: 'Bank Transfer',
-        reference: 'NEFT-APEX0192',
-        notes: 'Advance deposit.',
-        recordedBy: 'Priya Sharma',
-        createdAt: '2026-09-22T14:00:00.000Z',
-      },
-    ],
-    createdAt: '2026-09-20T10:00:00.000Z',
-    updatedAt: '2026-09-22T14:00:00.000Z',
-  },
-  {
-    id: 'inv-004',
-    invoiceNumber: 'INV-2026-004',
-    clientName: 'Nordic Retail Group',
-    clientEmail: 'invoices@nordicretail.dk',
-    clientAddress: 'Bredgade 28, 1260 Copenhagen, Denmark',
-    invoiceDate: '2026-10-05',
-    dueDate: '2026-10-25',
-    items: [
-      {
-        id: 'item-4-1',
-        description: 'E-commerce Checkout Microservice Refactor',
-        quantity: 1,
-        unitPrice: 237288.14,
-        subtotal: 237288.14,
-      },
-    ],
-    subtotal: 237288.14,
-    taxRate: 18,
-    taxAmount: 42711.86,
-    totalAmount: 280000,
-    amountPaid: 0,
-    outstandingAmount: 280000,
-    status: 'Sent',
-    notes: 'Sent to client on 05 Oct 2026. Awaiting payment.',
-    payments: [],
-    createdAt: '2026-10-05T12:00:00.000Z',
-    updatedAt: '2026-10-05T12:00:00.000Z',
   },
 ];
 
@@ -493,27 +291,8 @@ export class StorageService {
   }
 
   // ----------------------------------------------------
-  // COMPANY SETTINGS & AUDIT LOGS
+  // TRANSACTIONS & AUDIT LOGS
   // ----------------------------------------------------
-
-  static getSettings(): CompanySettings {
-    const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(INITIAL_SETTINGS));
-      return INITIAL_SETTINGS;
-    }
-    try {
-      const parsed = JSON.parse(raw);
-      return { ...INITIAL_SETTINGS, ...parsed };
-    } catch {
-      return INITIAL_SETTINGS;
-    }
-  }
-
-  static saveSettings(settings: CompanySettings): void {
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
-    this.addLog('Alex Monks', 'admin', 'Updated Settings', 'Updated company profile and financial parameters', 'settings');
-  }
 
   static getTransactions(): Transaction[] {
     const raw = localStorage.getItem(STORAGE_KEYS.TRANSACTIONS);
@@ -573,193 +352,6 @@ export class StorageService {
     const filtered = transactions.filter(t => t.id !== id);
     this.saveTransactions(filtered);
     this.addLog('User', 'admin', 'Deleted Transaction', `Deleted transaction ${id}`, 'transaction');
-  }
-
-  static getInvoices(): Invoice[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.INVOICES);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(INITIAL_INVOICES));
-      return INITIAL_INVOICES;
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return INITIAL_INVOICES;
-    }
-  }
-
-  static saveInvoices(invoices: Invoice[]): void {
-    localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(invoices));
-  }
-
-  static calculateInvoiceStatus(invoice: {
-    status: Invoice['status'];
-    dueDate: string;
-    totalAmount: number;
-    amountPaid: number;
-    outstandingAmount: number;
-  }): Invoice['status'] {
-    if (invoice.status === 'Draft' || invoice.status === 'Cancelled') {
-      return invoice.status;
-    }
-    if (invoice.amountPaid >= invoice.totalAmount && invoice.totalAmount > 0) {
-      return 'Paid';
-    }
-    if (invoice.amountPaid > 0 && invoice.outstandingAmount > 0) {
-      return 'Partially Paid';
-    }
-    const today = new Date().toISOString().split('T')[0];
-    if (invoice.dueDate < today && invoice.outstandingAmount > 0) {
-      return 'Overdue';
-    }
-    return 'Sent';
-  }
-
-  static addInvoice(invoiceData: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt' | 'amountPaid' | 'outstandingAmount' | 'payments'>): Invoice {
-    const invoices = this.getInvoices();
-    const newId = `inv-${Date.now()}`;
-    const subtotal = roundToTwoDecimals(invoiceData.subtotal);
-    const taxAmount = roundToTwoDecimals(invoiceData.taxAmount);
-    const totalAmount = roundToTwoDecimals(invoiceData.totalAmount);
-    const amountPaid = 0;
-    const outstandingAmount = totalAmount;
-
-    const status = this.calculateInvoiceStatus({
-      status: invoiceData.status,
-      dueDate: invoiceData.dueDate,
-      totalAmount,
-      amountPaid,
-      outstandingAmount,
-    });
-
-    const newInvoice: Invoice = {
-      ...invoiceData,
-      id: newId,
-      subtotal,
-      taxAmount,
-      totalAmount,
-      amountPaid,
-      outstandingAmount,
-      status,
-      payments: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    invoices.unshift(newInvoice);
-    this.saveInvoices(invoices);
-    this.addLog('Finance', 'manager', 'Created Invoice', `Created ${newInvoice.invoiceNumber} for ${newInvoice.clientName} (${totalAmount})`, 'invoice');
-    return newInvoice;
-  }
-
-  static updateInvoice(invoice: Invoice): void {
-    const invoices = this.getInvoices();
-    const index = invoices.findIndex(i => i.id === invoice.id);
-    if (index !== -1) {
-      const subtotal = roundToTwoDecimals(invoice.subtotal);
-      const taxAmount = roundToTwoDecimals(invoice.taxAmount);
-      const totalAmount = roundToTwoDecimals(invoice.totalAmount);
-      const amountPaid = roundToTwoDecimals(invoice.amountPaid);
-      const outstandingAmount = roundToTwoDecimals(Math.max(0, totalAmount - amountPaid));
-
-      const status = this.calculateInvoiceStatus({
-        status: invoice.status,
-        dueDate: invoice.dueDate,
-        totalAmount,
-        amountPaid,
-        outstandingAmount,
-      });
-
-      invoices[index] = {
-        ...invoice,
-        subtotal,
-        taxAmount,
-        totalAmount,
-        amountPaid,
-        outstandingAmount,
-        status,
-        updatedAt: new Date().toISOString(),
-      };
-      this.saveInvoices(invoices);
-      this.addLog('Finance', 'manager', 'Updated Invoice', `Updated ${invoice.invoiceNumber}`, 'invoice');
-    }
-  }
-
-  static deleteInvoice(id: string): void {
-    const invoices = this.getInvoices();
-    const filtered = invoices.filter(i => i.id !== id);
-    this.saveInvoices(filtered);
-    this.addLog('Admin', 'admin', 'Deleted Invoice', `Deleted invoice ID ${id}`, 'invoice');
-  }
-
-  static recordInvoicePayment(
-    invoiceId: string,
-    payment: Omit<InvoicePayment, 'id' | 'createdAt'>,
-    createLinkedTransaction: boolean = true
-  ): Invoice | null {
-    const invoices = this.getInvoices();
-    const invoice = invoices.find(i => i.id === invoiceId);
-    if (!invoice) return null;
-
-    const paymentAmount = roundToTwoDecimals(payment.amount);
-    if (paymentAmount <= 0) return null;
-
-    const newPayment: InvoicePayment = {
-      ...payment,
-      id: `pay-${Date.now()}`,
-      amount: paymentAmount,
-      createdAt: new Date().toISOString(),
-    };
-
-    const newPayments = [...invoice.payments, newPayment];
-    const newAmountPaid = roundToTwoDecimals(invoice.amountPaid + paymentAmount);
-    const newOutstanding = roundToTwoDecimals(Math.max(0, invoice.totalAmount - newAmountPaid));
-
-    const newStatus = this.calculateInvoiceStatus({
-      status: invoice.status,
-      dueDate: invoice.dueDate,
-      totalAmount: invoice.totalAmount,
-      amountPaid: newAmountPaid,
-      outstandingAmount: newOutstanding,
-    });
-
-    const updatedInvoice: Invoice = {
-      ...invoice,
-      amountPaid: newAmountPaid,
-      outstandingAmount: newOutstanding,
-      status: newStatus,
-      payments: newPayments,
-      updatedAt: new Date().toISOString(),
-    };
-
-    const index = invoices.findIndex(i => i.id === invoiceId);
-    invoices[index] = updatedInvoice;
-    this.saveInvoices(invoices);
-
-    if (createLinkedTransaction) {
-      this.addTransaction({
-        date: payment.date,
-        type: 'income',
-        category: 'Client Payments',
-        description: `Payment received for ${invoice.invoiceNumber} (${invoice.clientName})`,
-        amount: paymentAmount,
-        paymentMethod: payment.paymentMethod,
-        referenceNumber: payment.reference || `${invoice.invoiceNumber}-PAY`,
-        notes: payment.notes || `Invoice payment recorded by ${payment.recordedBy}`,
-        linkedInvoiceId: invoice.id,
-        createdBy: payment.recordedBy,
-      });
-    }
-
-    this.addLog(
-      payment.recordedBy,
-      'manager',
-      'Recorded Invoice Payment',
-      `Recorded payment of ${paymentAmount} on ${invoice.invoiceNumber}. New outstanding: ${newOutstanding}`,
-      'invoice'
-    );
-
-    return updatedInvoice;
   }
 
   static getSalaries(): SalaryRecord[] {

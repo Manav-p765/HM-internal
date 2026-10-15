@@ -7,9 +7,9 @@ import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
 import { Modal } from '../common/Modal';
 import { UsersPanel } from './UsersPanel';
+import { CompanySettingsPanel } from './CompanySettingsPanel';
 import {
   Settings as SettingsIcon,
-  Building2,
   ShieldCheck,
   Search,
   Filter,
@@ -24,22 +24,20 @@ import {
 } from 'lucide-react';
 import { formatDate, exportToCSV } from '../../utils/formatters';
 
-type SettingsTab = 'general' | 'audit' | 'users';
+type SettingsTab = 'company' | 'audit' | 'users';
 
 export const SettingsView: React.FC = () => {
   const {
-    settings,
-    updateSettings,
     currentUser,
     auditLogs,
     activityLogs,
     showToast,
   } = useApp();
 
-  // /settings/users is its own route; General and Audit Trail are tabs within /settings.
+  // /settings/users is its own route; Company and Audit Trail are tabs within /settings.
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const [localTab, setLocalTab] = useState<'general' | 'audit'>('general');
+  const [localTab, setLocalTab] = useState<'company' | 'audit'>('company');
   const activeTab: SettingsTab = pathname === '/settings/users' ? 'users' : localTab;
   const setActiveTab = (tab: SettingsTab) => {
     if (tab === 'users') {
@@ -50,24 +48,6 @@ export const SettingsView: React.FC = () => {
     if (pathname !== '/settings') navigate('/settings');
   };
 
-  // Form states
-  const [companyName, setCompanyName] = useState(settings.companyName);
-  const [companyEmail, setCompanyEmail] = useState(settings.companyEmail);
-  const [companyPhone, setCompanyPhone] = useState(settings.companyPhone);
-  const [companyAddress, setCompanyAddress] = useState(settings.companyAddress);
-  const [companyGstin, setCompanyGstin] = useState(settings.companyGstin || '');
-  const [defaultCurrency, setDefaultCurrency] = useState(settings.defaultCurrency);
-  const [financialYearStartMonth, setFinancialYearStartMonth] = useState(
-    settings.financialYearStartMonth
-  );
-  const [invoicePrefix, setInvoicePrefix] = useState(settings.invoicePrefix);
-  const [taxRatePercentage, setTaxRatePercentage] = useState(settings.taxRatePercentage);
-  const [companyTimezone, setCompanyTimezone] = useState(settings.companyTimezone || 'Asia/Kolkata');
-  const [workStartTime, setWorkStartTime] = useState(settings.workStartTime || '09:30');
-  const [workEndTime, setWorkEndTime] = useState(settings.workEndTime || '18:30');
-  const [expectedDailyHours, setExpectedDailyHours] = useState(settings.expectedDailyHours || 8.0);
-  const [weeklyWorkingDays, setWeeklyWorkingDays] = useState(settings.weeklyWorkingDays || 5);
-
   // Audit Logs inspection modal state
   const [selectedAuditLog, setSelectedAuditLog] = useState<AuditLog | null>(null);
 
@@ -75,28 +55,6 @@ export const SettingsView: React.FC = () => {
   const [auditSearch, setAuditSearch] = useState('');
   const [auditEntityFilter, setAuditEntityFilter] = useState<string>('all');
   const [auditActionFilter, setAuditActionFilter] = useState<string>('all');
-
-  const handleSaveCompany = (e: React.FormEvent) => {
-    e.preventDefault();
-    updateSettings({
-      ...settings,
-      companyName: companyName.trim(),
-      companyEmail: companyEmail.trim(),
-      companyPhone: companyPhone.trim(),
-      companyAddress: companyAddress.trim(),
-      companyGstin: companyGstin.trim(),
-      defaultCurrency,
-      financialYearStartMonth,
-      invoicePrefix: invoicePrefix.trim(),
-      taxRatePercentage: Number(taxRatePercentage) || 18,
-      companyTimezone,
-      workStartTime,
-      workEndTime,
-      expectedDailyHours: Number(expectedDailyHours) || 8.0,
-      weeklyWorkingDays: Number(weeklyWorkingDays) || 5,
-    });
-    showToast('success', 'Company profile and schedule policies updated successfully');
-  };
 
   // Filtered audit logs
   const filteredAuditLogs = useMemo(() => {
@@ -183,14 +141,14 @@ export const SettingsView: React.FC = () => {
         {/* Section Navigation Tabs */}
         <div className="flex items-center gap-1 p-1 bg-white border border-[#DFE6F1] rounded-lg shadow-xs self-start sm:self-auto">
           <button
-            onClick={() => setActiveTab('general')}
+            onClick={() => setActiveTab('company')}
             className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-              activeTab === 'general'
+              activeTab === 'company'
                 ? 'bg-[#5038F5] text-white shadow-xs'
                 : 'text-[#7185A5] hover:text-[#111827]'
             }`}
           >
-            General & Shifts
+            Company
           </button>
           <button
             onClick={() => setActiveTab('audit')}
@@ -223,213 +181,12 @@ export const SettingsView: React.FC = () => {
       </div>
 
       {/* ---------------------------------------------------- */}
-      {/* TAB 1: GENERAL & SHIFT SETTINGS */}
+      {/* TAB 1: COMPANY (server: /api/settings/company) */}
       {/* ---------------------------------------------------- */}
-      {activeTab === 'general' && (
+      {activeTab === 'company' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
-            <Card padding="md">
-              <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2 mb-4">
-                <Building2 className="w-4 h-4 text-[#5038F5]" />
-                Company Profile & Legal Details
-              </h3>
-
-              <form onSubmit={handleSaveCompany} className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-[#111827] mb-1">
-                      Company Name
-                    </label>
-                    <input
-                      type="text"
-                      value={companyName}
-                      onChange={e => setCompanyName(e.target.value)}
-                      className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-[#111827] mb-1">
-                      Company Email
-                    </label>
-                    <input
-                      type="email"
-                      value={companyEmail}
-                      onChange={e => setCompanyEmail(e.target.value)}
-                      className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-[#111827] mb-1">
-                      Support / Office Phone
-                    </label>
-                    <input
-                      type="text"
-                      value={companyPhone}
-                      onChange={e => setCompanyPhone(e.target.value)}
-                      className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-[#111827] mb-1">
-                      GSTIN / Tax Identification
-                    </label>
-                    <input
-                      type="text"
-                      value={companyGstin}
-                      onChange={e => setCompanyGstin(e.target.value)}
-                      className="w-full text-xs font-mono px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-[#111827] mb-1">
-                    Registered Office Address
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={companyAddress}
-                    onChange={e => setCompanyAddress(e.target.value)}
-                    className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                  />
-                </div>
-
-                {/* Accounting Parameters */}
-                <div className="pt-3 border-t border-[#DFE6F1]">
-                  <h4 className="text-xs font-bold text-[#111827] mb-3">
-                    Financial & Currency Rules
-                  </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
-                        Default Currency
-                      </label>
-                      <select
-                        value={defaultCurrency}
-                        onChange={e => setDefaultCurrency(e.target.value)}
-                        className="w-full text-xs px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                      >
-                        <option value="INR">INR (₹ - Indian Rupee)</option>
-                        <option value="USD">USD ($ - US Dollar)</option>
-                        <option value="EUR">EUR (€ - Euro)</option>
-                        <option value="GBP">GBP (£ - British Pound)</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
-                        FY Start Month
-                      </label>
-                      <select
-                        value={financialYearStartMonth}
-                        onChange={e => setFinancialYearStartMonth(Number(e.target.value))}
-                        className="w-full text-xs px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                      >
-                        <option value={4}>April (India FY)</option>
-                        <option value={1}>January (Calendar)</option>
-                        <option value={7}>July</option>
-                        <option value={10}>October</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
-                        Invoice Prefix
-                      </label>
-                      <input
-                        type="text"
-                        value={invoicePrefix}
-                        onChange={e => setInvoicePrefix(e.target.value)}
-                        className="w-full text-xs font-mono px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
-                        Default GST Tax (%)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        value={taxRatePercentage}
-                        onChange={e => setTaxRatePercentage(parseFloat(e.target.value) || 0)}
-                        className="w-full text-xs font-mono px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Work Hours & Attendance Configuration */}
-                <div className="pt-3 border-t border-[#DFE6F1]">
-                  <h4 className="text-xs font-bold text-[#111827] mb-3">
-                    Work Hours & Attendance Schedule
-                  </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
-                        Timezone
-                      </label>
-                      <select
-                        value={companyTimezone}
-                        onChange={e => setCompanyTimezone(e.target.value)}
-                        className="w-full text-xs px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                      >
-                        <option value="Asia/Kolkata">Asia/Kolkata (IST - UTC+5:30)</option>
-                        <option value="Europe/London">Europe/London (GMT/BST)</option>
-                        <option value="America/New_York">America/New_York (EST)</option>
-                        <option value="Asia/Dubai">Asia/Dubai (GST)</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
-                        Work Start Time
-                      </label>
-                      <input
-                        type="time"
-                        value={workStartTime}
-                        onChange={e => setWorkStartTime(e.target.value)}
-                        className="w-full text-xs font-mono px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
-                        Work End Time
-                      </label>
-                      <input
-                        type="time"
-                        value={workEndTime}
-                        onChange={e => setWorkEndTime(e.target.value)}
-                        className="w-full text-xs font-mono px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
-                        Daily Expected Hours
-                      </label>
-                      <input
-                        type="number"
-                        step="0.5"
-                        min="4"
-                        max="12"
-                        value={expectedDailyHours}
-                        onChange={e => setExpectedDailyHours(parseFloat(e.target.value) || 8)}
-                        className="w-full text-xs font-mono px-2.5 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex justify-end pt-2">
-                  <Button type="submit" variant="primary" size="md">
-                    Save Changes
-                  </Button>
-                </div>
-              </form>
-            </Card>
-
+            <CompanySettingsPanel />
           </div>
 
           {/* Right Column: Mini Audit Feed & Signed-in User */}

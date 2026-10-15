@@ -1,438 +1,356 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Invoice, InvoiceItem, InvoiceStatus } from '../../types';
+import { ApiError, errorMessage } from '../../api/client';
+import { invoicesApi, InvoiceInput } from '../../api/invoices';
+import { clientsApi } from '../../api/clients';
+import { settingsApi } from '../../api/settings';
+import { Client } from '../../types';
+import { Invoice } from '../../types/invoices';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
-import { Plus, Trash2 } from 'lucide-react';
-import { getNextInvoiceNumber, roundToTwoDecimals, formatCurrency } from '../../utils/formatters';
+import { FormField } from '../common/FormField';
+import { Lock, Plus, Trash2 } from 'lucide-react';
+import { formatMoney, previewTotals, trimRate } from '../../utils/money';
 
 interface InvoiceModalProps {
   isOpen: boolean;
+  invoiceId: string | null; // null = create
   onClose: () => void;
-  invoiceToEdit?: Invoice | null;
+  onSaved: (invoice: Invoice) => void;
 }
 
-export const InvoiceModal: React.FC<InvoiceModalProps> = ({
-  isOpen,
-  onClose,
-  invoiceToEdit,
-}) => {
-  const { invoices, addInvoice, updateInvoice, settings } = useApp();
+interface ItemRow {
+  key: string;
+  description: string;
+  quantity: string;
+  unitPrice: string;
+}
 
-  const [invoiceNumber, setInvoiceNumber] = useState('');
+const newRow = (): ItemRow => ({ key: Math.random().toString(36).slice(2), description: '', quantity: '1', unitPrice: '' });
+
+// Today in IST for the default dates (the server uses the same date when invoiceDate is omitted).
+const istToday = () => new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
+const addDays = (date: string, days: number) => {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+
+// Create / edit form. Drafts: everything. Sent invoices: only the due date and notes (the server enforces
+// this too; locked fields are shown read-only). Totals below are a labelled LIVE PREVIEW; the saved
+// invoice always shows the server's numbers.
+export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, invoiceId, onClose, onSaved }) => {
+  const { showToast } = useApp();
+  const [existing, setExisting] = useState<Invoice | null>(null);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [loadError, setLoadError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  const [clientId, setClientId] = useState('');
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
   const [clientAddress, setClientAddress] = useState('');
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [clientGstin, setClientGstin] = useState('');
+  const [invoiceDate, setInvoiceDate] = useState('');
   const [dueDate, setDueDate] = useState('');
-  const [taxRate, setTaxRate] = useState<number>(settings.taxRatePercentage || 18);
-  const [status, setStatus] = useState<InvoiceStatus>('Sent');
+  const [taxRate, setTaxRate] = useState('18');
   const [notes, setNotes] = useState('');
-  const [items, setItems] = useState<InvoiceItem[]>([
-    {
-      id: `item-${Date.now()}`,
-      description: 'Professional Services / Engineering Milestone',
-      quantity: 1,
-      unitPrice: 100000,
-      subtotal: 100000,
-    },
-  ]);
-  const [error, setError] = useState('');
+  const [items, setItems] = useState<ItemRow[]>([newRow()]);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+
+  const isSent = existing?.status === 'sent';
+  const locked = Boolean(existing && existing.status !== 'draft');
 
   useEffect(() => {
-    if (invoiceToEdit) {
-      setInvoiceNumber(invoiceToEdit.invoiceNumber);
-      setClientName(invoiceToEdit.clientName);
-      setClientEmail(invoiceToEdit.clientEmail || '');
-      setClientAddress(invoiceToEdit.clientAddress || '');
-      setInvoiceDate(invoiceToEdit.invoiceDate);
-      setDueDate(invoiceToEdit.dueDate);
-      setTaxRate(invoiceToEdit.taxRate);
-      setStatus(invoiceToEdit.status);
-      setNotes(invoiceToEdit.notes || '');
-      setItems(invoiceToEdit.items && invoiceToEdit.items.length > 0 ? invoiceToEdit.items : [
-        {
-          id: `item-${Date.now()}`,
-          description: '',
-          quantity: 1,
-          unitPrice: 0,
-          subtotal: 0,
-        },
-      ]);
-    } else {
-      // Auto-generate safe sequential number
-      const existing = invoices.map(i => i.invoiceNumber);
-      const nextNum = getNextInvoiceNumber(existing, settings.invoicePrefix || 'INV-2026-');
-      setInvoiceNumber(nextNum);
-      setClientName('');
-      setClientEmail('');
-      setClientAddress('');
-      const today = new Date();
-      setInvoiceDate(today.toISOString().split('T')[0]);
-      // Default due date: 15 days from now
-      const due = new Date();
-      due.setDate(today.getDate() + 15);
-      setDueDate(due.toISOString().split('T')[0]);
-      setTaxRate(settings.taxRatePercentage || 18);
-      setStatus('Sent');
-      setNotes('Payment terms: Net 15 days. Please transfer to Hybrid Monks Bank Account.');
-      setItems([
-        {
-          id: `item-${Date.now()}`,
-          description: 'Web Application Architecture & Development',
-          quantity: 1,
-          unitPrice: 150000,
-          subtotal: 150000,
-        },
-      ]);
+    if (!isOpen) return;
+    let cancelled = false;
+    setErrors({});
+    setFormError('');
+    setLoadError('');
+    setIsLoading(true);
+    const load = async () => {
+      try {
+        const [clientList, invoice, company] = await Promise.all([
+          clientsApi.list({ status: 'active', limit: 200 }).then(r => r.clients),
+          invoiceId ? invoicesApi.get(invoiceId).then(r => r.invoice) : Promise.resolve(null),
+          invoiceId ? Promise.resolve(null) : settingsApi.company(),
+        ]);
+        if (cancelled) return;
+        setClients(clientList);
+        setExisting(invoice);
+        if (invoice) {
+          setClientId(invoice.clientId ?? '');
+          setClientName(invoice.clientName);
+          setClientEmail(invoice.clientEmail ?? '');
+          setClientAddress(invoice.clientAddress ?? '');
+          setClientGstin(invoice.clientGstin ?? '');
+          setInvoiceDate(invoice.invoiceDate);
+          setDueDate(invoice.dueDate);
+          setTaxRate(trimRate(invoice.taxRate));
+          setNotes(invoice.notes ?? '');
+          setItems(invoice.items.map(i => ({ key: i.id, description: i.description, quantity: trimRate(i.quantity), unitPrice: i.unitPrice })));
+        } else {
+          const today = istToday();
+          setClientId('');
+          setClientName('');
+          setClientEmail('');
+          setClientAddress('');
+          setClientGstin('');
+          setInvoiceDate(today);
+          setDueDate(addDays(today, 15));
+          setTaxRate(trimRate(company!.defaultGstRate));
+          setNotes('');
+          setItems([newRow()]);
+        }
+      } catch (err) {
+        if (!cancelled) setLoadError(errorMessage(err));
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, invoiceId]);
+
+  // Picking a client prefills the snapshot; every field stays editable for this invoice.
+  const pickClient = (id: string) => {
+    setClientId(id);
+    const client = clients.find(c => c.id === id);
+    if (client) {
+      setClientName(client.companyName);
+      setClientEmail(client.contactEmail ?? '');
+      setClientAddress(client.address ?? '');
+      setClientGstin(client.gstin ?? '');
     }
-    setError('');
-  }, [invoiceToEdit, isOpen, invoices, settings]);
-
-  const handleItemChange = (index: number, field: keyof InvoiceItem, value: any) => {
-    const updated = [...items];
-    const item = { ...updated[index], [field]: value };
-    if (field === 'quantity' || field === 'unitPrice') {
-      const q = parseFloat(String(field === 'quantity' ? value : item.quantity)) || 0;
-      const p = parseFloat(String(field === 'unitPrice' ? value : item.unitPrice)) || 0;
-      item.subtotal = roundToTwoDecimals(q * p);
-    }
-    updated[index] = item;
-    setItems(updated);
   };
 
-  const handleAddItem = () => {
-    setItems([
-      ...items,
-      {
-        id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-        description: '',
-        quantity: 1,
-        unitPrice: 0,
-        subtotal: 0,
-      },
-    ]);
-  };
+  const preview = useMemo(() => previewTotals(items, taxRate), [items, taxRate]);
 
-  const handleRemoveItem = (index: number) => {
-    if (items.length === 1) return;
-    setItems(items.filter((_, i) => i !== index));
-  };
+  const updateItem = (index: number, field: keyof Omit<ItemRow, 'key'>, value: string) =>
+    setItems(rows => rows.map((row, i) => (i === index ? { ...row, [field]: value } : row)));
 
-  // Calculations
-  const subtotal = roundToTwoDecimals(
-    items.reduce((sum, item) => sum + (parseFloat(String(item.subtotal)) || 0), 0)
-  );
-  const taxAmount = roundToTwoDecimals((subtotal * taxRate) / 100);
-  const totalAmount = roundToTwoDecimals(subtotal + taxAmount);
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!invoiceNumber.trim()) {
-      setError('Invoice number is required');
-      return;
+    setErrors({});
+    setFormError('');
+    setIsSaving(true);
+    try {
+      let saved: Invoice;
+      if (existing && isSent) {
+        saved = await invoicesApi.update(existing.id, { dueDate, notes: notes.trim() || null });
+      } else {
+        const body: InvoiceInput = {
+          clientId: clientId || null,
+          clientName: clientName.trim(),
+          clientEmail: clientEmail.trim() || null,
+          clientAddress: clientAddress.trim() || null,
+          clientGstin: clientGstin.trim() || null,
+          invoiceDate,
+          dueDate,
+          taxRate: taxRate.trim(),
+          notes: notes.trim() || null,
+          items: items.map(i => ({ description: i.description.trim(), quantity: i.quantity.trim(), unitPrice: i.unitPrice.trim() })),
+        };
+        saved = existing ? await invoicesApi.update(existing.id, body) : await invoicesApi.create(body);
+      }
+      showToast('success', existing ? `Invoice ${saved.invoiceNumber} saved` : `Draft ${saved.invoiceNumber} created`);
+      onSaved(saved);
+    } catch (err) {
+      if (err instanceof ApiError && err.details?.length) {
+        setErrors(Object.fromEntries(err.details.map(d => [d.path || '_', d.message])));
+        setFormError(err.message);
+      } else {
+        setFormError(errorMessage(err));
+      }
+    } finally {
+      setIsSaving(false);
     }
-    if (!clientName.trim()) {
-      setError('Client name is required');
-      return;
-    }
-    if (!dueDate) {
-      setError('Due date is required');
-      return;
-    }
-    if (items.some(i => !i.description.trim() || i.quantity <= 0 || i.unitPrice < 0)) {
-      setError('All line items must have a valid description, quantity > 0, and unit price >= 0');
-      return;
-    }
-
-    if (invoiceToEdit) {
-      updateInvoice({
-        ...invoiceToEdit,
-        invoiceNumber: invoiceNumber.trim(),
-        clientName: clientName.trim(),
-        clientEmail: clientEmail.trim() || undefined,
-        clientAddress: clientAddress.trim() || undefined,
-        invoiceDate,
-        dueDate,
-        items,
-        subtotal,
-        taxRate,
-        taxAmount,
-        totalAmount,
-        status,
-        notes: notes.trim() || undefined,
-      });
-    } else {
-      addInvoice({
-        invoiceNumber: invoiceNumber.trim(),
-        clientName: clientName.trim(),
-        clientEmail: clientEmail.trim() || undefined,
-        clientAddress: clientAddress.trim() || undefined,
-        invoiceDate,
-        dueDate,
-        items,
-        subtotal,
-        taxRate,
-        taxAmount,
-        totalAmount,
-        status,
-        notes: notes.trim() || undefined,
-      });
-    }
-
-    onClose();
   };
+
+  const input = 'w-full min-w-0 text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5] disabled:bg-[#F7F9FC] disabled:text-[#7185A5]';
+  const title = !invoiceId ? 'Create Invoice (Draft)' : existing ? `Edit ${existing.invoiceNumber}` : 'Edit Invoice';
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title={invoiceToEdit ? 'Edit Invoice' : 'Create New Invoice'}
-      description="Issue a client invoice with automated calculations and GST tax"
-      maxWidth="2xl"
-    >
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {error && (
-          <div className="p-3 text-xs bg-[#E11D48]/10 border border-[#E11D48]/20 text-[#E11D48] rounded-lg">
-            {error}
-          </div>
-        )}
-
-        {/* Invoice Header Details */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div>
-            <label className="block text-xs font-semibold text-[#111827] mb-1">
-              Invoice Number *
-            </label>
-            <input
-              type="text"
-              value={invoiceNumber}
-              onChange={e => setInvoiceNumber(e.target.value)}
-              className="w-full text-xs font-mono font-medium px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-[#111827] mb-1">
-              Invoice Date *
-            </label>
-            <input
-              type="date"
-              value={invoiceDate}
-              onChange={e => setInvoiceDate(e.target.value)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-[#111827] mb-1">
-              Due Date *
-            </label>
-            <input
-              type="date"
-              value={dueDate}
-              onChange={e => setDueDate(e.target.value)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-              required
-            />
-          </div>
+    <Modal isOpen={isOpen} onClose={onClose} title={title} description="The number and all totals are assigned by the server when you save." maxWidth="2xl">
+      {loadError ? (
+        <div className="p-3 text-xs bg-[#E11D48]/10 border border-[#E11D48]/20 text-[#E11D48] rounded-lg">{loadError}</div>
+      ) : isLoading ? (
+        <div className="py-10 text-center text-xs text-[#7185A5]">Loading…</div>
+      ) : existing && existing.status !== 'draft' && existing.status !== 'sent' ? (
+        <div className="p-3 text-xs bg-[#F7F9FC] border border-[#DFE6F1] text-[#475569] rounded-lg">
+          This invoice is {existing.status} and can no longer be edited.
         </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+          {formError && (
+            <div className="p-3 text-xs bg-[#E11D48]/10 border border-[#E11D48]/20 text-[#E11D48] rounded-lg" role="alert">
+              {formError}
+            </div>
+          )}
+          {locked && (
+            <div className="p-3 text-xs bg-[#5038F5]/5 border border-[#5038F5]/20 text-[#3F2BC9] rounded-lg flex items-start gap-2" data-testid="sent-lock-notice">
+              <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>This invoice has been sent: its number, client, lines and totals are locked. Only the due date and notes can change.</span>
+            </div>
+          )}
 
-        {/* Client Details */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-semibold text-[#111827] mb-1">
-              Client / Company Name *
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. Acme Corp"
-              value={clientName}
-              onChange={e => setClientName(e.target.value)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-              required
-            />
+          <FormField label="Client" error={errors.clientId}>
+            <select value={clientId} onChange={e => pickClient(e.target.value)} className={input} disabled={locked} aria-label="Client">
+              <option value="">Manual entry (no client record)</option>
+              {clients.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.companyName}
+                </option>
+              ))}
+            </select>
+          </FormField>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <FormField label="Bill to (name)" required error={errors.clientName}>
+              <input value={clientName} onChange={e => setClientName(e.target.value)} className={input} disabled={locked} aria-label="Bill to name" />
+            </FormField>
+            <FormField label="Billing email" error={errors.clientEmail}>
+              <input type="email" value={clientEmail} onChange={e => setClientEmail(e.target.value)} className={input} disabled={locked} aria-label="Billing email" />
+            </FormField>
+            <FormField label="Billing address" error={errors.clientAddress}>
+              <textarea rows={2} value={clientAddress} onChange={e => setClientAddress(e.target.value)} className={input} disabled={locked} aria-label="Billing address" />
+            </FormField>
+            <FormField label="Client GSTIN" error={errors.clientGstin}>
+              <input value={clientGstin} onChange={e => setClientGstin(e.target.value)} className={`${input} font-mono`} disabled={locked} aria-label="Client GSTIN" />
+            </FormField>
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-[#111827] mb-1">
-              Client Billing Email
-            </label>
-            <input
-              type="email"
-              placeholder="billing@acmecorp.com"
-              value={clientEmail}
-              onChange={e => setClientEmail(e.target.value)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-            />
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <FormField label="Invoice date" required error={errors.invoiceDate}>
+              <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} className={input} disabled={locked} aria-label="Invoice date" />
+            </FormField>
+            <FormField label="Due date" required error={errors.dueDate}>
+              <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={input} aria-label="Due date" />
+            </FormField>
+            <FormField label="GST rate (%)" error={errors.taxRate}>
+              <input inputMode="decimal" value={taxRate} onChange={e => setTaxRate(e.target.value)} className={`${input} font-mono`} disabled={locked} aria-label="GST rate" />
+            </FormField>
           </div>
-        </div>
 
-        <div>
-          <label className="block text-xs font-semibold text-[#111827] mb-1">
-            Client Billing Address (Optional)
-          </label>
-          <input
-            type="text"
-            placeholder="Address, City, State, Country"
-            value={clientAddress}
-            onChange={e => setClientAddress(e.target.value)}
-            className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-          />
-        </div>
+          {/* Line items */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-[#111827]">Line items ({items.length})</span>
+              {!locked && (
+                <Button type="button" variant="outline" size="sm" icon={<Plus className="w-3.5 h-3.5" />} onClick={() => setItems(rows => [...rows, newRow()])} disabled={items.length >= 100}>
+                  Add line
+                </Button>
+              )}
+            </div>
+            {errors.items && <p className="text-[11px] text-[#E11D48] font-medium mb-1">{errors.items}</p>}
+            <div className="space-y-2 border border-[#DFE6F1] rounded-lg p-2.5 bg-[#F7F9FC]/50 max-h-72 overflow-y-auto">
+              {items.map((item, idx) => {
+                const err = (f: string) => errors[`items.${idx}.${f}`];
+                return (
+                  <div key={item.key} className="grid grid-cols-12 gap-2 items-start bg-white p-2 rounded-md border border-[#DFE6F1]" data-testid="invoice-line">
+                    <div className="col-span-12 sm:col-span-6">
+                      <input
+                        placeholder="Description"
+                        value={item.description}
+                        onChange={e => updateItem(idx, 'description', e.target.value)}
+                        className={input}
+                        disabled={locked}
+                        aria-label={`Line ${idx + 1} description`}
+                      />
+                      {err('description') && <p className="text-[11px] text-[#E11D48] mt-0.5">{err('description')}</p>}
+                    </div>
+                    <div className="col-span-4 sm:col-span-2">
+                      <input
+                        inputMode="decimal"
+                        placeholder="Qty"
+                        value={item.quantity}
+                        onChange={e => updateItem(idx, 'quantity', e.target.value)}
+                        className={`${input} font-mono`}
+                        disabled={locked}
+                        aria-label={`Line ${idx + 1} quantity`}
+                      />
+                      {err('quantity') && <p className="text-[11px] text-[#E11D48] mt-0.5">{err('quantity')}</p>}
+                    </div>
+                    <div className="col-span-5 sm:col-span-2">
+                      <input
+                        inputMode="decimal"
+                        placeholder="Unit price"
+                        value={item.unitPrice}
+                        onChange={e => updateItem(idx, 'unitPrice', e.target.value)}
+                        className={`${input} font-mono`}
+                        disabled={locked}
+                        aria-label={`Line ${idx + 1} unit price`}
+                      />
+                      {err('unitPrice') && <p className="text-[11px] text-[#E11D48] mt-0.5">{err('unitPrice')}</p>}
+                    </div>
+                    <div className="col-span-2 sm:col-span-1 pt-2 text-right text-[11px] font-mono text-[#475569] truncate" title="Preview">
+                      {preview.lineTotals[idx] !== null ? formatMoney(preview.lineTotals[idx]) : '—'}
+                    </div>
+                    <div className="col-span-1 pt-1 text-right">
+                      {!locked && (
+                        <button
+                          type="button"
+                          onClick={() => setItems(rows => rows.filter((_, i) => i !== idx))}
+                          disabled={items.length === 1}
+                          className="p-1 text-[#7185A5] hover:text-[#E11D48] disabled:opacity-30 rounded cursor-pointer"
+                          aria-label={`Remove line ${idx + 1}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
 
-        {/* Line Items */}
-        <div className="pt-2">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-[#111827]">
-              Line Items ({items.length})
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              icon={<Plus className="w-3.5 h-3.5" />}
-              onClick={handleAddItem}
-            >
-              Add Item
+          {/* Totals: live preview while editing a draft; the server's numbers for a sent invoice */}
+          <div className="bg-[#F7F9FC] border border-[#DFE6F1] rounded-lg p-3.5 text-xs" data-testid="totals-preview">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-[#7185A5]">
+                {locked ? 'Totals (saved)' : 'Live preview · final totals are calculated by the server on save'}
+              </span>
+            </div>
+            {(() => {
+              const t = locked && existing ? { subtotal: existing.subtotal, taxAmount: existing.taxAmount, total: existing.total } : preview;
+              return (
+                <div className="space-y-1 sm:w-72 sm:ml-auto">
+                  <div className="flex justify-between text-[#7185A5]">
+                    <span>Subtotal</span>
+                    <span className="font-mono text-[#111827]">{formatMoney(t.subtotal)}</span>
+                  </div>
+                  <div className="flex justify-between text-[#7185A5]">
+                    <span>GST ({taxRate || 0}%)</span>
+                    <span className="font-mono text-[#111827]">{formatMoney(t.taxAmount)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm font-bold text-[#111827] pt-1 border-t border-[#DFE6F1]">
+                    <span>Total</span>
+                    <span className="font-mono text-[#5038F5]">{formatMoney(t.total)}</span>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          <FormField label="Notes" error={errors.notes} hint="Shown on the invoice (e.g. PO number or milestone).">
+            <textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} className={input} aria-label="Notes" />
+          </FormField>
+
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#DFE6F1]">
+            <Button type="button" variant="outline" size="md" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" size="md" disabled={isSaving}>
+              {isSaving ? 'Saving…' : existing ? 'Save changes' : 'Create draft'}
             </Button>
           </div>
-
-          <div className="space-y-2 border border-[#DFE6F1] rounded-lg p-2.5 bg-[#F7F9FC]/50 max-h-56 overflow-y-auto">
-            {items.map((item, idx) => (
-              <div
-                key={item.id}
-                className="grid grid-cols-12 gap-2 items-center bg-white p-2 rounded-md border border-[#DFE6F1]"
-              >
-                <div className="col-span-12 sm:col-span-6">
-                  <input
-                    type="text"
-                    placeholder="Item description / deliverables"
-                    value={item.description}
-                    onChange={e => handleItemChange(idx, 'description', e.target.value)}
-                    className="w-full text-xs px-2.5 py-1.5 bg-white rounded border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                    required
-                  />
-                </div>
-                <div className="col-span-4 sm:col-span-2">
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    placeholder="Qty"
-                    value={item.quantity}
-                    onChange={e => handleItemChange(idx, 'quantity', e.target.value)}
-                    className="w-full text-xs font-mono px-2 py-1.5 bg-white rounded border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                    required
-                  />
-                </div>
-                <div className="col-span-4 sm:col-span-2">
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    placeholder="Unit Price"
-                    value={item.unitPrice}
-                    onChange={e => handleItemChange(idx, 'unitPrice', e.target.value)}
-                    className="w-full text-xs font-mono px-2 py-1.5 bg-white rounded border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                    required
-                  />
-                </div>
-                <div className="col-span-3 sm:col-span-1 text-right text-xs font-mono font-medium text-[#111827] truncate">
-                  {formatCurrency(item.subtotal, settings.defaultCurrency)}
-                </div>
-                <div className="col-span-1 sm:col-span-1 text-right">
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveItem(idx)}
-                    disabled={items.length === 1}
-                    className="p-1 text-[#7185A5] hover:text-[#E11D48] disabled:opacity-30 disabled:hover:text-[#7185A5] rounded cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Financial Summary & Tax */}
-        <div className="bg-[#F7F9FC] border border-[#DFE6F1] rounded-lg p-3.5 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div>
-              <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
-                GST / Tax Rate (%)
-              </label>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                value={taxRate}
-                onChange={e => setTaxRate(parseFloat(e.target.value) || 0)}
-                className="w-20 text-xs font-mono px-2 py-1 bg-white rounded border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] font-semibold text-[#7185A5] mb-1">
-                Status
-              </label>
-              <select
-                value={status}
-                onChange={e => setStatus(e.target.value as InvoiceStatus)}
-                className="text-xs px-2 py-1 bg-white rounded border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-              >
-                <option value="Draft">Draft</option>
-                <option value="Sent">Sent</option>
-                <option value="Cancelled">Cancelled</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="w-full sm:w-auto text-right space-y-1 text-xs">
-            <div className="flex justify-between sm:justify-end gap-6 text-[#7185A5]">
-              <span>Subtotal:</span>
-              <span className="font-mono font-medium text-[#111827]">
-                {formatCurrency(subtotal, settings.defaultCurrency)}
-              </span>
-            </div>
-            <div className="flex justify-between sm:justify-end gap-6 text-[#7185A5]">
-              <span>Tax ({taxRate}%):</span>
-              <span className="font-mono font-medium text-[#111827]">
-                {formatCurrency(taxAmount, settings.defaultCurrency)}
-              </span>
-            </div>
-            <div className="flex justify-between sm:justify-end gap-6 text-sm font-bold text-[#111827] pt-1 border-t border-[#DFE6F1]">
-              <span>Total Payable:</span>
-              <span className="font-mono text-[#5038F5]">
-                {formatCurrency(totalAmount, settings.defaultCurrency)}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Notes */}
-        <div>
-          <label className="block text-xs font-semibold text-[#111827] mb-1">
-            Invoice Notes / Bank Instructions
-          </label>
-          <input
-            type="text"
-            placeholder="Payment terms, bank details, or milestones"
-            value={notes}
-            onChange={e => setNotes(e.target.value)}
-            className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-          />
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#DFE6F1]">
-          <Button type="button" variant="outline" size="md" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" size="md">
-            {invoiceToEdit ? 'Save Invoice' : 'Create Invoice'}
-          </Button>
-        </div>
-      </form>
+        </form>
+      )}
     </Modal>
   );
 };

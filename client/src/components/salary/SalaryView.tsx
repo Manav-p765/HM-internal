@@ -20,6 +20,8 @@ import {
   Download,
 } from 'lucide-react';
 import { formatCurrency, formatDate, formatMonthYear, exportToCSV } from '../../utils/formatters';
+import { CURRENCY } from '../../utils/money';
+import { COMPANY_BRAND } from '../../utils/company';
 
 const PAYMENT_METHODS: PaymentMethod[] = [
   'Bank Transfer',
@@ -36,7 +38,6 @@ export const SalaryView: React.FC = () => {
     updateSalaryRecord,
     markSalaryPaid,
     publishSalarySlip,
-    settings,
     currentUser,
   } = useApp();
 
@@ -143,9 +144,9 @@ export const SalaryView: React.FC = () => {
       'Employee Name',
       'Department',
       'Salary Month',
-      `Base Salary (${settings.defaultCurrency})`,
-      `Adjustments (${settings.defaultCurrency})`,
-      `Final Payable (${settings.defaultCurrency})`,
+      `Base Salary (${CURRENCY})`,
+      `Adjustments (${CURRENCY})`,
+      `Final Payable (${CURRENCY})`,
       'Status',
       'Disbursement Date',
       'Payment Method',
@@ -169,7 +170,7 @@ export const SalaryView: React.FC = () => {
       s.notes || '',
     ]);
 
-    exportToCSV(`salary_payroll_${selectedMonth}_${settings.companyName.toLowerCase().replace(/\s+/g, '_')}`, headers, rows);
+    exportToCSV(`salary_payroll_${selectedMonth}_${COMPANY_BRAND.toLowerCase().replace(/\s+/g, '_')}`, headers, rows);
   };
 
   return (
@@ -260,7 +261,7 @@ export const SalaryView: React.FC = () => {
           </span>
           <div className="mt-2 flex items-baseline justify-between">
             <span className="text-2xl font-mono font-bold text-[#111827]">
-              {formatCurrency(totalMonthPayable, settings.defaultCurrency)}
+              {formatCurrency(totalMonthPayable, CURRENCY)}
             </span>
             <span className="text-xs text-[#7185A5]">
               {filteredSalaries.length} records
@@ -274,7 +275,7 @@ export const SalaryView: React.FC = () => {
           </span>
           <div className="mt-2 flex items-baseline justify-between">
             <span className="text-2xl font-mono font-bold text-[#047857]">
-              {formatCurrency(totalMonthPaid, settings.defaultCurrency)}
+              {formatCurrency(totalMonthPaid, CURRENCY)}
             </span>
             <span className="text-xs text-[#047857] font-medium">
               {filteredSalaries.filter(s => s.status === 'Paid').length} paid
@@ -288,7 +289,7 @@ export const SalaryView: React.FC = () => {
           </span>
           <div className="mt-2 flex items-baseline justify-between">
             <span className="text-2xl font-mono font-bold text-[#B45309]">
-              {formatCurrency(totalMonthPending, settings.defaultCurrency)}
+              {formatCurrency(totalMonthPending, CURRENCY)}
             </span>
             <span className="text-xs text-[#B45309] font-medium">
               {filteredSalaries.filter(s => s.status === 'Pending').length} pending
@@ -338,23 +339,23 @@ export const SalaryView: React.FC = () => {
                       {sal.department}
                     </td>
                     <td className="py-3 px-4 text-right font-mono text-[#7185A5] whitespace-nowrap">
-                      {formatCurrency(sal.baseSalary, settings.defaultCurrency)}
+                      {formatCurrency(sal.baseSalary, CURRENCY)}
                     </td>
                     <td className="py-3 px-4 text-right font-mono whitespace-nowrap">
                       {sal.adjustments > 0 ? (
                         <span className="text-[#047857]">
-                          +{formatCurrency(sal.adjustments, settings.defaultCurrency)}
+                          +{formatCurrency(sal.adjustments, CURRENCY)}
                         </span>
                       ) : sal.adjustments < 0 ? (
                         <span className="text-[#E11D48]">
-                          {formatCurrency(sal.adjustments, settings.defaultCurrency)}
+                          {formatCurrency(sal.adjustments, CURRENCY)}
                         </span>
                       ) : (
                         <span className="text-[#7185A5]">₹0</span>
                       )}
                     </td>
                     <td className="py-3 px-4 text-right font-mono font-bold text-[#111827] whitespace-nowrap">
-                      {formatCurrency(sal.finalPayableAmount, settings.defaultCurrency)}
+                      {formatCurrency(sal.finalPayableAmount, CURRENCY)}
                     </td>
                     <td className="py-3 px-4 text-center whitespace-nowrap">
                       <Badge variant={sal.status === 'Paid' ? 'success' : 'warning'}>
@@ -426,7 +427,7 @@ export const SalaryView: React.FC = () => {
               <div>
                 <span className="text-[#7185A5] block">Current Base Salary</span>
                 <span className="font-mono font-bold text-[#111827]">
-                  {formatCurrency(salaryToEdit.baseSalary, settings.defaultCurrency)}
+                  {formatCurrency(salaryToEdit.baseSalary, CURRENCY)}
                 </span>
               </div>
               <div>
@@ -434,7 +435,7 @@ export const SalaryView: React.FC = () => {
                 <span className="font-mono font-bold text-[#5038F5]">
                   {formatCurrency(
                     salaryToEdit.baseSalary + (parseFloat(editAdjustments) || 0),
-                    settings.defaultCurrency
+                    CURRENCY
                   )}
                 </span>
               </div>
@@ -442,7 +443,7 @@ export const SalaryView: React.FC = () => {
 
             <div>
               <label className="block text-xs font-semibold text-[#111827] mb-1">
-                Adjustments / Bonus / Deductions ({settings.defaultCurrency})
+                Adjustments / Bonus / Deductions ({CURRENCY})
               </label>
               <input
                 type="number"
@@ -487,7 +488,7 @@ export const SalaryView: React.FC = () => {
         isOpen={!!salaryToPay}
         onClose={() => setSalaryToPay(null)}
         title="Disburse Salary & Create Linked Expense"
-        description={`Paying: ${salaryToPay?.employeeName} · Payable: ${formatCurrency(salaryToPay?.finalPayableAmount || 0, settings.defaultCurrency)}`}
+        description={`Paying: ${salaryToPay?.employeeName} · Payable: ${formatCurrency(salaryToPay?.finalPayableAmount || 0, CURRENCY)}`}
         maxWidth="md"
       >
         {salaryToPay && (

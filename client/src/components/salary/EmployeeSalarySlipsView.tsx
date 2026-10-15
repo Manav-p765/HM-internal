@@ -16,9 +16,11 @@ import {
   Building,
 } from 'lucide-react';
 import { formatCurrency, formatDate, formatMonthYear } from '../../utils/formatters';
+import { CURRENCY } from '../../utils/money';
+import { COMPANY_BRAND } from '../../utils/company';
 
 export const EmployeeSalarySlipsView: React.FC = () => {
-  const { mySalarySlips, settings, currentUser } = useApp();
+  const { mySalarySlips, currentUser } = useApp();
 
   const [selectedSlip, setSelectedSlip] = useState<SalarySlip | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
@@ -112,10 +114,10 @@ export const EmployeeSalarySlipsView: React.FC = () => {
                       {formatDate(slip.issueDate)}
                     </td>
                     <td className="py-3 px-4 text-right font-mono text-[#7185A5] whitespace-nowrap">
-                      {formatCurrency(slip.basicSalary, settings.defaultCurrency)}
+                      {formatCurrency(slip.basicSalary, CURRENCY)}
                     </td>
                     <td className="py-3 px-4 text-right font-mono font-bold text-[#047857] whitespace-nowrap text-sm">
-                      {formatCurrency(slip.netPayable, settings.defaultCurrency)}
+                      {formatCurrency(slip.netPayable, CURRENCY)}
                     </td>
                     <td className="py-3 px-4 text-center whitespace-nowrap">
                       <Badge variant={slip.paymentStatus === 'Paid' ? 'success' : 'warning'}>
@@ -183,11 +185,9 @@ export const EmployeeSalarySlipsView: React.FC = () => {
                       M
                     </div>
                     <span className="text-lg font-bold text-[#111827]">
-                      {settings.companyName}
+                      {COMPANY_BRAND}
                     </span>
                   </div>
-                  <p className="text-xs text-[#7185A5] max-w-xs">{settings.companyAddress}</p>
-                  <p className="text-xs text-[#7185A5]">{settings.companyEmail}</p>
                 </div>
 
                 <div className="sm:text-right">
@@ -234,14 +234,14 @@ export const EmployeeSalarySlipsView: React.FC = () => {
                     <div className="flex justify-between text-[#475569]">
                       <span>Basic Salary</span>
                       <span className="font-mono font-medium text-[#111827]">
-                        {formatCurrency(selectedSlip.basicSalary, settings.defaultCurrency)}
+                        {formatCurrency(selectedSlip.basicSalary, CURRENCY)}
                       </span>
                     </div>
                     {selectedSlip.allowances.map((a, i) => (
                       <div key={i} className="flex justify-between text-[#475569]">
                         <span>{a.title}</span>
                         <span className="font-mono font-medium text-[#111827]">
-                          {formatCurrency(a.amount, settings.defaultCurrency)}
+                          {formatCurrency(a.amount, CURRENCY)}
                         </span>
                       </div>
                     ))}
@@ -258,7 +258,7 @@ export const EmployeeSalarySlipsView: React.FC = () => {
                       <div key={i} className="flex justify-between text-[#475569]">
                         <span>{d.title}</span>
                         <span className="font-mono font-medium text-[#E11D48]">
-                          -{formatCurrency(d.amount, settings.defaultCurrency)}
+                          -{formatCurrency(d.amount, CURRENCY)}
                         </span>
                       </div>
                     ))}
@@ -280,7 +280,7 @@ export const EmployeeSalarySlipsView: React.FC = () => {
                   </span>
                 </div>
                 <span className="text-2xl font-mono font-bold text-[#047857]">
-                  {formatCurrency(selectedSlip.netPayable, settings.defaultCurrency)}
+                  {formatCurrency(selectedSlip.netPayable, CURRENCY)}
                 </span>
               </div>
 
@@ -288,7 +288,7 @@ export const EmployeeSalarySlipsView: React.FC = () => {
               <div className="pt-4 border-t border-[#DFE6F1] flex justify-between items-end text-xs text-[#7185A5]">
                 <div>
                   <span className="block">Computer generated document.</span>
-                  <span>Issued by {settings.companyName} Accounts & Payroll Division.</span>
+                  <span>Issued by {COMPANY_BRAND} Accounts & Payroll Division.</span>
                 </div>
                 <div className="text-right">
                   <span className="font-semibold text-[#111827] block">Authorized Signatory</span>

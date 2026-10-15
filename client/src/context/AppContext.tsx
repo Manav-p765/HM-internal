@@ -1,9 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import {
-  CompanySettings,
   Employee,
-  Invoice,
-  InvoicePayment,
   SalaryRecord,
   SalarySlip,
   Transaction,
@@ -28,22 +25,13 @@ interface AppContextType {
   // Signed-in user (from the server session via AuthContext, mapped to the shape the views use)
   currentUser: UserProfile;
 
-  // Settings
-  settings: CompanySettings;
-  updateSettings: (newSettings: CompanySettings) => void;
-
   // Transactions & Accounting
   transactions: Transaction[];
   addTransaction: (txn: Omit<Transaction, 'id' | 'createdAt'>) => Transaction;
   updateTransaction: (txn: Transaction) => void;
   deleteTransaction: (id: string) => void;
 
-  // Invoices
-  invoices: Invoice[];
-  addInvoice: (inv: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt' | 'amountPaid' | 'outstandingAmount' | 'payments'>) => Invoice;
-  updateInvoice: (inv: Invoice) => void;
-  deleteInvoice: (id: string) => void;
-  recordInvoicePayment: (invoiceId: string, payment: Omit<InvoicePayment, 'id' | 'createdAt'>, createLinkedTxn?: boolean) => boolean;
+  // Invoices and company settings live on the server (api/invoices.ts, api/settings.ts); pages fetch them.
 
   // Salaries & Payroll
   salaries: SalaryRecord[];
@@ -67,8 +55,6 @@ interface AppContextType {
   // Quick Action Modals
   isAddTransactionOpen: boolean;
   setIsAddTransactionOpen: (open: boolean) => void;
-  isAddInvoiceOpen: boolean;
-  setIsAddInvoiceOpen: (open: boolean) => void;
   isAddEmployeeOpen: boolean;
   setIsAddEmployeeOpen: (open: boolean) => void;
 }
@@ -82,9 +68,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     throw new Error('AppProvider requires a signed-in user');
   }
 
-  const [settings, setSettingsState] = useState<CompanySettings>(StorageService.getSettings());
   const [transactions, setTransactions] = useState<Transaction[]>(StorageService.getTransactions());
-  const [invoices, setInvoices] = useState<Invoice[]>(StorageService.getInvoices());
   const [salaries, setSalaries] = useState<SalaryRecord[]>(StorageService.getSalaries());
   const [salarySlips, setSalarySlips] = useState<SalarySlip[]>(StorageService.getSalarySlips());
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(StorageService.getActivityLogs());
@@ -93,13 +77,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Quick Action Modal states
   const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(false);
-  const [isAddInvoiceOpen, setIsAddInvoiceOpen] = useState(false);
   const [isAddEmployeeOpen, setIsAddEmployeeOpen] = useState(false);
 
   const refreshData = () => {
-    setSettingsState(StorageService.getSettings());
     setTransactions(StorageService.getTransactions());
-    setInvoices(StorageService.getInvoices());
     setSalaries(StorageService.getSalaries());
     setSalarySlips(StorageService.getSalarySlips());
     setActivityLogs(StorageService.getActivityLogs());
@@ -159,13 +140,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return salarySlips.filter(s => s.employeeId === currentUser.employeeId && s.isPublished);
   }, [currentUser.employeeId, salarySlips]);
 
-  // Existing methods preserved exactly
-  const updateSettings = (newSettings: CompanySettings) => {
-    StorageService.saveSettings(newSettings);
-    setSettingsState(newSettings);
-    showToast('success', 'Company settings updated successfully');
-  };
-
   const addTransaction = (txn: Omit<Transaction, 'id' | 'createdAt'>): Transaction => {
     const created = StorageService.addTransaction(txn);
     refreshData();
@@ -183,40 +157,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     StorageService.deleteTransaction(id);
     refreshData();
     showToast('info', 'Transaction deleted');
-  };
-
-  const addInvoice = (inv: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt' | 'amountPaid' | 'outstandingAmount' | 'payments'>): Invoice => {
-    const created = StorageService.addInvoice(inv);
-    refreshData();
-    showToast('success', `Invoice ${created.invoiceNumber} created`);
-    return created;
-  };
-
-  const updateInvoice = (inv: Invoice) => {
-    StorageService.updateInvoice(inv);
-    refreshData();
-    showToast('success', `Invoice ${inv.invoiceNumber} updated`);
-  };
-
-  const deleteInvoice = (id: string) => {
-    StorageService.deleteInvoice(id);
-    refreshData();
-    showToast('info', 'Invoice deleted');
-  };
-
-  const recordInvoicePayment = (
-    invoiceId: string,
-    payment: Omit<InvoicePayment, 'id' | 'createdAt'>,
-    createLinkedTxn: boolean = true
-  ): boolean => {
-    const updated = StorageService.recordInvoicePayment(invoiceId, payment, createLinkedTxn);
-    if (updated) {
-      refreshData();
-      showToast('success', `Payment of ₹${payment.amount.toLocaleString('en-IN')} recorded on ${updated.invoiceNumber}`);
-      return true;
-    }
-    showToast('error', 'Failed to record invoice payment');
-    return false;
   };
 
   // Salary records are still local; the employee list (with salaries, admin only) comes from the API.
@@ -275,17 +215,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     <AppContext.Provider
       value={{
         currentUser,
-        settings,
-        updateSettings,
         transactions,
         addTransaction,
         updateTransaction,
         deleteTransaction,
-        invoices,
-        addInvoice,
-        updateInvoice,
-        deleteInvoice,
-        recordInvoicePayment,
         salaries,
         generateMonthlySalaries,
         updateSalaryRecord,
@@ -301,8 +234,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         dismissToast,
         isAddTransactionOpen,
         setIsAddTransactionOpen,
-        isAddInvoiceOpen,
-        setIsAddInvoiceOpen,
         isAddEmployeeOpen,
         setIsAddEmployeeOpen,
       }}

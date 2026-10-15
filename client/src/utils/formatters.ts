@@ -57,21 +57,6 @@ export function formatMonthYear(monthStr: string): string {
   }
 }
 
-export function getNextInvoiceNumber(existingNumbers: string[], prefix: string = 'INV-2026-'): string {
-  let highestSeq = 0;
-  for (const num of existingNumbers) {
-    if (num && num.startsWith(prefix)) {
-      const remainder = num.slice(prefix.length);
-      const parsed = parseInt(remainder, 10);
-      if (!isNaN(parsed) && parsed > highestSeq) {
-        highestSeq = parsed;
-      }
-    }
-  }
-  const nextSeq = highestSeq + 1;
-  return `${prefix}${String(nextSeq).padStart(3, '0')}`;
-}
-
 export function exportToCSV(filename: string, headers: string[], rows: (string | number | undefined)[][]): void {
   const escapeValue = (val: string | number | undefined): string => {
     if (val === undefined || val === null) return '""';

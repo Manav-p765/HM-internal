@@ -1,285 +1,225 @@
-import React, { useState, useMemo } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import React, { useEffect, useState } from 'react';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useApp } from '../../context/AppContext';
-import { Invoice, InvoiceStatus } from '../../types';
+import { invoicesApi } from '../../api/invoices';
+import { useApiData } from '../../api/useApiData';
+import { errorMessage } from '../../api/client';
+import { InvoiceListStatus, InvoiceSummaryRow, INVOICE_STATUS_LABEL } from '../../types/invoices';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
-import { Badge } from '../common/Badge';
 import { EmptyState } from '../common/EmptyState';
+import { LoadError } from '../common/LoadError';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { InvoiceModal } from './InvoiceModal';
 import { InvoiceDetailModal } from './InvoiceDetailModal';
-import { RecordPaymentModal } from './RecordPaymentModal';
-import {
-  FileText,
-  Plus,
-  Download,
-  Search,
-  Filter,
-  Eye,
-  CreditCard,
-  Edit2,
-  Trash2,
-  AlertCircle,
-  CheckCircle2,
-  Clock,
-  Printer,
-} from 'lucide-react';
-import { formatCurrency, formatDate, exportToCSV } from '../../utils/formatters';
+import { InvoiceStatusBadge } from './InvoiceStatusBadge';
+import { FileText, Plus, Download, Search, Eye, Edit2, Trash2, Printer } from 'lucide-react';
+import { formatDate, exportToCSV } from '../../utils/formatters';
+import { formatMoney } from '../../utils/money';
 
+const PAGE_SIZE = 25;
+
+const STATUS_FILTERS: { value: '' | InvoiceListStatus; label: string }[] = [
+  { value: '', label: 'All Statuses' },
+  { value: 'draft', label: INVOICE_STATUS_LABEL.draft },
+  { value: 'sent', label: INVOICE_STATUS_LABEL.sent },
+  { value: 'outstanding', label: 'Outstanding (sent, unpaid)' },
+  { value: 'partially_paid', label: INVOICE_STATUS_LABEL.partially_paid },
+  { value: 'overdue', label: INVOICE_STATUS_LABEL.overdue },
+  { value: 'paid', label: INVOICE_STATUS_LABEL.paid },
+  { value: 'cancelled', label: INVOICE_STATUS_LABEL.cancelled },
+];
+
+// /invoices                 list
+// /invoices/new             list + create form
+// /invoices/:id             list + detail (loads its own record, so deep links work)
+// /invoices/:id/edit        list + edit form
+// (/invoices/:id/print is its own page: InvoicePrintView)
 export const InvoicesView: React.FC = () => {
-  const {
-    invoices,
-    deleteInvoice,
-    settings,
-    currentUser,
-    isAddInvoiceOpen,
-    setIsAddInvoiceOpen,
-  } = useApp();
-
-  const [invoiceToEdit, setInvoiceToEdit] = useState<Invoice | null>(null);
-  // /invoices/:id opens the detail modal for that invoice.
-  const { id: viewId } = useParams();
+  const { showToast } = useApp();
   const navigate = useNavigate();
-  const invoiceToView = viewId ? invoices.find(inv => inv.id === viewId) ?? null : null;
-  const setInvoiceToView = (inv: Invoice | null) => navigate(inv ? `/invoices/${inv.id}` : '/invoices');
-  const [invoiceToPay, setInvoiceToPay] = useState<Invoice | null>(null);
-  const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null);
+  const { pathname } = useLocation();
+  const { id: routeId } = useParams();
+  const isNew = pathname === '/invoices/new';
+  const editId = routeId && pathname.endsWith('/edit') ? routeId : null;
+  const viewId = routeId && !editId ? routeId : null;
 
-  // Filters
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | InvoiceStatus>('all');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  // ?status=overdue (from the notification bell) preselects the filter.
+  const [searchParams] = useSearchParams();
+  const initialStatus = searchParams.get('status') ?? '';
+  const [status, setStatus] = useState<'' | InvoiceListStatus>(
+    STATUS_FILTERS.some(f => f.value === initialStatus) ? (initialStatus as InvoiceListStatus) : '',
+  );
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [offset, setOffset] = useState(0);
+  const [toDelete, setToDelete] = useState<InvoiceSummaryRow | null>(null);
 
-  // Filtered invoices
-  const filteredInvoices = useMemo(() => {
-    return invoices.filter(inv => {
-      if (statusFilter !== 'all' && inv.status !== statusFilter) return false;
-      if (startDate && inv.invoiceDate < startDate) return false;
-      if (endDate && inv.invoiceDate > endDate) return false;
-      if (search.trim()) {
-        const query = search.toLowerCase();
-        const matchesNum = inv.invoiceNumber.toLowerCase().includes(query);
-        const matchesClient = inv.clientName.toLowerCase().includes(query);
-        const matchesEmail = (inv.clientEmail || '').toLowerCase().includes(query);
-        if (!matchesNum && !matchesClient && !matchesEmail) return false;
-      }
-      return true;
-    });
-  }, [invoices, statusFilter, startDate, endDate, search]);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setOffset(0);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
-  // Aggregate metrics
-  const totalBilled = useMemo(() => {
-    return filteredInvoices
-      .filter(i => i.status !== 'Cancelled')
-      .reduce((sum, i) => sum + i.totalAmount, 0);
-  }, [filteredInvoices]);
-
-  const totalCollected = useMemo(() => {
-    return filteredInvoices
-      .filter(i => i.status !== 'Cancelled')
-      .reduce((sum, i) => sum + i.amountPaid, 0);
-  }, [filteredInvoices]);
-
-  const totalOutstanding = useMemo(() => {
-    return filteredInvoices
-      .filter(i => i.status !== 'Cancelled')
-      .reduce((sum, i) => sum + i.outstandingAmount, 0);
-  }, [filteredInvoices]);
+  const list = useApiData(
+    () => invoicesApi.list({ search, status: status || undefined, from: from || undefined, to: to || undefined, limit: PAGE_SIZE, offset }),
+    [search, status, from, to, offset],
+  );
+  const invoices = list.data?.invoices ?? [];
+  const summary = list.data?.summary;
+  const total = list.data?.total ?? 0;
 
   const handleExportCSV = () => {
-    const headers = [
-      'Invoice Number',
-      'Client Name',
-      'Client Email',
-      'Invoice Date',
-      'Due Date',
-      `Subtotal (${settings.defaultCurrency})`,
-      'Tax Rate (%)',
-      `Tax Amount (${settings.defaultCurrency})`,
-      `Total Amount (${settings.defaultCurrency})`,
-      `Amount Paid (${settings.defaultCurrency})`,
-      `Outstanding (${settings.defaultCurrency})`,
-      'Status',
-    ];
-
-    const rows = filteredInvoices.map(i => [
+    const headers = ['Invoice Number', 'Client', 'Invoice Date', 'Due Date', 'Subtotal (INR)', 'Tax Rate (%)', 'Tax (INR)', 'Total (INR)', 'Paid (INR)', 'Balance (INR)', 'Status'];
+    const rows = invoices.map(i => [
       i.invoiceNumber,
       i.clientName,
-      i.clientEmail || '',
       i.invoiceDate,
       i.dueDate,
       i.subtotal,
       i.taxRate,
       i.taxAmount,
-      i.totalAmount,
+      i.total,
       i.amountPaid,
-      i.outstandingAmount,
-      i.status,
+      i.balance,
+      INVOICE_STATUS_LABEL[i.derivedStatus],
     ]);
-
-    exportToCSV(`invoices_${settings.companyName.toLowerCase().replace(/\s+/g, '_')}`, headers, rows);
+    exportToCSV('invoices', headers, rows);
   };
 
-  const getStatusBadge = (status: InvoiceStatus) => {
-    switch (status) {
-      case 'Paid':
-        return <Badge variant="success">Paid</Badge>;
-      case 'Partially Paid':
-        return <Badge variant="warning">Partially Paid</Badge>;
-      case 'Overdue':
-        return <Badge variant="error">Overdue</Badge>;
-      case 'Sent':
-        return <Badge variant="purple">Sent</Badge>;
-      case 'Draft':
-        return <Badge variant="neutral">Draft</Badge>;
-      case 'Cancelled':
-        return <Badge variant="neutral">Cancelled</Badge>;
-      default:
-        return <Badge variant="neutral">{status}</Badge>;
+  const handleDelete = async () => {
+    if (!toDelete) return;
+    try {
+      await invoicesApi.remove(toDelete.id);
+      showToast('info', `Draft ${toDelete.invoiceNumber} deleted`);
+      setToDelete(null);
+      if (viewId === toDelete.id) navigate('/invoices');
+      list.reload();
+    } catch (err) {
+      showToast('error', errorMessage(err));
     }
   };
 
+  const filterClass = 'w-full min-w-0 text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]';
+
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">
-            Invoices & Client Billing
-          </h1>
-          <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">
-            Manage deliverables, billing milestones, and track incoming payments
-          </p>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">Invoices & Client Billing</h1>
+          <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">Issue GST invoices, send them, and track incoming payments</p>
         </div>
-
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            icon={<Download className="w-3.5 h-3.5" />}
-            onClick={handleExportCSV}
-          >
+          <Button variant="outline" size="sm" icon={<Download className="w-3.5 h-3.5" />} onClick={handleExportCSV} disabled={invoices.length === 0}>
             Export CSV
           </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            icon={<Plus className="w-3.5 h-3.5" />}
-            onClick={() => {
-              setInvoiceToEdit(null);
-              setIsAddInvoiceOpen(true);
-            }}
-          >
+          <Button variant="primary" size="sm" icon={<Plus className="w-3.5 h-3.5" />} onClick={() => navigate('/invoices/new')}>
             Create Invoice
           </Button>
         </div>
       </div>
 
-      {/* Aggregate KPI Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      {/* Summary over all invoices (server-computed) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Card padding="md">
-          <span className="text-xs font-semibold text-[#7185A5] block">Total Invoiced</span>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-mono font-bold text-[#111827]">
-              {formatCurrency(totalBilled, settings.defaultCurrency)}
-            </span>
-            <span className="text-xs text-[#7185A5]">
-              {filteredInvoices.filter(i => i.status !== 'Cancelled').length} active invoices
-            </span>
-          </div>
+          <span className="text-xs font-semibold text-[#7185A5] block">Outstanding</span>
+          <span className="mt-2 block text-lg sm:text-xl font-mono font-bold text-[#B45309] truncate" data-testid="summary-outstanding">
+            {summary ? formatMoney(summary.outstandingTotal) : '—'}
+          </span>
+          <span className="text-[11px] text-[#7185A5]">Sent invoices not yet paid</span>
         </Card>
-
         <Card padding="md">
-          <span className="text-xs font-semibold text-[#7185A5] block">Payments Collected</span>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-mono font-bold text-[#047857]">
-              {formatCurrency(totalCollected, settings.defaultCurrency)}
-            </span>
-            <span className="text-xs text-[#047857] font-medium">
-              {totalBilled > 0 ? `${Math.round((totalCollected / totalBilled) * 100)}% collected` : '0%'}
-            </span>
-          </div>
+          <span className="text-xs font-semibold text-[#7185A5] block">Overdue</span>
+          <span className="mt-2 block text-lg sm:text-xl font-mono font-bold text-[#E11D48] truncate">
+            {summary ? formatMoney(summary.overdueTotal) : '—'}
+          </span>
+          <span className="text-[11px] text-[#7185A5]">{summary ? `${summary.overdueCount} past due date` : ''}</span>
         </Card>
-
         <Card padding="md">
-          <span className="text-xs font-semibold text-[#7185A5] block">Outstanding Balance</span>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-mono font-bold text-[#B45309]">
-              {formatCurrency(totalOutstanding, settings.defaultCurrency)}
-            </span>
-            <span className="text-xs text-[#B45309] font-medium">
-              {filteredInvoices.filter(i => i.status === 'Overdue').length} overdue
-            </span>
-          </div>
+          <span className="text-xs font-semibold text-[#7185A5] block">Collected This Month</span>
+          <span className="mt-2 block text-lg sm:text-xl font-mono font-bold text-[#047857] truncate">
+            {summary ? formatMoney(summary.collectedThisMonth) : '—'}
+          </span>
+          <span className="text-[11px] text-[#7185A5]">Invoice payments (IST)</span>
+        </Card>
+        <Card padding="md">
+          <span className="text-xs font-semibold text-[#7185A5] block">Drafts</span>
+          <span className="mt-2 block text-lg sm:text-xl font-mono font-bold text-[#111827]">{summary ? summary.draftCount : '—'}</span>
+          <span className="text-[11px] text-[#7185A5]">Not sent yet</span>
         </Card>
       </div>
 
-      {/* Search & Filter Bar */}
       <Card padding="sm">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="relative">
             <Search className="w-4 h-4 text-[#7185A5] absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Search invoice #, client, email..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full text-xs pl-9 pr-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+              placeholder="Search invoice # or client..."
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
+              className={`${filterClass} pl-9`}
+              aria-label="Search invoices"
             />
           </div>
-
-          <div>
-            <select
-              value={statusFilter}
-              onChange={e => setStatusFilter(e.target.value as any)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-            >
-              <option value="all">All Statuses</option>
-              <option value="Draft">Draft</option>
-              <option value="Sent">Sent</option>
-              <option value="Partially Paid">Partially Paid</option>
-              <option value="Paid">Paid</option>
-              <option value="Overdue">Overdue</option>
-              <option value="Cancelled">Cancelled</option>
-            </select>
-          </div>
-
-          <div>
+          <select
+            value={status}
+            onChange={e => {
+              setStatus(e.target.value as '' | InvoiceListStatus);
+              setOffset(0);
+            }}
+            className={filterClass}
+            aria-label="Status"
+          >
+            {STATUS_FILTERS.map(s => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+          <div className="grid grid-cols-2 gap-1 sm:col-span-2 lg:col-span-2">
             <input
               type="date"
-              placeholder="From Date"
-              value={startDate}
-              onChange={e => setStartDate(e.target.value)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+              value={from}
+              onChange={e => {
+                setFrom(e.target.value);
+                setOffset(0);
+              }}
+              className={filterClass}
+              aria-label="Invoice date from"
+              title="Invoice date from"
             />
-          </div>
-
-          <div>
             <input
               type="date"
-              placeholder="To Date"
-              value={endDate}
-              onChange={e => setEndDate(e.target.value)}
-              className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+              value={to}
+              onChange={e => {
+                setTo(e.target.value);
+                setOffset(0);
+              }}
+              className={filterClass}
+              aria-label="Invoice date to"
+              title="Invoice date to"
             />
           </div>
         </div>
       </Card>
 
-      {/* Invoices Table */}
       <Card padding="none" className="overflow-hidden">
-        {filteredInvoices.length === 0 ? (
+        {list.error ? (
+          <LoadError message={list.error} onRetry={list.reload} />
+        ) : list.isLoading && !list.data ? (
+          <div className="py-10 text-center text-xs text-[#7185A5]">Loading invoices…</div>
+        ) : invoices.length === 0 ? (
           <EmptyState
             icon={<FileText className="w-6 h-6" />}
             title="No invoices found"
-            description="No client invoices found for this search or filter."
+            description="No invoices match this search or filter."
             actionLabel="Create Invoice"
-            onAction={() => {
-              setInvoiceToEdit(null);
-              setIsAddInvoiceOpen(true);
-            }}
+            onAction={() => navigate('/invoices/new')}
           />
         ) : (
           <div className="overflow-x-auto">
@@ -288,94 +228,69 @@ export const InvoicesView: React.FC = () => {
                 <tr>
                   <th className="py-3 px-4">Invoice #</th>
                   <th className="py-3 px-4">Client</th>
-                  <th className="py-3 px-4">Invoice Date</th>
-                  <th className="py-3 px-4">Due Date</th>
+                  <th className="py-3 px-4">Dates</th>
                   <th className="py-3 px-4 text-right">Total</th>
-                  <th className="py-3 px-4 text-right">Paid</th>
-                  <th className="py-3 px-4 text-right">Outstanding</th>
+                  <th className="py-3 px-4 text-right">Balance</th>
                   <th className="py-3 px-4 text-center">Status</th>
-                  <th className="py-3 px-4 text-right w-36">Actions</th>
+                  <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#DFE6F1]">
-                {filteredInvoices.map(inv => (
-                  <tr key={inv.id} className="hover:bg-[#F7F9FC]/60 transition-colors">
-                    <td className="py-3 px-4 font-mono font-bold text-[#111827]">
-                      {inv.invoiceNumber}
-                    </td>
+                {invoices.map(inv => (
+                  <tr key={inv.id} className="hover:bg-[#F7F9FC]/60 transition-colors" data-testid={`invoice-row-${inv.invoiceNumber}`}>
+                    <td className="py-3 px-4 font-mono font-bold text-[#111827] whitespace-nowrap">{inv.invoiceNumber}</td>
                     <td className="py-3 px-4">
-                      <div className="font-semibold text-[#111827]">{inv.clientName}</div>
-                      {inv.clientEmail && (
-                        <div className="text-[11px] text-[#7185A5]">{inv.clientEmail}</div>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-[#7185A5] whitespace-nowrap">
-                      {formatDate(inv.invoiceDate)}
+                      <div className="font-semibold text-[#111827]">{inv.clientName || '—'}</div>
+                      {inv.clientEmail && <div className="text-[11px] text-[#7185A5]">{inv.clientEmail}</div>}
                     </td>
                     <td className="py-3 px-4 whitespace-nowrap">
-                      <span
-                        className={
-                          inv.status === 'Overdue'
-                            ? 'text-[#E11D48] font-semibold'
-                            : 'text-[#7185A5]'
-                        }
-                      >
-                        {formatDate(inv.dueDate)}
-                      </span>
+                      <div className="text-[#111827]">{formatDate(inv.invoiceDate)}</div>
+                      <div className={`text-[11px] ${inv.derivedStatus === 'overdue' ? 'text-[#E11D48] font-semibold' : 'text-[#7185A5]'}`}>
+                        Due {formatDate(inv.dueDate)}
+                      </div>
                     </td>
-                    <td className="py-3 px-4 text-right font-mono font-bold text-[#111827] whitespace-nowrap">
-                      {formatCurrency(inv.totalAmount, settings.defaultCurrency)}
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono font-medium text-[#047857] whitespace-nowrap">
-                      {formatCurrency(inv.amountPaid, settings.defaultCurrency)}
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono font-bold whitespace-nowrap">
-                      <span
-                        className={
-                          inv.outstandingAmount > 0 ? 'text-[#B45309]' : 'text-[#7185A5]'
-                        }
-                      >
-                        {formatCurrency(inv.outstandingAmount, settings.defaultCurrency)}
-                      </span>
+                    <td className="py-3 px-4 text-right font-mono font-bold text-[#111827] whitespace-nowrap">{formatMoney(inv.total)}</td>
+                    <td className="py-3 px-4 text-right font-mono whitespace-nowrap">
+                      <span className={inv.status === 'sent' ? 'font-bold text-[#B45309]' : 'text-[#7185A5]'}>{formatMoney(inv.balance)}</span>
+                      {inv.amountPaid !== '0.00' && <div className="text-[11px] text-[#047857]">Paid {formatMoney(inv.amountPaid)}</div>}
                     </td>
                     <td className="py-3 px-4 text-center whitespace-nowrap">
-                      {getStatusBadge(inv.status)}
+                      <InvoiceStatusBadge status={inv.derivedStatus} />
                     </td>
                     <td className="py-3 px-4 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-1">
                         <button
-                          onClick={() => setInvoiceToView(inv)}
+                          onClick={() => navigate(`/invoices/${inv.id}`)}
                           className="p-1.5 text-[#7185A5] hover:text-[#5038F5] hover:bg-[#F1F5F9] rounded cursor-pointer"
-                          title="View / Print Invoice"
+                          aria-label={`View ${inv.invoiceNumber}`}
+                          title="View"
                         >
                           <Eye className="w-3.5 h-3.5" />
                         </button>
-                        {inv.outstandingAmount > 0 && inv.status !== 'Cancelled' && (
+                        <button
+                          onClick={() => navigate(`/invoices/${inv.id}/print`)}
+                          className="p-1.5 text-[#7185A5] hover:text-[#5038F5] hover:bg-[#F1F5F9] rounded cursor-pointer"
+                          aria-label={`Print ${inv.invoiceNumber}`}
+                          title="Print / Save as PDF"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                        </button>
+                        {(inv.status === 'draft' || inv.status === 'sent') && (
                           <button
-                            onClick={() => setInvoiceToPay(inv)}
-                            className="p-1.5 text-[#7185A5] hover:text-[#047857] hover:bg-[#F1F5F9] rounded cursor-pointer"
-                            title="Record Payment"
-                          >
-                            <CreditCard className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                        {inv.status === 'Draft' && (
-                          <button
-                            onClick={() => {
-                              setInvoiceToEdit(inv);
-                              setIsAddInvoiceOpen(true);
-                            }}
+                            onClick={() => navigate(`/invoices/${inv.id}/edit`)}
                             className="p-1.5 text-[#7185A5] hover:text-[#5038F5] hover:bg-[#F1F5F9] rounded cursor-pointer"
-                            title="Edit Draft"
+                            aria-label={`Edit ${inv.invoiceNumber}`}
+                            title={inv.status === 'draft' ? 'Edit draft' : 'Edit due date / notes'}
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        {currentUser.role === 'admin' && (
+                        {inv.status === 'draft' && (
                           <button
-                            onClick={() => setInvoiceToDelete(inv)}
+                            onClick={() => setToDelete(inv)}
                             className="p-1.5 text-[#7185A5] hover:text-[#E11D48] hover:bg-[#F1F5F9] rounded cursor-pointer"
-                            title="Delete Invoice"
+                            aria-label={`Delete draft ${inv.invoiceNumber}`}
+                            title="Delete draft"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -388,49 +303,53 @@ export const InvoicesView: React.FC = () => {
             </table>
           </div>
         )}
+        {total > PAGE_SIZE && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-[#DFE6F1] text-xs text-[#7185A5]">
+            <span>
+              {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}
+            </span>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
+                Previous
+              </Button>
+              <Button variant="outline" size="sm" disabled={offset + PAGE_SIZE >= total} onClick={() => setOffset(offset + PAGE_SIZE)}>
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
 
-      {/* Invoice Modal (Create / Edit) */}
       <InvoiceModal
-        isOpen={isAddInvoiceOpen}
-        onClose={() => {
-          setIsAddInvoiceOpen(false);
-          setInvoiceToEdit(null);
-        }}
-        invoiceToEdit={invoiceToEdit}
-      />
-
-      {/* Invoice Detail / Print Modal */}
-      <InvoiceDetailModal
-        isOpen={!!invoiceToView}
-        onClose={() => setInvoiceToView(null)}
-        invoice={invoiceToView}
-        onRecordPayment={inv => {
-          setInvoiceToPay(inv);
+        isOpen={isNew || Boolean(editId)}
+        invoiceId={editId}
+        onClose={() => navigate(editId ? `/invoices/${editId}` : '/invoices')}
+        onSaved={invoice => {
+          list.reload();
+          navigate(`/invoices/${invoice.id}`);
         }}
       />
 
-      {/* Record Payment Modal */}
-      <RecordPaymentModal
-        isOpen={!!invoiceToPay}
-        onClose={() => setInvoiceToPay(null)}
-        invoice={invoiceToPay}
-      />
+      {viewId && (
+        <InvoiceDetailModal
+          invoiceId={viewId}
+          onClose={() => navigate('/invoices')}
+          onChanged={() => list.reload()}
+          onDeleted={() => {
+            list.reload();
+            navigate('/invoices');
+          }}
+        />
+      )}
 
-      {/* Delete Confirmation */}
       <ConfirmDialog
-        isOpen={!!invoiceToDelete}
-        onClose={() => setInvoiceToDelete(null)}
-        onConfirm={() => {
-          if (invoiceToDelete) {
-            deleteInvoice(invoiceToDelete.id);
-            setInvoiceToDelete(null);
-          }
-        }}
-        title="Delete Invoice"
-        message={`Are you sure you want to delete invoice "${invoiceToDelete?.invoiceNumber}" for ${invoiceToDelete?.clientName}? This action cannot be undone.`}
-        confirmLabel="Delete Invoice"
-        isDestructive={true}
+        isOpen={!!toDelete}
+        onClose={() => setToDelete(null)}
+        onConfirm={handleDelete}
+        title="Delete Draft"
+        message={`Delete draft ${toDelete?.invoiceNumber} for ${toDelete?.clientName || 'no client'}? Only drafts can be deleted; this cannot be undone.`}
+        confirmLabel="Delete Draft"
+        isDestructive
       />
     </div>
   );

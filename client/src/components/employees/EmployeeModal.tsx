@@ -6,6 +6,7 @@ import { DEPARTMENTS, Employee } from '../../types';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { FormField } from '../common/FormField';
+import { CURRENCY } from '../../utils/money';
 
 interface EmployeeModalProps {
   isOpen: boolean;
@@ -24,8 +25,7 @@ const inputClass =
 
 // Admin-only form. The employee code is assigned by the server.
 export const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employeeToEdit, onSaved }) => {
-  const { settings } = useApp();
-
+  
   const [fullName, setFullName] = useState('');
   const [workEmail, setWorkEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -206,7 +206,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, e
         <div className="p-3 bg-[#F7F9FC] rounded-lg border border-[#DFE6F1]">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormField
-              label={`Monthly Base Salary (${settings.defaultCurrency})`}
+              label={`Monthly Base Salary (${CURRENCY})`}
               required
               error={fieldErrors.monthlySalary}
             >

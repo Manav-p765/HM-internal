@@ -16,11 +16,16 @@ import {
   FileSpreadsheet,
 } from 'lucide-react';
 import { formatCurrency, formatDate, exportToCSV } from '../../utils/formatters';
+import { invoicesApi } from '../../api/invoices';
+import { useApiData } from '../../api/useApiData';
+import { InvoiceStatusBadge } from '../invoices/InvoiceStatusBadge';
+import { INVOICE_STATUS_LABEL } from '../../types/invoices';
+import { CURRENCY, formatMoney, sumMoney } from '../../utils/money';
 
 type ReportType = 'income' | 'expense' | 'pnl' | 'invoices' | 'salary';
 
 export const ReportsView: React.FC = () => {
-  const { transactions, invoices, salaries, settings } = useApp();
+  const { transactions, salaries } = useApp();
 
   const [activeReport, setActiveReport] = useState<ReportType>('pnl');
 
@@ -59,32 +64,23 @@ export const ReportsView: React.FC = () => {
 
   const netProfitLoss = totalIncome - totalExpense;
 
-  // 2. Invoices in range
-  const rangeInvoices = useMemo(() => {
-    return invoices.filter(i => {
-      if (startDate && i.invoiceDate < startDate) return false;
-      if (endDate && i.invoiceDate > endDate) return false;
-      return true;
-    });
-  }, [invoices, startDate, endDate]);
-
-  const totalInvoicedValue = useMemo(() => {
-    return rangeInvoices
-      .filter(i => i.status !== 'Cancelled')
-      .reduce((sum, i) => sum + i.totalAmount, 0);
-  }, [rangeInvoices]);
-
-  const totalInvoicePaidValue = useMemo(() => {
-    return rangeInvoices
-      .filter(i => i.status !== 'Cancelled')
-      .reduce((sum, i) => sum + i.amountPaid, 0);
-  }, [rangeInvoices]);
-
-  const totalInvoiceOutstandingValue = useMemo(() => {
-    return rangeInvoices
-      .filter(i => i.status !== 'Cancelled')
-      .reduce((sum, i) => sum + i.outstandingAmount, 0);
-  }, [rangeInvoices]);
+  // 2. Invoices in range: from the API (only while this report is open). Phase 10 rewrites reports;
+  // until then the list is capped at the API maximum of 200 and cancelled invoices are excluded.
+  const invoiceReport = useApiData(
+    () =>
+      activeReport === 'invoices'
+        ? invoicesApi.list({ from: startDate || undefined, to: endDate || undefined, limit: 200 })
+        : Promise.resolve(null),
+    [activeReport, startDate, endDate],
+  );
+  const rangeInvoices = useMemo(
+    () => (invoiceReport.data?.invoices ?? []).filter(i => i.status !== 'cancelled'),
+    [invoiceReport.data],
+  );
+  const invoiceReportTruncated = (invoiceReport.data?.total ?? 0) > (invoiceReport.data?.invoices.length ?? 0);
+  const totalInvoicedValue = sumMoney(rangeInvoices.map(i => i.total));
+  const totalInvoicePaidValue = sumMoney(rangeInvoices.map(i => i.amountPaid));
+  const totalInvoiceOutstandingValue = sumMoney(rangeInvoices.map(i => i.balance));
 
   // 3. Salaries in range
   const rangeSalaries = useMemo(() => {
@@ -133,15 +129,15 @@ export const ReportsView: React.FC = () => {
   // CSV Export
   const handleExportCSV = () => {
     if (activeReport === 'income') {
-      const headers = ['Date', 'Category', 'Description', 'Method', 'Reference', `Amount (${settings.defaultCurrency})`];
+      const headers = ['Date', 'Category', 'Description', 'Method', 'Reference', `Amount (${CURRENCY})`];
       const rows = incomeTxns.map(t => [t.date, t.category, t.description, t.paymentMethod, t.referenceNumber || '', t.amount]);
       exportToCSV(`income_report_${startDate}_to_${endDate}`, headers, rows);
     } else if (activeReport === 'expense') {
-      const headers = ['Date', 'Category', 'Description', 'Method', 'Reference', `Amount (${settings.defaultCurrency})`];
+      const headers = ['Date', 'Category', 'Description', 'Method', 'Reference', `Amount (${CURRENCY})`];
       const rows = expenseTxns.map(t => [t.date, t.category, t.description, t.paymentMethod, t.referenceNumber || '', t.amount]);
       exportToCSV(`expense_report_${startDate}_to_${endDate}`, headers, rows);
     } else if (activeReport === 'pnl') {
-      const headers = ['Metric', `Amount (${settings.defaultCurrency})`, 'Notes'];
+      const headers = ['Metric', `Amount (${CURRENCY})`, 'Notes'];
       const rows = [
         ['Total Recognized Income', totalIncome, 'Recorded cash inflows in period'],
         ['Total Recognized Expenses', totalExpense, 'Recorded operational expenses and disbursed salaries'],
@@ -149,11 +145,11 @@ export const ReportsView: React.FC = () => {
       ];
       exportToCSV(`pnl_summary_${startDate}_to_${endDate}`, headers, rows);
     } else if (activeReport === 'invoices') {
-      const headers = ['Invoice #', 'Client', 'Date', 'Due Date', `Billed Total (${settings.defaultCurrency})`, `Paid (${settings.defaultCurrency})`, `Outstanding (${settings.defaultCurrency})`, 'Status'];
-      const rows = rangeInvoices.map(i => [i.invoiceNumber, i.clientName, i.invoiceDate, i.dueDate, i.totalAmount, i.amountPaid, i.outstandingAmount, i.status]);
+      const headers = ['Invoice #', 'Client', 'Date', 'Due Date', `Billed Total (${CURRENCY})`, `Paid (${CURRENCY})`, `Outstanding (${CURRENCY})`, 'Status'];
+      const rows = rangeInvoices.map(i => [i.invoiceNumber, i.clientName, i.invoiceDate, i.dueDate, i.total, i.amountPaid, i.balance, INVOICE_STATUS_LABEL[i.derivedStatus]]);
       exportToCSV(`invoice_payment_report_${startDate}_to_${endDate}`, headers, rows);
     } else if (activeReport === 'salary') {
-      const headers = ['Employee', 'Department', 'Month', `Base (${settings.defaultCurrency})`, `Adjustments (${settings.defaultCurrency})`, `Final Payable (${settings.defaultCurrency})`, 'Status', 'Payment Date'];
+      const headers = ['Employee', 'Department', 'Month', `Base (${CURRENCY})`, `Adjustments (${CURRENCY})`, `Final Payable (${CURRENCY})`, 'Status', 'Payment Date'];
       const rows = rangeSalaries.map(s => [s.employeeName, s.department, s.salaryMonth, s.baseSalary, s.adjustments, s.finalPayableAmount, s.status, s.paymentDate || '']);
       exportToCSV(`salary_report_${startDate}_to_${endDate}`, headers, rows);
     }
@@ -244,7 +240,7 @@ export const ReportsView: React.FC = () => {
             <Card padding="md">
               <span className="text-xs font-semibold text-[#7185A5] block">Recognized Income</span>
               <span className="text-2xl font-mono font-bold text-[#047857] block mt-2">
-                {formatCurrency(totalIncome, settings.defaultCurrency)}
+                {formatCurrency(totalIncome, CURRENCY)}
               </span>
               <p className="text-[11px] text-[#7185A5] mt-1">{incomeTxns.length} income transactions</p>
             </Card>
@@ -252,7 +248,7 @@ export const ReportsView: React.FC = () => {
             <Card padding="md">
               <span className="text-xs font-semibold text-[#7185A5] block">Recognized Expenses</span>
               <span className="text-2xl font-mono font-bold text-[#E11D48] block mt-2">
-                {formatCurrency(totalExpense, settings.defaultCurrency)}
+                {formatCurrency(totalExpense, CURRENCY)}
               </span>
               <p className="text-[11px] text-[#7185A5] mt-1">{expenseTxns.length} expense transactions</p>
             </Card>
@@ -264,7 +260,7 @@ export const ReportsView: React.FC = () => {
                   netProfitLoss >= 0 ? 'text-[#047857]' : 'text-[#E11D48]'
                 }`}
               >
-                {formatCurrency(netProfitLoss, settings.defaultCurrency)}
+                {formatCurrency(netProfitLoss, CURRENCY)}
               </span>
               <p className="text-[11px] text-[#7185A5] mt-1">
                 Margin: {totalIncome > 0 ? `${Math.round((netProfitLoss / totalIncome) * 100)}%` : '0%'}
@@ -280,19 +276,19 @@ export const ReportsView: React.FC = () => {
               <div className="flex justify-between items-center py-2 border-b border-[#DFE6F1] text-xs font-semibold text-[#111827]">
                 <span>1. Total Recognized Revenue</span>
                 <span className="font-mono text-[#047857]">
-                  +{formatCurrency(totalIncome, settings.defaultCurrency)}
+                  +{formatCurrency(totalIncome, CURRENCY)}
                 </span>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-[#DFE6F1] text-xs font-semibold text-[#111827]">
                 <span>2. Total Recognized Expenses</span>
                 <span className="font-mono text-[#E11D48]">
-                  -{formatCurrency(totalExpense, settings.defaultCurrency)}
+                  -{formatCurrency(totalExpense, CURRENCY)}
                 </span>
               </div>
               <div className="flex justify-between items-center py-3 bg-[#F7F9FC] px-3 rounded-lg text-sm font-bold text-[#111827]">
                 <span>Net Surplus / (Deficit)</span>
                 <span className={`font-mono ${netProfitLoss >= 0 ? 'text-[#047857]' : 'text-[#E11D48]'}`}>
-                  {formatCurrency(netProfitLoss, settings.defaultCurrency)}
+                  {formatCurrency(netProfitLoss, CURRENCY)}
                 </span>
               </div>
             </div>
@@ -307,7 +303,7 @@ export const ReportsView: React.FC = () => {
             <Card padding="md">
               <span className="text-xs font-semibold text-[#7185A5] block">Total Inflow</span>
               <span className="text-2xl font-mono font-bold text-[#047857] block mt-1">
-                {formatCurrency(totalIncome, settings.defaultCurrency)}
+                {formatCurrency(totalIncome, CURRENCY)}
               </span>
             </Card>
             <Card padding="md">
@@ -316,7 +312,7 @@ export const ReportsView: React.FC = () => {
                 {incomeByCategory[0] ? incomeByCategory[0][0] : 'None'}
               </span>
               <span className="text-xs font-mono text-[#7185A5]">
-                {incomeByCategory[0] ? formatCurrency(incomeByCategory[0][1], settings.defaultCurrency) : '—'}
+                {incomeByCategory[0] ? formatCurrency(incomeByCategory[0][1], CURRENCY) : '—'}
               </span>
             </Card>
           </div>
@@ -331,7 +327,7 @@ export const ReportsView: React.FC = () => {
                     <div className="flex justify-between text-xs">
                       <span className="font-medium text-[#111827]">{cat}</span>
                       <span className="font-mono font-bold text-[#047857]">
-                        {formatCurrency(amount, settings.defaultCurrency)} ({Math.round(pct)}%)
+                        {formatCurrency(amount, CURRENCY)} ({Math.round(pct)}%)
                       </span>
                     </div>
                     <div className="w-full h-2 rounded-full bg-[#F1F5F9] overflow-hidden">
@@ -352,7 +348,7 @@ export const ReportsView: React.FC = () => {
             <Card padding="md">
               <span className="text-xs font-semibold text-[#7185A5] block">Total Overhead Expenses</span>
               <span className="text-2xl font-mono font-bold text-[#E11D48] block mt-1">
-                {formatCurrency(totalExpense, settings.defaultCurrency)}
+                {formatCurrency(totalExpense, CURRENCY)}
               </span>
             </Card>
             <Card padding="md">
@@ -361,7 +357,7 @@ export const ReportsView: React.FC = () => {
                 {expenseByCategory[0] ? expenseByCategory[0][0] : 'None'}
               </span>
               <span className="text-xs font-mono text-[#7185A5]">
-                {expenseByCategory[0] ? formatCurrency(expenseByCategory[0][1], settings.defaultCurrency) : '—'}
+                {expenseByCategory[0] ? formatCurrency(expenseByCategory[0][1], CURRENCY) : '—'}
               </span>
             </Card>
           </div>
@@ -376,7 +372,7 @@ export const ReportsView: React.FC = () => {
                     <div className="flex justify-between text-xs">
                       <span className="font-medium text-[#111827]">{cat}</span>
                       <span className="font-mono font-bold text-[#E11D48]">
-                        {formatCurrency(amount, settings.defaultCurrency)} ({Math.round(pct)}%)
+                        {formatCurrency(amount, CURRENCY)} ({Math.round(pct)}%)
                       </span>
                     </div>
                     <div className="w-full h-2 rounded-full bg-[#F1F5F9] overflow-hidden">
@@ -397,19 +393,19 @@ export const ReportsView: React.FC = () => {
             <Card padding="md">
               <span className="text-xs font-semibold text-[#7185A5] block">Total Invoiced</span>
               <span className="text-2xl font-mono font-bold text-[#111827] block mt-1">
-                {formatCurrency(totalInvoicedValue, settings.defaultCurrency)}
+                {formatMoney(totalInvoicedValue)}
               </span>
             </Card>
             <Card padding="md">
               <span className="text-xs font-semibold text-[#7185A5] block">Actual Payments Received</span>
               <span className="text-2xl font-mono font-bold text-[#047857] block mt-1">
-                {formatCurrency(totalInvoicePaidValue, settings.defaultCurrency)}
+                {formatMoney(totalInvoicePaidValue)}
               </span>
             </Card>
             <Card padding="md">
               <span className="text-xs font-semibold text-[#7185A5] block">Remaining Outstanding</span>
               <span className="text-2xl font-mono font-bold text-[#B45309] block mt-1">
-                {formatCurrency(totalInvoiceOutstandingValue, settings.defaultCurrency)}
+                {formatMoney(totalInvoiceOutstandingValue)}
               </span>
             </Card>
           </div>
@@ -422,6 +418,10 @@ export const ReportsView: React.FC = () => {
               <p className="text-xs text-[#7185A5]">
                 Comparing billed deliverables against confirmed received settlements
               </p>
+              {invoiceReport.error && <p className="text-xs text-[#E11D48] mt-1">{invoiceReport.error}</p>}
+              {invoiceReportTruncated && (
+                <p className="text-xs text-[#B45309] mt-1">Showing the first 200 invoices in this range; narrow the dates to see the rest.</p>
+              )}
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
@@ -442,13 +442,11 @@ export const ReportsView: React.FC = () => {
                       <td className="py-2.5 px-4 font-mono font-bold">{inv.invoiceNumber}</td>
                       <td className="py-2.5 px-4 font-medium">{inv.clientName}</td>
                       <td className="py-2.5 px-4 text-[#7185A5]">{formatDate(inv.invoiceDate)}</td>
-                      <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(inv.totalAmount, settings.defaultCurrency)}</td>
-                      <td className="py-2.5 px-4 text-right font-mono text-[#047857]">{formatCurrency(inv.amountPaid, settings.defaultCurrency)}</td>
-                      <td className="py-2.5 px-4 text-right font-mono text-[#B45309]">{formatCurrency(inv.outstandingAmount, settings.defaultCurrency)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono">{formatMoney(inv.total)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono text-[#047857]">{formatMoney(inv.amountPaid)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono text-[#B45309]">{formatMoney(inv.balance)}</td>
                       <td className="py-2.5 px-4 text-center">
-                        <Badge variant={inv.status === 'Paid' ? 'success' : inv.status === 'Overdue' ? 'error' : 'neutral'}>
-                          {inv.status}
-                        </Badge>
+                        <InvoiceStatusBadge status={inv.derivedStatus} />
                       </td>
                     </tr>
                   ))}
@@ -466,19 +464,19 @@ export const ReportsView: React.FC = () => {
             <Card padding="md">
               <span className="text-xs font-semibold text-[#7185A5] block">Total Salary Committed</span>
               <span className="text-2xl font-mono font-bold text-[#111827] block mt-1">
-                {formatCurrency(totalSalaryCommitted, settings.defaultCurrency)}
+                {formatCurrency(totalSalaryCommitted, CURRENCY)}
               </span>
             </Card>
             <Card padding="md">
               <span className="text-xs font-semibold text-[#7185A5] block">Disbursed (Paid)</span>
               <span className="text-2xl font-mono font-bold text-[#047857] block mt-1">
-                {formatCurrency(totalSalaryPaid, settings.defaultCurrency)}
+                {formatCurrency(totalSalaryPaid, CURRENCY)}
               </span>
             </Card>
             <Card padding="md">
               <span className="text-xs font-semibold text-[#7185A5] block">Pending Payouts</span>
               <span className="text-2xl font-mono font-bold text-[#B45309] block mt-1">
-                {formatCurrency(totalSalaryPending, settings.defaultCurrency)}
+                {formatCurrency(totalSalaryPending, CURRENCY)}
               </span>
             </Card>
           </div>
@@ -512,9 +510,9 @@ export const ReportsView: React.FC = () => {
                       <td className="py-2.5 px-4 font-semibold text-[#111827]">{sal.employeeName}</td>
                       <td className="py-2.5 px-4">{sal.department}</td>
                       <td className="py-2.5 px-4 text-[#7185A5] font-mono">{sal.salaryMonth}</td>
-                      <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(sal.baseSalary, settings.defaultCurrency)}</td>
-                      <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(sal.adjustments, settings.defaultCurrency)}</td>
-                      <td className="py-2.5 px-4 text-right font-mono font-bold">{formatCurrency(sal.finalPayableAmount, settings.defaultCurrency)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(sal.baseSalary, CURRENCY)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(sal.adjustments, CURRENCY)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono font-bold">{formatCurrency(sal.finalPayableAmount, CURRENCY)}</td>
                       <td className="py-2.5 px-4 text-center">
                         <Badge variant={sal.status === 'Paid' ? 'success' : 'warning'}>
                           {sal.status}

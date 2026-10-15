@@ -23,6 +23,21 @@ body {
   padding: 0;
 }
 
+/* Invoice print page (/invoices/:id/print): an A4 sheet on screen, the whole page when printed. */
+.invoice-sheet {
+  width: 210mm;
+  max-width: 100%;
+  min-height: 297mm;
+  padding: 16mm 15mm;
+  box-sizing: border-box;
+}
+@media (max-width: 640px) {
+  .invoice-sheet {
+    min-height: 0;
+    padding: 20px 16px;
+  }
+}
+
 /* Print Styles for Invoices and Reports */
 @media print {
   body {
@@ -33,5 +48,27 @@ body {
   }
   .print-only {
     display: block !important;
+  }
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+  .invoice-sheet {
+    width: auto;
+    min-height: 0;
+    padding: 0;
+    border: none !important;
+    box-shadow: none !important;
+  }
+  .invoice-sheet .print-row {
+    flex-direction: row;
+  }
+  .invoice-sheet,
+  .invoice-sheet * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .invoice-sheet tr {
+    break-inside: avoid;
   }
 }

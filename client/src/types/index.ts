@@ -53,55 +53,6 @@ export interface Transaction {
   createdAt: string;
 }
 
-export type InvoiceStatus =
-  | 'Draft'
-  | 'Sent'
-  | 'Partially Paid'
-  | 'Paid'
-  | 'Overdue'
-  | 'Cancelled';
-
-export interface InvoiceItem {
-  id: string;
-  description: string;
-  quantity: number;
-  unitPrice: number;
-  subtotal: number;
-}
-
-export interface InvoicePayment {
-  id: string;
-  date: string;
-  amount: number;
-  paymentMethod: PaymentMethod;
-  reference?: string;
-  notes?: string;
-  recordedBy: string;
-  createdAt: string;
-}
-
-export interface Invoice {
-  id: string;
-  invoiceNumber: string;
-  clientName: string;
-  clientEmail?: string;
-  clientAddress?: string;
-  invoiceDate: string; // YYYY-MM-DD
-  dueDate: string; // YYYY-MM-DD
-  items: InvoiceItem[];
-  subtotal: number;
-  taxRate: number; // percentage, e.g. 18 for 18%
-  taxAmount: number;
-  totalAmount: number;
-  amountPaid: number;
-  outstandingAmount: number;
-  status: InvoiceStatus;
-  notes?: string;
-  payments: InvoicePayment[];
-  createdAt: string;
-  updatedAt: string;
-}
-
 // ---- Client companies (shapes returned by /api/clients) ----
 
 export type ClientStatus = 'active' | 'inactive';
@@ -256,26 +207,8 @@ export interface SalarySlip {
   notes?: string;
 }
 
-// Attendance and leave types live in types/attendance.ts (API shapes).
-
-export interface CompanySettings {
-  companyName: string;
-  companyLogoText: string;
-  companyAddress: string;
-  companyEmail: string;
-  companyPhone: string;
-  companyGstin: string;
-  defaultCurrency: string; // 'INR', 'USD', 'EUR', 'GBP'
-  financialYearStartMonth: number; // 4 = April
-  invoicePrefix: string;
-  taxRatePercentage: number;
-  // Work hours & Attendance settings
-  companyTimezone: string; // default 'Asia/Kolkata'
-  workStartTime: string; // default '09:30'
-  workEndTime: string; // default '18:30'
-  expectedDailyHours: number; // default 8.0
-  weeklyWorkingDays: number; // default 5
-}
+// Attendance and leave types live in types/attendance.ts; invoices and company settings in
+// types/invoices.ts (API shapes).
 
 export type AuditActionType =
   | 'SALARY_PAYMENT'

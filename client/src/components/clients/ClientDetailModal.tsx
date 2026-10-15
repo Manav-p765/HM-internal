@@ -12,6 +12,7 @@ import { Badge } from '../common/Badge';
 import { LoadError } from '../common/LoadError';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { AddUserModal } from '../users/AddUserModal';
+import { ClientInvoicesSection } from './ClientInvoicesSection';
 
 interface ClientDetailModalProps {
   clientId: string; // from /clients/:id
@@ -221,6 +222,8 @@ export const ClientDetailModal: React.FC<ClientDetailModalProps> = ({ clientId, 
               </div>
             )}
           </div>
+
+          <ClientInvoicesSection clientId={clientId} />
         </div>
       </Modal>
 

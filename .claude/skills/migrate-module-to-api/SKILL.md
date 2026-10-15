@@ -20,7 +20,7 @@ Argument: the domain to move (e.g. `invoices`, `transactions`, `salaries`, `atte
 | Client API module | `client/src/api/employees.ts` over `client/src/api/client.ts` |
 | Page data hook | `client/src/api/useApiData.ts` |
 | Pages / modals | `client/src/components/employees/EmployeesView.tsx`, `EmployeeModal.tsx`, `EmployeeDetailModal.tsx` |
-| Removal from local storage | commit `19424ee` ("Move employees to the API on the client…"): what left `AppContext.tsx`, `services/storage.ts`, `types/index.ts` |
+| Removal from local storage | commit `19424ee` ("Move employees to the API on the client…"): what left `AppContext.tsx`, `services/storage.ts`, `types/index.ts`. Invoices (phase 8) is the example for a domain other screens read: dashboard, top bar and reports fetch the API instead, and constants replace settings for screens employees see |
 
 ## 1. Understand the current behaviour
 
@@ -43,7 +43,7 @@ Only if a column or table is genuinely missing. Use `/create-migration`: next nu
 - A client-visible view of staff data (like `GET /api/portal/team`) returns an explicit object built field by field (no ids unless needed), and its test asserts the exact JSON keys.
 - Validate every body with a zod schema through `parseBody(schema, req.body)` (trim strings, bound lengths, `z.enum` for statuses, dates as `YYYY-MM-DD`). Query strings: `schema.safeParse(req.query)`. Ids: `z.uuid()`, invalid → 404. Use `.strict()` where extra fields must be rejected (as `PATCH /employees/me` does).
 - **Parameterised SQL only** (`$1`, `$2`…). Dynamic `SET` lists or sort columns come from a fixed whitelist (like the `COLUMN` map in `employees.ts`), never from request text.
-- Money: accept a number or numeric string, validate to 2 decimals, pass to Postgres as a string, return the `NUMERIC` string as-is. Never a JS float in SQL.
+- Money: accept a number or numeric string, validate to 2 decimals, pass to Postgres as a string, return the `NUMERIC` string as-is. Never a JS float in SQL. Use the zod helpers and arithmetic in `server/src/services/money.ts` (`moneyAmount`, `quantityValue`, `percentValue`, `computeTotals`, `compareMoney`); do not write new money arithmetic in a route. On the client show amounts with `formatMoney()` from `client/src/utils/money.ts`.
 - **Fields hidden per role are removed on the server**, in the query or the response object (`forViewer()` deletes `monthlySalary`/`paymentMethod` for non-admins, and summary totals too). Never rely on the UI to hide them. Test that the keys are absent.
 - `withTransaction()` for multi-statement writes; `FOR UPDATE` where a check-then-write could race. Server-assigned codes (like `EMP-001`) use `pg_advisory_xact_lock` + max+1.
 - Errors: `HttpError(status, 'Human message', 'UPPER_SNAKE_CODE')`. 404 `NOT_FOUND`, 409 for conflicts (map unique violations `23505` to 409), 400 `VALIDATION_ERROR`.
@@ -58,6 +58,8 @@ Copy the structure of `employees.test.ts` (and `projects-tasks.test.ts` / `porta
 - `beforeEach`: `TRUNCATE ... CASCADE` the module's tables plus `audit_logs, auth_tokens, sessions, users, employees`; create one user per role; sign each in with `request.agent(app)`. `afterAll`: `pool.end()`.
 - **Role matrix for every route**: expected status for admin / manager / employee / (client, if the role exists) / anonymous.
 - Fields hidden per role are absent (`not.toHaveProperty`), including in lists and summaries.
+- Prove the matrix bites: temporarily widen one route's role list (e.g. let a manager record an invoice payment), see the matrix fail, then restore.
+- Moving the clock forward with `setClock()` past 12 hours expires every session (absolute lifetime): sign the agents in again after a big jump.
 - Validation errors: one case per rule, asserting `400 VALIDATION_ERROR` and the field path in `details`. Unknown/invalid ids → 404.
 - Business rules, deactivate/reactivate side effects (logins disabled, sessions killed), uniqueness conflicts (409), and the `audit_logs` row (with no sensitive values) for each mutation.
 

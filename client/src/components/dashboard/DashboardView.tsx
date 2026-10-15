@@ -30,17 +30,18 @@ import { formatCurrency, formatDate, formatMinutes, formatTimeIst } from '../../
 import { attendanceApi } from '../../api/attendance';
 import { leavesApi } from '../../api/leaves';
 import { LEAVE_TYPE_LABEL } from '../../types/attendance';
+import { invoicesApi } from '../../api/invoices';
+import { InvoiceStatusBadge } from '../invoices/InvoiceStatusBadge';
+import { CURRENCY, formatMoney } from '../../utils/money';
+import { COMPANY_BRAND } from '../../utils/company';
 
 type DateFilterOption = 'this_month' | 'last_month' | 'this_year' | 'all_time';
 
 export const DashboardView: React.FC = () => {
   const {
     transactions,
-    invoices,
     salaries,
-    settings,
     setIsAddTransactionOpen,
-    setIsAddInvoiceOpen,
     currentUser,
   } = useApp();
   const navigate = useNavigate();
@@ -49,6 +50,10 @@ export const DashboardView: React.FC = () => {
   // Today's attendance (IST, from the server) and pending leave requests.
   const attendanceToday = useApiData(() => attendanceApi.roster(), []);
   const pendingLeaves = useApiData(() => leavesApi.list({ status: 'pending', limit: 5 }), []);
+  // Invoice KPIs (outstanding, overdue, collected this month) and the latest invoices, from the server.
+  const invoiceData = useApiData(() => invoicesApi.list({ limit: 5 }), []);
+  const invoiceSummary = invoiceData.data?.summary;
+  const recentInvoices = invoiceData.data?.invoices ?? [];
   const onLeaveToday = attendanceToday.data?.employees.filter(e => e.status === 'on_leave') ?? [];
   const employees = roster.data?.employees ?? [];
 
@@ -107,11 +112,9 @@ export const DashboardView: React.FC = () => {
 
   const netBalance = totalIncome - totalExpenses;
 
-  const outstandingInvoicesTotal = useMemo(() => {
-    return invoices
-      .filter(i => i.status !== 'Cancelled')
-      .reduce((sum, i) => sum + i.outstandingAmount, 0);
-  }, [invoices]);
+  const outstandingInvoices = invoiceSummary ? formatMoney(invoiceSummary.outstandingTotal) : '—';
+  const overdueInvoices = invoiceSummary ? formatMoney(invoiceSummary.overdueTotal) : '—';
+  const collectedThisMonth = invoiceSummary ? formatMoney(invoiceSummary.collectedThisMonth) : '—';
 
   const pendingSalaryTotal = useMemo(() => {
     return salaries
@@ -131,9 +134,6 @@ export const DashboardView: React.FC = () => {
   const presentTodayCount = attendanceToday.data?.summary.present ?? 0;
   // People on approved full-day leave are not expected in.
   const expectedTodayCount = Math.max(0, (attendanceToday.data?.summary.total ?? 0) - onLeaveToday.length);
-  const pendingInvoicesCount = invoices.filter(
-    i => i.status === 'Sent' || i.status === 'Partially Paid' || i.status === 'Overdue'
-  ).length;
   const attendanceRate = Math.round((presentTodayCount / Math.max(1, expectedTodayCount)) * 100);
 
   // Monthly Income vs Expenses breakdown for the last 6 months
@@ -176,8 +176,8 @@ export const DashboardView: React.FC = () => {
           </h1>
           <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">
             {isManager
-              ? `Team attendance, client invoicing, and operations overview for ${settings.companyName}`
-              : `Real-time accounting, payroll, and invoice balances for ${settings.companyName}`}
+              ? `Team attendance, client invoicing, and operations overview for ${COMPANY_BRAND}`
+              : `Real-time accounting, payroll, and invoice balances for ${COMPANY_BRAND}`}
           </p>
         </div>
 
@@ -270,10 +270,10 @@ export const DashboardView: React.FC = () => {
               </div>
               <div className="mt-2">
                 <span className="text-2xl font-mono font-bold text-[#B45309]">
-                  {formatCurrency(outstandingInvoicesTotal, settings.defaultCurrency)}
+                  {outstandingInvoices}
                 </span>
                 <p className="text-[11px] text-[#7185A5] mt-1">
-                  Uncollected client account balances
+                  Collected this month: <span className="font-mono text-[#047857]">{collectedThisMonth}</span>
                 </p>
               </div>
             </Card>
@@ -317,17 +317,17 @@ export const DashboardView: React.FC = () => {
             {/* 4. Pending Invoices */}
             <Card padding="md" className="relative overflow-hidden">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#7185A5]">Active Invoices</span>
+                <span className="text-xs font-semibold text-[#7185A5]">Overdue Invoices</span>
                 <div className="w-8 h-8 rounded-lg bg-[#5038F5]/10 text-[#5038F5] flex items-center justify-center">
                   <FileText className="w-4 h-4" />
                 </div>
               </div>
               <div className="mt-2">
-                <span className="text-2xl font-mono font-bold text-[#111827]">
-                  {pendingInvoicesCount}
+                <span className="text-2xl font-mono font-bold text-[#E11D48]" data-testid="kpi-overdue">
+                  {overdueInvoices}
                 </span>
                 <p className="text-[11px] text-[#7185A5] mt-1">
-                  Client invoices sent, partial or overdue
+                  {invoiceSummary ? `${invoiceSummary.overdueCount} sent invoice(s) past their due date` : 'Sent invoices past their due date'}
                 </p>
               </div>
             </Card>
@@ -380,7 +380,7 @@ export const DashboardView: React.FC = () => {
               </div>
               <div className="mt-2">
                 <span className="text-2xl font-mono font-bold text-[#111827]">
-                  {formatCurrency(totalIncome, settings.defaultCurrency)}
+                  {formatCurrency(totalIncome, CURRENCY)}
                 </span>
                 <p className="text-[11px] text-[#7185A5] mt-1">
                   Recorded revenue · {dateRange.label}
@@ -398,7 +398,7 @@ export const DashboardView: React.FC = () => {
               </div>
               <div className="mt-2">
                 <span className="text-2xl font-mono font-bold text-[#111827]">
-                  {formatCurrency(totalExpenses, settings.defaultCurrency)}
+                  {formatCurrency(totalExpenses, CURRENCY)}
                 </span>
                 <p className="text-[11px] text-[#7185A5] mt-1">
                   Payroll, infra & operations · {dateRange.label}
@@ -420,7 +420,7 @@ export const DashboardView: React.FC = () => {
                     netBalance >= 0 ? 'text-[#047857]' : 'text-[#E11D48]'
                   }`}
                 >
-                  {formatCurrency(netBalance, settings.defaultCurrency)}
+                  {formatCurrency(netBalance, CURRENCY)}
                 </span>
                 <p className="text-[11px] text-[#7185A5] mt-1">
                   Net operating profit for {dateRange.label}
@@ -438,10 +438,11 @@ export const DashboardView: React.FC = () => {
               </div>
               <div className="mt-2">
                 <span className="text-2xl font-mono font-bold text-[#B45309]">
-                  {formatCurrency(outstandingInvoicesTotal, settings.defaultCurrency)}
+                  {outstandingInvoices}
                 </span>
-                <p className="text-[11px] text-[#7185A5] mt-1">
-                  Unpaid and partially paid client balances
+                <p className="text-[11px] text-[#7185A5] mt-1" data-testid="kpi-invoice-detail">
+                  Overdue <span className="font-mono text-[#E11D48]">{overdueInvoices}</span> · Collected this month{' '}
+                  <span className="font-mono text-[#047857]">{collectedThisMonth}</span>
                 </p>
               </div>
             </Card>
@@ -474,7 +475,7 @@ export const DashboardView: React.FC = () => {
               </div>
               <div className="mt-2">
                 <span className="text-2xl font-mono font-bold text-[#111827]">
-                  {formatCurrency(pendingSalaryTotal, settings.defaultCurrency)}
+                  {formatCurrency(pendingSalaryTotal, CURRENCY)}
                 </span>
                 <p className="text-[11px] text-[#7185A5] mt-1">
                   Unpaid approved salary amounts for payroll
@@ -536,10 +537,10 @@ export const DashboardView: React.FC = () => {
             <div className="p-4 rounded-xl bg-[#F7F9FC] border border-[#DFE6F1]">
               <div className="text-xs font-semibold text-[#7185A5]">Pending Client Billing</div>
               <div className="text-2xl font-mono font-bold text-[#B45309] mt-1">
-                {formatCurrency(outstandingInvoicesTotal, settings.defaultCurrency)}
+                {outstandingInvoices}
               </div>
               <p className="text-[11px] text-[#7185A5] mt-3">
-                {pendingInvoicesCount} invoices pending payment or overdue
+                {invoiceSummary ? `${invoiceSummary.overdueCount} overdue · ${overdueInvoices} past due` : ''}
               </p>
               <button
                 onClick={() => navigate('/invoices')}
@@ -588,13 +589,13 @@ export const DashboardView: React.FC = () => {
                       <div
                         className="w-1/2 max-w-[28px] bg-[#5038F5] rounded-t transition-all group-hover:brightness-110 relative"
                         style={{ height: `${Math.max(incomeHeight, 4)}%` }}
-                        title={`Income: ${formatCurrency(m.income, settings.defaultCurrency)}`}
+                        title={`Income: ${formatCurrency(m.income, CURRENCY)}`}
                       />
                       {/* Expense bar */}
                       <div
                         className="w-1/2 max-w-[28px] bg-[#DFE6F1] rounded-t transition-all group-hover:bg-[#CBD5E1] relative"
                         style={{ height: `${Math.max(expenseHeight, 4)}%` }}
-                        title={`Expense: ${formatCurrency(m.expense, settings.defaultCurrency)}`}
+                        title={`Expense: ${formatCurrency(m.expense, CURRENCY)}`}
                       />
                     </div>
                     <span className="text-[11px] font-semibold text-[#7185A5] mt-2">
@@ -611,10 +612,10 @@ export const DashboardView: React.FC = () => {
                 <div key={idx} className="p-2 rounded-lg bg-[#F7F9FC] border border-[#DFE6F1]">
                   <div className="font-semibold text-[#111827]">{m.label}</div>
                   <div className="font-mono text-[#047857] text-[11px] mt-0.5">
-                    +{formatCurrency(m.income, settings.defaultCurrency)}
+                    +{formatCurrency(m.income, CURRENCY)}
                   </div>
                   <div className="font-mono text-[#E11D48] text-[11px]">
-                    -{formatCurrency(m.expense, settings.defaultCurrency)}
+                    -{formatCurrency(m.expense, CURRENCY)}
                   </div>
                 </div>
               ))}
@@ -698,7 +699,7 @@ export const DashboardView: React.FC = () => {
                       }`}
                     >
                       {txn.type === 'income' ? '+' : '-'}
-                      {formatCurrency(txn.amount, settings.defaultCurrency)}
+                      {formatCurrency(txn.amount, CURRENCY)}
                     </span>
                     <div className="text-[10px] text-[#7185A5] mt-0.5">
                       {txn.paymentMethod}
@@ -726,44 +727,37 @@ export const DashboardView: React.FC = () => {
           </div>
 
           <div className="divide-y divide-[#DFE6F1] mt-1">
-            {invoices.slice(0, 5).map(inv => (
-              <div key={inv.id} className="py-3 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono font-bold text-[#111827]">
-                      {inv.invoiceNumber}
-                    </span>
-                    <Badge
-                      variant={
-                        inv.status === 'Paid'
-                          ? 'success'
-                          : inv.status === 'Overdue'
-                          ? 'error'
-                          : inv.status === 'Partially Paid'
-                          ? 'warning'
-                          : 'purple'
-                      }
-                      size="sm"
-                    >
-                      {inv.status}
-                    </Badge>
-                  </div>
-                  <div className="text-[11px] text-[#7185A5] mt-0.5 truncate">
-                    {inv.clientName} · Due {formatDate(inv.dueDate)}
-                  </div>
-                </div>
-                <div className="text-right shrink-0">
-                  <span className="text-xs font-mono font-bold text-[#111827]">
-                    {formatCurrency(inv.totalAmount, settings.defaultCurrency)}
-                  </span>
-                  {inv.outstandingAmount > 0 && (
-                    <div className="text-[10px] font-mono text-[#E11D48] mt-0.5">
-                      Due: {formatCurrency(inv.outstandingAmount, settings.defaultCurrency)}
+            {invoiceData.error ? (
+              <p className="py-6 text-center text-xs text-[#7185A5]">Invoices could not be loaded.</p>
+            ) : !invoiceData.data ? (
+              <p className="py-6 text-center text-xs text-[#7185A5]">Loading invoices…</p>
+            ) : recentInvoices.length === 0 ? (
+              <p className="py-6 text-center text-xs text-[#7185A5]">No invoices yet.</p>
+            ) : (
+              recentInvoices.map(inv => (
+                <button
+                  key={inv.id}
+                  onClick={() => navigate(`/invoices/${inv.id}`)}
+                  className="w-full text-left py-3 flex items-center justify-between gap-3 hover:bg-[#F7F9FC]/60 cursor-pointer"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono font-bold text-[#111827]">{inv.invoiceNumber}</span>
+                      <InvoiceStatusBadge status={inv.derivedStatus} size="sm" />
                     </div>
-                  )}
-                </div>
-              </div>
-            ))}
+                    <div className="text-[11px] text-[#7185A5] mt-0.5 truncate">
+                      {inv.clientName} · Due {formatDate(inv.dueDate)}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="text-xs font-mono font-bold text-[#111827]">{formatMoney(inv.total)}</span>
+                    {inv.status === 'sent' && (
+                      <div className="text-[10px] font-mono text-[#E11D48] mt-0.5">Due: {formatMoney(inv.balance)}</div>
+                    )}
+                  </div>
+                </button>
+              ))
+            )}
           </div>
         </Card>
       </div>

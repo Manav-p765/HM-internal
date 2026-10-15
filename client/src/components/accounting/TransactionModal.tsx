@@ -9,6 +9,7 @@ import {
 } from '../../types';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
+import { CURRENCY } from '../../utils/money';
 
 interface TransactionModalProps {
   isOpen: boolean;
@@ -45,7 +46,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   onClose,
   transactionToEdit,
 }) => {
-  const { addTransaction, updateTransaction, currentUser, settings } = useApp();
+  const { addTransaction, updateTransaction, currentUser } = useApp();
 
   const [type, setType] = useState<TransactionType>('expense');
   const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
@@ -181,7 +182,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-semibold text-[#111827] mb-1.5">
-              Amount ({settings.defaultCurrency}) *
+              Amount ({CURRENCY}) *
             </label>
             <input
               type="number"

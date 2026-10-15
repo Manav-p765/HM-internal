@@ -21,6 +21,7 @@ import {
   Edit2,
 } from 'lucide-react';
 import { formatCurrency, formatDate, formatMonthYear } from '../../utils/formatters';
+import { CURRENCY } from '../../utils/money';
 
 interface EmployeeDetailModalProps {
   employeeId: string; // from /employees/:id
@@ -30,7 +31,7 @@ interface EmployeeDetailModalProps {
 
 // Loads the employee itself so /employees/:id works as a direct link.
 export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({ employeeId, onClose, onEdit }) => {
-  const { salaries, settings } = useApp();
+  const { salaries } = useApp();
   const { data: employee, error, reload } = useApiData(() => employeesApi.get(employeeId), [employeeId]);
 
   if (!employee || employee.id !== employeeId) {
@@ -147,7 +148,7 @@ export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({ employ
                 </span>
               </div>
               <span className="text-sm font-mono font-bold text-[#5038F5]">
-                {formatCurrency(Number(employee.monthlySalary), settings.defaultCurrency)} / month
+                {formatCurrency(Number(employee.monthlySalary), CURRENCY)} / month
               </span>
             </div>
 
@@ -180,13 +181,13 @@ export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({ employ
                             {formatMonthYear(sal.salaryMonth)}
                           </td>
                           <td className="py-2.5 px-3 text-right font-mono text-[#7185A5]">
-                            {formatCurrency(sal.baseSalary, settings.defaultCurrency)}
+                            {formatCurrency(sal.baseSalary, CURRENCY)}
                           </td>
                           <td className="py-2.5 px-3 text-right font-mono text-[#7185A5]">
-                            {sal.adjustments > 0 ? `+${formatCurrency(sal.adjustments, settings.defaultCurrency)}` : formatCurrency(sal.adjustments, settings.defaultCurrency)}
+                            {sal.adjustments > 0 ? `+${formatCurrency(sal.adjustments, CURRENCY)}` : formatCurrency(sal.adjustments, CURRENCY)}
                           </td>
                           <td className="py-2.5 px-3 text-right font-mono font-bold text-[#111827]">
-                            {formatCurrency(sal.finalPayableAmount, settings.defaultCurrency)}
+                            {formatCurrency(sal.finalPayableAmount, CURRENCY)}
                           </td>
                           <td className="py-2.5 px-3 text-center">
                             <Badge variant={sal.status === 'Paid' ? 'success' : 'warning'}>

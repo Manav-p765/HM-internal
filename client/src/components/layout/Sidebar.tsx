@@ -26,6 +26,7 @@ import {
   CalendarDays,
 } from 'lucide-react';
 import { Badge } from '../common/Badge';
+import { COMPANY_BRAND } from '../../utils/company';
 
 interface NavItem {
   to: string;
@@ -85,7 +86,7 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onMobileClose }) => {
-  const { currentUser, settings } = useApp();
+  const { currentUser } = useApp();
   const { logout } = useAuth();
 
   // Hiding items by role is cosmetic; RequireRole and the server are the real guards.
@@ -102,7 +103,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onMobileClose }) =
       )}
 
       <aside
-        className={`fixed top-0 bottom-0 left-0 z-40 w-64 bg-white border-r border-[#DFE6F1] flex flex-col transition-transform duration-200 ease-in-out lg:translate-x-0 ${
+        className={`no-print fixed top-0 bottom-0 left-0 z-40 w-64 bg-white border-r border-[#DFE6F1] flex flex-col transition-transform duration-200 ease-in-out lg:translate-x-0 ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -117,7 +118,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onMobileClose }) =
                 Monks
               </span>
               <span className="text-[11px] font-medium text-[#7185A5] mt-0.5 leading-none">
-                {settings.companyName}
+                {COMPANY_BRAND}
               </span>
             </div>
           </div>

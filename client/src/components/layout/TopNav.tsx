@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { useApp } from '../../context/AppContext';
+import { invoicesApi } from '../../api/invoices';
+import { useApiData } from '../../api/useApiData';
 import {
   Search,
   Bell,
@@ -30,23 +32,28 @@ export const TopNav: React.FC<TopNavProps> = ({
   const { pathname } = useLocation();
   const {
     currentUser,
-    invoices,
     salaries,
     transactions,
-    settings,
     setIsAddTransactionOpen,
-    setIsAddInvoiceOpen,
     setIsAddEmployeeOpen,
   } = useApp();
 
   const [notificationsOpen, setNotificationsOpen] = useState(false);
 
   // Derive real notifications from active system state
-  const overdueInvoices = invoices.filter(i => i.status === 'Overdue');
+  // Overdue invoices come from the API, and only for the roles that may read invoices (an employee's
+  // browser never calls /api/invoices). Best effort: the bell still works without them.
+  const canSeeInvoices = currentUser.role === 'admin' || currentUser.role === 'manager';
+  const overdue = useApiData(
+    () => (canSeeInvoices ? invoicesApi.list({ status: 'overdue', limit: 5 }) : Promise.resolve(null)),
+    [canSeeInvoices],
+  );
+  const overdueInvoices = overdue.data?.invoices ?? [];
+  const overdueTotalCount = overdue.data?.total ?? 0;
   const pendingSalaries = salaries.filter(s => s.status === 'Pending');
   const recentTransactions = transactions.slice(0, 3);
 
-  const notificationCount = overdueInvoices.length + (currentUser.role === 'admin' ? pendingSalaries.length : 0);
+  const notificationCount = overdueTotalCount + (currentUser.role === 'admin' ? pendingSalaries.length : 0);
 
   // Context-aware Quick Action button
   const renderQuickAction = () => {
@@ -66,7 +73,7 @@ export const TopNav: React.FC<TopNavProps> = ({
           variant="primary"
           size="sm"
           icon={<Plus className="w-4 h-4" />}
-          onClick={() => setIsAddInvoiceOpen(true)}
+          onClick={() => navigate('/invoices/new')}
         >
           Create Invoice
         </Button>
@@ -111,7 +118,7 @@ export const TopNav: React.FC<TopNavProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-30 h-16 bg-white border-b border-[#DFE6F1] px-4 sm:px-6 flex items-center justify-between gap-4">
+    <header className="no-print sticky top-0 z-30 h-16 bg-white border-b border-[#DFE6F1] px-4 sm:px-6 flex items-center justify-between gap-4">
       {/* Left zone: Mobile toggle & Search */}
       <div className="flex items-center gap-3 flex-1 max-w-md">
         <button
@@ -160,18 +167,19 @@ export const TopNav: React.FC<TopNavProps> = ({
               </div>
 
               <div className="space-y-2 max-h-72 overflow-y-auto">
-                {overdueInvoices.length > 0 && (
+                {overdueTotalCount > 0 && (
                   <div className="p-2.5 rounded-lg bg-[#E11D48]/5 border border-[#E11D48]/15 text-xs">
                     <div className="flex items-center gap-1.5 font-semibold text-[#E11D48]">
                       <ShieldAlert className="w-4 h-4 shrink-0" />
-                      {overdueInvoices.length} Overdue Invoices
+                      {overdueTotalCount} Overdue Invoice{overdueTotalCount === 1 ? '' : 's'}
                     </div>
                     <p className="text-[11px] text-[#475569] mt-1">
-                      {overdueInvoices.map(i => i.invoiceNumber).join(', ')} require follow-up.
+                      {overdueInvoices.map(i => i.invoiceNumber).join(', ')}
+                      {overdueTotalCount > overdueInvoices.length ? ' and more' : ''} need follow-up.
                     </p>
                     <button
                       onClick={() => {
-                        navigate('/invoices');
+                        navigate('/invoices?status=overdue');
                         setNotificationsOpen(false);
                       }}
                       className="mt-1.5 text-[11px] font-medium text-[#5038F5] hover:underline flex items-center gap-1"

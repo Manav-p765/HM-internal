@@ -33,6 +33,7 @@ const DashboardView = named(() => import('./components/dashboard/DashboardView')
 const EmployeeDashboardView = named(() => import('./components/dashboard/EmployeeDashboardView'), 'EmployeeDashboardView');
 const AccountingView = named(() => import('./components/accounting/AccountingView'), 'AccountingView');
 const InvoicesView = named(() => import('./components/invoices/InvoicesView'), 'InvoicesView');
+const InvoicePrintView = named(() => import('./components/invoices/InvoicePrintView'), 'InvoicePrintView');
 const EmployeesView = named(() => import('./components/employees/EmployeesView'), 'EmployeesView');
 const SalaryView = named(() => import('./components/salary/SalaryView'), 'SalaryView');
 const EmployeeSalarySlipsView = named(() => import('./components/salary/EmployeeSalarySlipsView'), 'EmployeeSalarySlipsView');
@@ -69,17 +70,17 @@ const MainLayout: React.FC = () => {
   usePresence(currentUser.role === 'employee');
 
   return (
-    <div className="min-h-screen bg-[#F7F9FC] flex">
+    <div className="min-h-screen bg-[#F7F9FC] print:bg-white flex">
       <Sidebar mobileOpen={mobileSidebarOpen} onMobileClose={() => setMobileSidebarOpen(false)} />
 
-      <div className="flex-1 flex flex-col min-w-0 lg:pl-64">
+      <div className="flex-1 flex flex-col min-w-0 lg:pl-64 print:pl-0">
         <TopNav
           onMobileMenuToggle={() => setMobileSidebarOpen(!mobileSidebarOpen)}
           searchQuery={globalSearch}
           setSearchQuery={setGlobalSearch}
         />
 
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto print:p-0 print:max-w-none">
           <Suspense fallback={<PageLoading />}>
             <Outlet />
           </Suspense>
@@ -154,7 +155,10 @@ export default function App() {
               <Route path="/employees" element={<EmployeesView />} />
               <Route path="/employees/:id" element={<EmployeesView />} />
               <Route path="/invoices" element={<InvoicesView />} />
+              <Route path="/invoices/new" element={<InvoicesView />} />
               <Route path="/invoices/:id" element={<InvoicesView />} />
+              <Route path="/invoices/:id/edit" element={<InvoicesView />} />
+              <Route path="/invoices/:id/print" element={<InvoicePrintView />} />
               <Route path="/reports" element={<ReportsView />} />
               <Route path="/clients" element={<ClientsView />} />
               <Route path="/clients/:id" element={<ClientsView />} />

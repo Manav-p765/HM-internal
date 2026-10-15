@@ -31,6 +31,11 @@ function removeLegacyAuthStorage() {
       // Attendance and leaves moved to the API (/api/attendance, /api/leaves).
       'monks_attendance_v2',
       'monks_leaves_v2',
+      // Invoices, their payments and company settings moved to the API (/api/invoices, /api/settings);
+      // the local ledger was bumped to v2 without the invoice-payment rows.
+      'monks_invoices_v1',
+      'monks_company_settings_v1',
+      'monks_transactions_v1',
     ];
     legacy.forEach(key => localStorage.removeItem(key));
     Object.keys(localStorage)

@@ -21,12 +21,13 @@ import {
   FileSpreadsheet,
 } from 'lucide-react';
 import { formatCurrency, formatDate, exportToCSV } from '../../utils/formatters';
+import { CURRENCY } from '../../utils/money';
+import { COMPANY_BRAND } from '../../utils/company';
 
 export const AccountingView: React.FC = () => {
   const {
     transactions,
     deleteTransaction,
-    settings,
     currentUser,
     isAddTransactionOpen,
     setIsAddTransactionOpen,
@@ -90,7 +91,7 @@ export const AccountingView: React.FC = () => {
       'Type',
       'Category',
       'Description',
-      `Amount (${settings.defaultCurrency})`,
+      `Amount (${CURRENCY})`,
       'Payment Method',
       'Reference Number',
       'Created By',
@@ -110,7 +111,7 @@ export const AccountingView: React.FC = () => {
       t.notes || '',
     ]);
 
-    exportToCSV(`accounting_ledger_${settings.companyName.toLowerCase().replace(/\s+/g, '_')}`, headers, rows);
+    exportToCSV(`accounting_ledger_${COMPANY_BRAND.toLowerCase().replace(/\s+/g, '_')}`, headers, rows);
   };
 
   return (
@@ -122,7 +123,7 @@ export const AccountingView: React.FC = () => {
             Accounting & Transactions
           </h1>
           <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">
-            Record, audit, and categorize company cash flow in {settings.defaultCurrency}
+            Record, audit, and categorize company cash flow in {CURRENCY}
           </p>
         </div>
 
@@ -162,7 +163,7 @@ export const AccountingView: React.FC = () => {
           </div>
           <div className="mt-2">
             <span className="text-2xl font-mono font-bold text-[#111827]">
-              {formatCurrency(totalIncome, settings.defaultCurrency)}
+              {formatCurrency(totalIncome, CURRENCY)}
             </span>
             <p className="text-[11px] text-[#7185A5] mt-1">
               {filteredTransactions.filter(t => t.type === 'income').length} income records
@@ -179,7 +180,7 @@ export const AccountingView: React.FC = () => {
           </div>
           <div className="mt-2">
             <span className="text-2xl font-mono font-bold text-[#111827]">
-              {formatCurrency(totalExpense, settings.defaultCurrency)}
+              {formatCurrency(totalExpense, CURRENCY)}
             </span>
             <p className="text-[11px] text-[#7185A5] mt-1">
               {filteredTransactions.filter(t => t.type === 'expense').length} expense records
@@ -200,7 +201,7 @@ export const AccountingView: React.FC = () => {
                 netBalance >= 0 ? 'text-[#047857]' : 'text-[#E11D48]'
               }`}
             >
-              {formatCurrency(netBalance, settings.defaultCurrency)}
+              {formatCurrency(netBalance, CURRENCY)}
             </span>
             <p className="text-[11px] text-[#7185A5] mt-1">
               Net operating surplus
@@ -335,7 +336,7 @@ export const AccountingView: React.FC = () => {
                       }`}
                     >
                       {txn.type === 'income' ? '+' : '-'}
-                      {formatCurrency(txn.amount, settings.defaultCurrency)}
+                      {formatCurrency(txn.amount, CURRENCY)}
                     </td>
                     {currentUser.role !== 'employee' && (
                       <td className="py-3 px-4 text-right whitespace-nowrap">

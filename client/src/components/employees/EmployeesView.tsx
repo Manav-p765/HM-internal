@@ -18,11 +18,12 @@ import { EmployeeDetailModal } from './EmployeeDetailModal';
 import { loginStatus, statusBadgeVariant } from './employeeDisplay';
 import { Users, Plus, Search, Eye, Edit2, UserX, UserCheck, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatCurrency, formatDate } from '../../utils/formatters';
+import { CURRENCY } from '../../utils/money';
 
 const PAGE_SIZE = 50;
 
 export const EmployeesView: React.FC = () => {
-  const { currentUser, settings, showToast, isAddEmployeeOpen, setIsAddEmployeeOpen } = useApp();
+  const { currentUser, showToast, isAddEmployeeOpen, setIsAddEmployeeOpen } = useApp();
   const isAdmin = currentUser.role === 'admin';
 
   // Filters (search is debounced so typing doesn't fire a request per keystroke)
@@ -167,7 +168,7 @@ export const EmployeesView: React.FC = () => {
             <span className="text-[11px] font-semibold text-[#7185A5] block">Monthly Base Payroll</span>
             <div className="mt-1 flex items-baseline justify-between">
               <span className="text-xl font-mono font-bold text-[#5038F5]">
-                {formatCurrency(Number(summary.monthlyPayroll), settings.defaultCurrency)}
+                {formatCurrency(Number(summary.monthlyPayroll), CURRENCY)}
               </span>
               <span className="text-xs text-[#7185A5]">/ month</span>
             </div>
@@ -297,7 +298,7 @@ export const EmployeesView: React.FC = () => {
                       {isAdmin && (
                         <td className="py-3 px-4 text-right font-mono font-bold text-[#111827] whitespace-nowrap">
                           {emp.monthlySalary !== undefined
-                            ? formatCurrency(Number(emp.monthlySalary), settings.defaultCurrency)
+                            ? formatCurrency(Number(emp.monthlySalary), CURRENCY)
                             : '—'}
                         </td>
                       )}
