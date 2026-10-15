@@ -358,7 +358,7 @@ const CorrectionModal: React.FC<{ entry: RosterEntry; date: string; onClose: () 
     <Modal
       isOpen={true}
       onClose={onClose}
-      title={entry.record ? 'Correct Attendance Record' : 'Add Attendance Record'}
+      title={(detail.data?.record ?? entry.record) ? 'Correct Attendance Record' : 'Add Attendance Record'}
       description={`Employee: ${entry.fullName} · Date: ${formatDate(date)} · Times in IST`}
       maxWidth="md"
     >

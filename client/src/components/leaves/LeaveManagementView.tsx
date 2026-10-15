@@ -161,7 +161,7 @@ export const LeaveManagementView: React.FC = () => {
       </div>
 
       <Card padding="sm">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7 gap-3">
           <div className="relative lg:col-span-2">
             <Search className="w-4 h-4 text-[#7185A5] absolute left-3 top-1/2 -translate-y-1/2" />
             <input
@@ -196,9 +196,10 @@ export const LeaveManagementView: React.FC = () => {
               </option>
             ))}
           </select>
-          <div className="flex items-center gap-1">
-            <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={selectClass} aria-label="From date" title="From" />
-            <input type="date" value={to} onChange={e => setTo(e.target.value)} className={selectClass} aria-label="To date" title="To" />
+          {/* Two dates side by side in their own cell; min-w-0 lets native date inputs shrink instead of overflowing. */}
+          <div className="grid grid-cols-2 gap-1 sm:col-span-2 lg:col-span-2">
+            <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={`${selectClass} min-w-0`} aria-label="From date" title="From" />
+            <input type="date" value={to} onChange={e => setTo(e.target.value)} className={`${selectClass} min-w-0`} aria-label="To date" title="To" />
           </div>
         </div>
       </Card>
@@ -218,8 +219,7 @@ export const LeaveManagementView: React.FC = () => {
                   <th className="py-3 px-4">Employee</th>
                   <th className="py-3 px-4">Department</th>
                   <th className="py-3 px-4">Leave Type</th>
-                  <th className="py-3 px-4">Start Date</th>
-                  <th className="py-3 px-4">End Date</th>
+                  <th className="py-3 px-4">Dates</th>
                   <th className="py-3 px-4 text-center">Total Days</th>
                   <th className="py-3 px-4">Applied On</th>
                   <th className="py-3 px-4 text-center">Status</th>
@@ -243,8 +243,12 @@ export const LeaveManagementView: React.FC = () => {
                       {LEAVE_TYPE_LABEL[req.leaveType]}
                       <span className="font-normal text-[10px] text-[#7185A5] block">{dayTypeLabel(req)}</span>
                     </td>
-                    <td className="py-3 px-4 text-[#111827] whitespace-nowrap font-medium">{formatDate(req.startDate)}</td>
-                    <td className="py-3 px-4 text-[#111827] whitespace-nowrap font-medium">{formatDate(req.endDate)}</td>
+                    <td className="py-3 px-4 text-[#111827] whitespace-nowrap font-medium">
+                      {formatDate(req.startDate)}
+                      {req.endDate !== req.startDate && (
+                        <span className="font-normal text-[10px] text-[#7185A5] block">to {formatDate(req.endDate)}</span>
+                      )}
+                    </td>
                     <td className="py-3 px-4 text-center whitespace-nowrap font-mono font-bold text-[#5038F5]">{daysLabel(req.totalDays)}</td>
                     <td className="py-3 px-4 text-[#7185A5] whitespace-nowrap">{formatDate(req.appliedAt.slice(0, 10))}</td>
                     <td className="py-3 px-4 text-center whitespace-nowrap">
