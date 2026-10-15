@@ -21,6 +21,8 @@ import { leavesRouter } from './routes/leaves.js';
 import { invoicesRouter } from './routes/invoices.js';
 import { settingsRouter } from './routes/settings.js';
 import { salaryRouter } from './routes/salary.js';
+import { transactionsRouter } from './routes/transactions.js';
+import { reportsRouter } from './routes/reports.js';
 import { createRouter, mountRouter } from './middleware/access.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -81,6 +83,8 @@ mountRouter(api, '/leaves', leavesRouter);
 mountRouter(api, '/invoices', invoicesRouter);
 mountRouter(api, '/settings', settingsRouter);
 mountRouter(api, '/salary', salaryRouter);
+mountRouter(api, '/transactions', transactionsRouter);
+mountRouter(api, '/reports', reportsRouter);
 
 api.use(apiNotFound);
 app.use('/api', api);

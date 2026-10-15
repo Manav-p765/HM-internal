@@ -142,10 +142,45 @@ INSERT INTO salary_adjustment_lines (salary_id, label, kind, amount, created_by,
 INSERT INTO transactions (txn_date, type, category, description, amount, payment_method, reference_number, invoice_id, salary_id, created_by) VALUES
   ('2026-09-30', 'expense', 'Salary',                     'Salary 2026-09 - EMP-001',          130000.00, 'Bank Transfer', 'UTR-FAKE-S001', NULL,                                   '00000000-0000-4000-a000-000000000301', '00000000-0000-4000-a000-000000000001'),
   ('2026-09-30', 'expense', 'Salary',                     'Salary 2026-09 - EMP-002',           95000.00, 'Bank Transfer', 'UTR-FAKE-S002', NULL,                                   '00000000-0000-4000-a000-000000000302', '00000000-0000-4000-a000-000000000001'),
-  ('2026-09-30', 'expense', 'Salary',                     'Salary 2026-09 - EMP-003',           68000.00, 'UPI',           'UPI-FAKE-S003', NULL,                                   '00000000-0000-4000-a000-000000000303', '00000000-0000-4000-a000-000000000001'),
-  ('2026-09-05', 'expense', 'Software and Tools',         'Design tool seats (fake vendor)',     4999.00, 'Credit Card',   NULL,            NULL,                                   NULL,                                   '00000000-0000-4000-a000-000000000002'),
-  ('2026-09-12', 'expense', 'Hosting and Infrastructure', 'Cloud hosting (fake vendor)',        12000.00, 'Credit Card',   NULL,            NULL,                                   NULL,                                   '00000000-0000-4000-a000-000000000002'),
-  ('2026-10-02', 'expense', 'Office Expenses',            'Stationery',                          1850.00, 'Cash',          NULL,            NULL,                                   NULL,                                   '00000000-0000-4000-a000-000000000002');
+  ('2026-09-30', 'expense', 'Salary',                     'Salary 2026-09 - EMP-003',           68000.00, 'UPI',           'UPI-FAKE-S003', NULL,                                   '00000000-0000-4000-a000-000000000303', '00000000-0000-4000-a000-000000000001');
+
+-- Manual ledger rows (fake vendors and amounts), dated relative to today (IST) when the seed runs so the
+-- last 6 months always have data. Invoice and salary payments above appear in the ledger as linked rows.
+-- One duplicate is voided (kept, struck through, excluded from every total).
+INSERT INTO transactions (txn_date, type, category, description, amount, payment_method, reference_number, created_by,
+                          reversed_at, reversed_by, reverse_reason)
+SELECT (now() AT TIME ZONE 'Asia/Kolkata')::date + v.off, v.type, v.category, v.description, v.amount, v.method, v.ref,
+       '00000000-0000-4000-a000-000000000001'::uuid,
+       CASE WHEN v.voided THEN now() END, CASE WHEN v.voided THEN '00000000-0000-4000-a000-000000000001'::uuid END,
+       CASE WHEN v.voided THEN 'Entered twice (fake)' END
+  FROM (VALUES
+    (-178, 'expense', 'Rent',                     'Office rent (fake landlord)',              45000.00, 'Bank Transfer', 'NEFT-FAKE-R01', false),
+    (-170, 'expense', 'Software & Subscriptions', 'Design tool seats (fake vendor)',           4999.00, 'Credit Card',   NULL,            false),
+    (-160, 'income',  'Other Income',             'Workshop fee (fake)',                      15000.00, 'UPI',           'UPI-FAKE-W01',  false),
+    (-148, 'expense', 'Rent',                     'Office rent (fake landlord)',              45000.00, 'Bank Transfer', 'NEFT-FAKE-R02', false),
+    (-140, 'expense', 'Utilities',                'Electricity and internet (fake)',           6200.00, 'UPI',           NULL,            false),
+    (-131, 'expense', 'Hardware',                 'Laptop for new designer (fake vendor)',    92000.00, 'Credit Card',   'INV-FAKE-H01',  false),
+    (-118, 'expense', 'Rent',                     'Office rent (fake landlord)',              45000.00, 'Bank Transfer', 'NEFT-FAKE-R03', false),
+    (-112, 'expense', 'Marketing',                'Conference booth (fake event)',            30000.00, 'Bank Transfer', NULL,            false),
+    (-104, 'expense', 'Professional Fees',        'Chartered accountant retainer (fake)',     12500.00, 'Bank Transfer', NULL,            false),
+    ( -95, 'income',  'Other Income',             'Interest on deposits (fake bank)',          1840.55, 'Bank Transfer', NULL,            false),
+    ( -88, 'expense', 'Rent',                     'Office rent (fake landlord)',              45000.00, 'Bank Transfer', 'NEFT-FAKE-R04', false),
+    ( -80, 'expense', 'Travel',                   'Client visit flights (fake)',              18750.00, 'Credit Card',   NULL,            false),
+    ( -72, 'expense', 'Office Supplies',          'Stationery and printer paper (fake)',       1850.00, 'Cash',          NULL,            false),
+    ( -64, 'expense', 'Software & Subscriptions', 'Cloud hosting (fake vendor)',              12000.00, 'Credit Card',   NULL,            false),
+    ( -58, 'expense', 'Rent',                     'Office rent (fake landlord)',              45000.00, 'Bank Transfer', 'NEFT-FAKE-R05', false),
+    ( -50, 'expense', 'Taxes',                    'Professional tax (fake)',                   2500.00, 'Bank Transfer', 'CHALLAN-FAKE-1', false),
+    ( -41, 'expense', 'Utilities',                'Electricity and internet (fake)',           6450.00, 'UPI',           NULL,            false),
+    ( -33, 'expense', 'Marketing',                'Social media ads (fake platform)',          8999.99, 'Credit Card',   NULL,            false),
+    ( -28, 'expense', 'Rent',                     'Office rent (fake landlord)',              45000.00, 'Bank Transfer', 'NEFT-FAKE-R06', false),
+    ( -21, 'income',  'Other Income',             'Old equipment sold (fake buyer)',           7500.00, 'Cash',          NULL,            false),
+    ( -15, 'expense', 'Software & Subscriptions', 'Design tool seats (fake vendor)',           4999.00, 'Credit Card',   NULL,            false),
+    ( -15, 'expense', 'Software & Subscriptions', 'Design tool seats (fake vendor)',           4999.00, 'Credit Card',   NULL,            true),
+    (  -9, 'expense', 'Travel',                   'Taxi to client office (fake)',               640.00, 'UPI',           NULL,            false),
+    (  -4, 'expense', 'Office Supplies',          'Coffee and snacks (fake)',                  1275.50, 'Cash',          NULL,            false),
+    (  -2, 'expense', 'Professional Fees',        'Legal review of contract (fake firm)',      9000.00, 'Bank Transfer', NULL,            false),
+    (  -1, 'expense', 'Other Expense',            'Courier charges (fake)',                     480.00, 'Cash',          NULL,            false)
+  ) AS v(off, type, category, description, amount, method, ref, voided);
 
 -- Attendance: the 10 weekdays before today (IST), relative to when the seed runs, so the screens always
 -- have recent history. Erin (EMP-002) misses one day (covered by an approved sick leave below); Eli

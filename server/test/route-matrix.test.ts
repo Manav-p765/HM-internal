@@ -161,6 +161,33 @@ describe('route matrix (deny by default)', () => {
     });
   });
 
+  it('ledger and report routes: admin only, except the invoice report (admin, manager); no DELETE on the ledger', () => {
+    const finance = Object.fromEntries(
+      collectRoutes()
+        .routes.filter(r => r.path.startsWith('/api/transactions') || r.path.startsWith('/api/reports'))
+        .map(r => [r.key, r.declared?.access]),
+    );
+    const ADMIN = ['admin'];
+    const ADMIN_MANAGER = ['admin', 'manager'];
+    expect(finance).toEqual({
+      'GET /api/transactions/': ADMIN,
+      'GET /api/transactions/export.csv': ADMIN,
+      'GET /api/transactions/categories': ADMIN,
+      'POST /api/transactions/categories': ADMIN,
+      'PATCH /api/transactions/categories/:id': ADMIN,
+      'POST /api/transactions/': ADMIN,
+      'PATCH /api/transactions/:id': ADMIN,
+      'POST /api/transactions/:id/void': ADMIN,
+      'GET /api/reports/profit-loss': ADMIN,
+      'GET /api/reports/profit-loss.csv': ADMIN,
+      'GET /api/reports/trend': ADMIN,
+      'GET /api/reports/invoices': ADMIN_MANAGER,
+      'GET /api/reports/invoices.csv': ADMIN_MANAGER,
+      'GET /api/reports/salary': ADMIN,
+      'GET /api/reports/salary.csv': ADMIN,
+    });
+  });
+
   it('a client session gets 403 on every route outside the allowlist', async () => {
     const checked: string[] = [];
     for (const route of collectRoutes().routes) {

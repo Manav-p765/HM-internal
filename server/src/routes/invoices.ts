@@ -47,16 +47,16 @@ function parseId(raw: unknown): string {
 // ---------------------------------------------------------------------------
 // SQL fragments. $TODAY is the IST date of the server clock, always passed as a parameter.
 // ---------------------------------------------------------------------------
-const PAID_JOIN = `
+export const PAID_JOIN = `
   LEFT JOIN LATERAL (
     SELECT coalesce(sum(t.amount), 0)::numeric(14,2) AS paid FROM transactions t WHERE t.invoice_id = i.id AND t.reversed_at IS NULL
   ) p ON true`;
 
-const BALANCE_SQL = `(CASE WHEN i.status = 'cancelled' THEN 0 ELSE i.total_amount - p.paid END)::numeric(14,2)`;
-const overdueSql = (today: string) => `(i.status = 'sent' AND i.total_amount > p.paid AND i.due_date < ${today}::date)`;
+export const BALANCE_SQL = `(CASE WHEN i.status = 'cancelled' THEN 0 ELSE i.total_amount - p.paid END)::numeric(14,2)`;
+export const overdueSql = (today: string) => `(i.status = 'sent' AND i.total_amount > p.paid AND i.due_date < ${today}::date)`;
 const partiallyPaidSql = `(i.status = 'sent' AND p.paid > 0 AND i.total_amount > p.paid)`;
 // Overdue wins over partially paid (an overdue invoice may also be partly paid).
-const derivedStatusSql = (today: string) => `
+export const derivedStatusSql = (today: string) => `
   CASE WHEN ${overdueSql(today)} THEN 'overdue'
        WHEN ${partiallyPaidSql} THEN 'partially_paid'
        ELSE i.status END`;

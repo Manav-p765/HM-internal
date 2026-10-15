@@ -94,3 +94,56 @@ export async function comment(taskId: string, authorId: string, type: 'internal_
   );
   return row.id;
 }
+
+// transaction_categories as migration 008 seeds them (tests add, rename and deactivate categories).
+export async function resetCategories() {
+  await query('TRUNCATE transaction_categories');
+  await query(
+    `INSERT INTO transaction_categories (name, type, is_system) VALUES
+       ('Invoice Payment', 'income', true), ('Other Income', 'income', false),
+       ('Salary', 'expense', true), ('Rent', 'expense', false), ('Utilities', 'expense', false),
+       ('Software & Subscriptions', 'expense', false), ('Hardware', 'expense', false), ('Marketing', 'expense', false),
+       ('Travel', 'expense', false), ('Professional Fees', 'expense', false), ('Office Supplies', 'expense', false),
+       ('Taxes', 'expense', false), ('Other Expense', 'expense', false)`,
+  );
+}
+
+// A ledger row written directly (manual unless invoiceId/salaryId is given).
+export async function ledgerRow(
+  createdBy: string,
+  opts: {
+    type?: 'income' | 'expense';
+    category?: string;
+    amount?: string;
+    date?: string;
+    description?: string;
+    invoiceId?: string;
+    salaryId?: string;
+    voidedBy?: string;
+    referenceNumber?: string;
+    paymentMethod?: string;
+  } = {},
+): Promise<string> {
+  const type = opts.type ?? (opts.invoiceId ? 'income' : 'expense');
+  const [row] = await query<{ id: string }>(
+    `INSERT INTO transactions (txn_date, type, category, description, amount, payment_method, reference_number, invoice_id, salary_id,
+                               created_by, reversed_at, reversed_by, reverse_reason)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
+    [
+      opts.date ?? '2026-10-10',
+      type,
+      opts.category ?? (type === 'income' ? 'Other Income' : 'Rent'),
+      opts.description ?? 'Fake ledger row',
+      opts.amount ?? '100.00',
+      opts.paymentMethod ?? 'Bank Transfer',
+      opts.referenceNumber ?? null,
+      opts.invoiceId ?? null,
+      opts.salaryId ?? null,
+      createdBy,
+      opts.voidedBy ? new Date('2026-10-12T04:30:00Z') : null,
+      opts.voidedBy ?? null,
+      opts.voidedBy ? 'Fake void reason' : null,
+    ],
+  );
+  return row.id;
+}

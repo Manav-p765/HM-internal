@@ -55,7 +55,13 @@ export type AuditAction =
   | 'salary.paid'
   | 'salary.unpaid'
   | 'salary.slip_published'
-  | 'salary.slip_unpublished';
+  | 'salary.slip_unpublished'
+  | 'transaction.created'
+  | 'transaction.updated'
+  | 'transaction.voided'
+  | 'category.created'
+  | 'category.updated'
+  | 'export.downloaded';
 
 interface AuditEntry {
   action: AuditAction;
