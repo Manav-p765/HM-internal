@@ -41,7 +41,7 @@ export const PortalTeamView: React.FC = () => {
             >
               <div className="flex items-start justify-between gap-3 mb-3">
                 <Avatar name={person.name} url={person.avatarUrl} size="lg" />
-                <AvailabilityBadge status={person.status} />
+                {person.status && <AvailabilityBadge status={person.status} />}
               </div>
               <h3 className="font-bold text-sm text-[#111827]">{person.name}</h3>
               <p className="text-xs text-[#5038F5] font-medium mt-0.5">{person.designation}</p>

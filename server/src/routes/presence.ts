@@ -40,12 +40,12 @@ presenceRouter.post('/heartbeat', ['employee'], heartbeatLimiter, async (req, re
 
 // ---------------------------------------------------------------------------
 // /api/team/availability  (any staff): today's status for everyone in the directory. Status only:
-// no punch times, no leave details.
+// no punch times, no leave details. null for admin/manager-linked employees (attendance not tracked).
 // ---------------------------------------------------------------------------
 export const teamRouter = createRouter();
 
 teamRouter.get('/availability', STAFF, async (_req, res) => {
   const rows = await query<{ id: string }>(`SELECT id FROM employees WHERE status <> 'inactive' ORDER BY full_name`);
   const statuses = await availabilityFor(rows.map(r => r.id));
-  res.json({ availability: rows.map(r => ({ employeeId: r.id, status: statuses.get(r.id) ?? 'not_in_today' })) });
+  res.json({ availability: rows.map(r => ({ employeeId: r.id, status: statuses.has(r.id) ? statuses.get(r.id)! : 'not_in_today' })) });
 });

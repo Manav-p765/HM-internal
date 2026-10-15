@@ -36,13 +36,23 @@ export function deriveAvailability(facts: AvailabilityFacts, at: Date): Availabi
 }
 
 // Availability for each of the given employees at `at` (default: the server clock). Ids that don't exist
-// are simply absent from the map.
-export async function availabilityFor(employeeIds: string[], at: Date = clockNow()): Promise<Map<string, Availability>> {
-  const result = new Map<string, Availability>();
+// are simply absent from the map. Employees whose login is an admin or manager are never auto-punched in
+// (their attendance isn't tracked), so their status is null and screens show no badge for them.
+export async function availabilityFor(employeeIds: string[], at: Date = clockNow()): Promise<Map<string, Availability | null>> {
+  const result = new Map<string, Availability | null>();
   if (employeeIds.length === 0) return result;
   const today = istDate(at);
-  const rows = await query<{ id: string; lastSeenAt: Date | null; onFullDayLeave: boolean; punchedIn: boolean; punchedOut: boolean }>(
+  const rows = await query<{
+    id: string;
+    untracked: boolean;
+    lastSeenAt: Date | null;
+    onFullDayLeave: boolean;
+    punchedIn: boolean;
+    punchedOut: boolean;
+  }>(
     `SELECT e.id, e.last_seen_at AS "lastSeenAt",
+            EXISTS (SELECT 1 FROM users u
+                     WHERE u.employee_id = e.id AND u.role IN ('admin', 'manager')) AS untracked,
             EXISTS (SELECT 1 FROM leave_requests l
                      WHERE l.employee_id = e.id AND l.status = 'approved' AND l.day_type = 'full'
                        AND $2::date BETWEEN l.start_date AND l.end_date) AS "onFullDayLeave",
@@ -53,6 +63,6 @@ export async function availabilityFor(employeeIds: string[], at: Date = clockNow
       WHERE e.id = ANY($1::uuid[])`,
     [employeeIds, today],
   );
-  for (const row of rows) result.set(row.id, deriveAvailability(row, at));
+  for (const row of rows) result.set(row.id, row.untracked ? null : deriveAvailability(row, at));
   return result;
 }

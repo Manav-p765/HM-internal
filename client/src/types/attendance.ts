@@ -190,6 +190,6 @@ export interface PortalTeamMember {
   name: string;
   designation: string;
   avatarUrl: string | null;
-  status: Availability;
+  status: Availability | null; // null: an admin/manager, attendance not tracked (show no badge)
   projects: string[];
 }

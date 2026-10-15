@@ -23,9 +23,13 @@ export const TeamDirectoryView: React.FC = () => {
   const directory = useApiData(() => employeesApi.directory(), []);
   const employees = directory.data ?? [];
   // Today's status per person (status only). Best effort: the directory still works without it.
+  // A null status (admin/manager-linked, attendance not tracked) is left out, so no dot is shown.
   const availability = useApiData(() => teamApi.availability(), []);
   const statusById = useMemo(
-    () => new Map((availability.data ?? []).map(a => [a.employeeId, a.status] as const)),
+    () =>
+      new Map(
+        (availability.data ?? []).flatMap(a => (a.status ? [[a.employeeId, a.status] as const] : [])),
+      ),
     [availability.data],
   );
 

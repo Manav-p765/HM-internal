@@ -397,7 +397,21 @@ describe('presence and availability', () => {
     expect(await statusOf(agents.employeeB, ids.empA)).toBe('online');
     setClock(new Date(at(5).getTime() + 1));
     expect(await statusOf(agents.admin, ids.empA)).toBe('available');
-    expect(await statusOf(agents.admin, ids.managerEmp)).toBe('not_in_today');
+    expect(await statusOf(agents.admin, ids.managerEmp)).toBeNull();
+  });
+
+  it('admin/manager-linked employees have no status (null); employee-role and login-less ones keep theirs', async () => {
+    const adminEmp = await employee('Ada Admin');
+    const loginless = await employee('Lou Loginless');
+    await user('admin2@example.test', 'admin', { employeeId: adminEmp });
+    await agents.employee.post('/api/presence/heartbeat').expect(200);
+    const res = await agents.employeeB.get('/api/team/availability').expect(200);
+    const byId = new Map(res.body.availability.map((a: { employeeId: string; status: string | null }) => [a.employeeId, a.status]));
+    expect(byId.get(ids.managerEmp)).toBeNull();
+    expect(byId.get(adminEmp)).toBeNull();
+    expect(byId.get(ids.empA)).toBe('online');
+    expect(byId.get(ids.empB)).toBe('available');
+    expect(byId.get(loginless)).toBe('not_in_today');
   });
 
   it('heartbeat writes at most once per 30 seconds and never touches employees.updated_at', async () => {
@@ -435,13 +449,26 @@ describe('presence and availability', () => {
       const res = await agents.client.get('/api/portal/team').expect(200);
       expect(res.body.team).toEqual([
         { name: 'Avery A', designation: 'Engineer', avatarUrl: null, status: 'online', projects: ['Acme Site'] },
-        { name: 'Morgan Manager', designation: 'Engineer', avatarUrl: null, status: 'not_in_today', projects: ['Acme Site'] },
+        { name: 'Morgan Manager', designation: 'Engineer', avatarUrl: null, status: null, projects: ['Acme Site'] },
       ]);
       for (const person of res.body.team) expect(Object.keys(person).sort()).toEqual(['avatarUrl', 'designation', 'name', 'projects', 'status']);
       const raw = JSON.stringify(res.body);
       for (const leak of [ids.empA, ids.managerEmp, 'punch', 'lastSeen', 'email', 'Internal', 'Blake', 'Globex', 'Archived']) {
         expect(raw).not.toContain(leak);
       }
+    });
+
+    it('a manager-linked member has status null and only the allowed keys, even when on full-day leave', async () => {
+      await query(
+        `INSERT INTO leave_requests (employee_id, leave_type, start_date, end_date, day_type, half_day_period, total_days, reason, status, reviewed_by, reviewed_at)
+         VALUES ($1, 'casual', $2, $2, 'full', NULL, 1, 'Fake', 'approved', $3, now())`,
+        [ids.managerEmp, DAY, ids.admin],
+      );
+      const res = await agents.client.get('/api/portal/team').expect(200);
+      const morgan = res.body.team.find((p: { name: string }) => p.name === 'Morgan Manager');
+      expect(morgan).toEqual({ name: 'Morgan Manager', designation: 'Engineer', avatarUrl: null, status: null, projects: ['Acme Site'] });
+      expect(Object.keys(morgan).sort()).toEqual(['avatarUrl', 'designation', 'name', 'projects', 'status']);
+      expect(res.body.team.find((p: { name: string }) => p.name === 'Avery A').status).toBe('available');
     });
 
     it('another company never sees this company\'s people', async () => {
@@ -451,14 +478,20 @@ describe('presence and availability', () => {
     });
 
     it('approved full-day leave shows as on_leave to the client, half-day leave does not', async () => {
+      const loginless = await employee('Lou Loginless');
+      await member(ids.acmeProject, loginless);
       await query(
         `INSERT INTO leave_requests (employee_id, leave_type, start_date, end_date, day_type, half_day_period, total_days, reason, status, reviewed_by, reviewed_at)
          VALUES ($1, 'casual', $3, $3, 'full', NULL, 1, 'Fake', 'approved', $4, now()),
                 ($2, 'casual', $3, $3, 'half', 'first', 0.5, 'Fake', 'approved', $4, now())`,
-        [ids.managerEmp, ids.empA, DAY, ids.admin],
+        [loginless, ids.empA, DAY, ids.admin],
       );
       const res = await agents.client.get('/api/portal/team').expect(200);
-      expect(res.body.team.map((p: { status: string }) => p.status)).toEqual(['available', 'on_leave']);
+      expect(res.body.team.map((p: { name: string; status: string | null }) => [p.name, p.status])).toEqual([
+        ['Avery A', 'available'],
+        ['Lou Loginless', 'on_leave'],
+        ['Morgan Manager', null],
+      ]);
     });
   });
 });

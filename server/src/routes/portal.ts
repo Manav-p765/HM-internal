@@ -74,7 +74,8 @@ portalRouter.get('/projects/:id/tasks', ['client'], async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/portal/team: the people working on this company's non-archived projects, with today's status.
+// GET /api/portal/team: the people working on this company's non-archived projects, with today's status
+// (null for members whose login is an admin or manager: their attendance isn't tracked).
 // Exactly name, designation, avatarUrl, status and the names of this company's projects they are on:
 // no ids, no emails, no punch times, no leave details.
 // ---------------------------------------------------------------------------
@@ -95,7 +96,7 @@ portalRouter.get('/team', ['client'], async (req, res) => {
     name: r.name,
     designation: r.designation,
     avatarUrl: r.avatarUrl,
-    status: statuses.get(r.id) ?? 'not_in_today',
+    status: statuses.has(r.id) ? statuses.get(r.id)! : 'not_in_today', // null: admin/manager, not tracked
     projects: r.projects,
   }));
   res.json({ team });
