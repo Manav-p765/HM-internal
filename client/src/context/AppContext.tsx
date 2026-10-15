@@ -1,8 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import {
-  Employee,
-  SalaryRecord,
-  SalarySlip,
   Transaction,
   UserProfile,
   ActivityLog,
@@ -11,8 +8,6 @@ import {
 } from '../types';
 import { StorageService } from '../services/storage';
 import { useAuth } from './AuthContext';
-import { employeesApi } from '../api/employees';
-import { errorMessage } from '../api/client';
 
 interface Toast {
   id: string;
@@ -33,14 +28,7 @@ interface AppContextType {
 
   // Invoices and company settings live on the server (api/invoices.ts, api/settings.ts); pages fetch them.
 
-  // Salaries & Payroll
-  salaries: SalaryRecord[];
-  generateMonthlySalaries: (month: string) => Promise<{ createdCount: number; skippedCount: number } | null>;
-  updateSalaryRecord: (salary: SalaryRecord) => void;
-  markSalaryPaid: (salaryId: string, paymentDate: string, paymentMethod?: SalaryRecord['paymentMethod']) => boolean;
-  publishSalarySlip: (salaryRecordId: string) => boolean;
-  salarySlips: SalarySlip[];
-  mySalarySlips: SalarySlip[];
+  // Salaries and payslips live on the server (api/salary.ts); pages fetch them.
 
   // Audit Logs & Accountability
   auditLogs: AuditLog[];
@@ -69,8 +57,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }
 
   const [transactions, setTransactions] = useState<Transaction[]>(StorageService.getTransactions());
-  const [salaries, setSalaries] = useState<SalaryRecord[]>(StorageService.getSalaries());
-  const [salarySlips, setSalarySlips] = useState<SalarySlip[]>(StorageService.getSalarySlips());
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(StorageService.getActivityLogs());
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(StorageService.getAuditLogs());
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -81,8 +67,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const refreshData = () => {
     setTransactions(StorageService.getTransactions());
-    setSalaries(StorageService.getSalaries());
-    setSalarySlips(StorageService.getSalarySlips());
     setActivityLogs(StorageService.getActivityLogs());
     setAuditLogs(StorageService.getAuditLogs());
   };
@@ -123,23 +107,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     role: currentUser.role,
   };
 
-  // Salary Slip Handlers
-  const publishSalarySlip = (salaryRecordId: string) => {
-    const res = StorageService.publishSalarySlip(salaryRecordId, currentUser.name);
-    if (res) {
-      refreshData();
-      showToast('success', `Salary slip published for ${res.employeeName}`);
-      return true;
-    }
-    showToast('error', 'Failed to publish salary slip');
-    return false;
-  };
-
-  const mySalarySlips = useMemo(() => {
-    if (!currentUser.employeeId) return [];
-    return salarySlips.filter(s => s.employeeId === currentUser.employeeId && s.isPublished);
-  }, [currentUser.employeeId, salarySlips]);
-
   const addTransaction = (txn: Omit<Transaction, 'id' | 'createdAt'>): Transaction => {
     const created = StorageService.addTransaction(txn);
     refreshData();
@@ -157,46 +124,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     StorageService.deleteTransaction(id);
     refreshData();
     showToast('info', 'Transaction deleted');
-  };
-
-  // Salary records are still local; the employee list (with salaries, admin only) comes from the API.
-  const generateMonthlySalaries = async (month: string) => {
-    let activeEmployees: Employee[];
-    try {
-      activeEmployees = (await employeesApi.list({ status: 'active', limit: 200 })).employees;
-    } catch (err) {
-      showToast('error', errorMessage(err));
-      return null;
-    }
-    const result = StorageService.generateMonthlySalaries(month, activeEmployees, currentUser.name);
-    refreshData();
-    if (result.createdCount > 0) {
-      showToast('success', `Generated ${result.createdCount} salary records for ${month}`);
-    } else {
-      showToast('info', `All active employees already have salary records for ${month}`);
-    }
-    return result;
-  };
-
-  const updateSalaryRecord = (salary: SalaryRecord) => {
-    StorageService.updateSalaryRecord(salary);
-    refreshData();
-    showToast('success', `Salary record for ${salary.employeeName} updated`);
-  };
-
-  const markSalaryPaid = (
-    salaryId: string,
-    paymentDate: string,
-    paymentMethod: SalaryRecord['paymentMethod'] = 'Bank Transfer'
-  ): boolean => {
-    const res = StorageService.markSalaryPaid(salaryId, paymentDate, paymentMethod, currentUser.name);
-    refreshData();
-    if (res.success) {
-      showToast('success', res.message);
-      return true;
-    }
-    showToast('error', res.message);
-    return false;
   };
 
   const logAuditAction = (entry: Parameters<typeof StorageService.logAuditAction>[0]) => {
@@ -219,13 +146,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         addTransaction,
         updateTransaction,
         deleteTransaction,
-        salaries,
-        generateMonthlySalaries,
-        updateSalaryRecord,
-        markSalaryPaid,
-        publishSalarySlip,
-        salarySlips,
-        mySalarySlips,
         auditLogs,
         activityLogs,
         logAuditAction,

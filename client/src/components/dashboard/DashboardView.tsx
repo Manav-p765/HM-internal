@@ -26,11 +26,12 @@ import {
   CalendarDays,
   CalendarCheck,
 } from 'lucide-react';
-import { formatCurrency, formatDate, formatMinutes, formatTimeIst } from '../../utils/formatters';
+import { formatCurrency, formatDate, formatMinutes, formatMonthYear, formatTimeIst } from '../../utils/formatters';
 import { attendanceApi } from '../../api/attendance';
 import { leavesApi } from '../../api/leaves';
 import { LEAVE_TYPE_LABEL } from '../../types/attendance';
 import { invoicesApi } from '../../api/invoices';
+import { salaryApi } from '../../api/salary';
 import { invoiceLabel } from '../../types/invoices';
 import { InvoiceStatusBadge } from '../invoices/InvoiceStatusBadge';
 import { CURRENCY, formatMoney } from '../../utils/money';
@@ -41,7 +42,6 @@ type DateFilterOption = 'this_month' | 'last_month' | 'this_year' | 'all_time';
 export const DashboardView: React.FC = () => {
   const {
     transactions,
-    salaries,
     setIsAddTransactionOpen,
     currentUser,
   } = useApp();
@@ -117,11 +117,12 @@ export const DashboardView: React.FC = () => {
   const overdueInvoices = invoiceSummary ? formatMoney(invoiceSummary.overdueTotal) : '—';
   const collectedThisMonth = invoiceSummary ? formatMoney(invoiceSummary.collectedThisMonth) : '—';
 
-  const pendingSalaryTotal = useMemo(() => {
-    return salaries
-      .filter(s => s.status === 'Pending')
-      .reduce((sum, s) => sum + s.finalPayableAmount, 0);
-  }, [salaries]);
+  // Pending salaries of the current month (IST), from the server. Admin only: managers never call /api/salary.
+  const salaryMonth = useApiData(
+    () => (currentUser.role === 'admin' ? salaryApi.list() : Promise.resolve(null)),
+    [currentUser.role],
+  );
+  const salarySummary = salaryMonth.data?.summary;
 
   const totalEmployeesCount = roster.data?.summary.total ?? 0;
   const activeEmployeesCount = roster.data?.summary.active ?? 0;
@@ -476,10 +477,12 @@ export const DashboardView: React.FC = () => {
               </div>
               <div className="mt-2">
                 <span className="text-2xl font-mono font-bold text-[#111827]">
-                  {formatCurrency(pendingSalaryTotal, CURRENCY)}
+                  {salarySummary ? formatMoney(salarySummary.totalPending) : '—'}
                 </span>
                 <p className="text-[11px] text-[#7185A5] mt-1">
-                  Unpaid approved salary amounts for payroll
+                  {salarySummary && salaryMonth.data
+                    ? `${salarySummary.headcount - salarySummary.paidCount} unpaid in ${formatMonthYear(salaryMonth.data.month)}`
+                    : 'Unpaid salaries this month'}
                 </p>
               </div>
             </Card>

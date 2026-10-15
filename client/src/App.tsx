@@ -37,6 +37,7 @@ const InvoicePrintView = named(() => import('./components/invoices/InvoicePrintV
 const EmployeesView = named(() => import('./components/employees/EmployeesView'), 'EmployeesView');
 const SalaryView = named(() => import('./components/salary/SalaryView'), 'SalaryView');
 const EmployeeSalarySlipsView = named(() => import('./components/salary/EmployeeSalarySlipsView'), 'EmployeeSalarySlipsView');
+const PayslipPrintView = named(() => import('./components/salary/PayslipPrintView'), 'PayslipPrintView');
 const ReportsView = named(() => import('./components/reports/ReportsView'), 'ReportsView');
 const TeamDirectoryView = named(() => import('./components/directory/TeamDirectoryView'), 'TeamDirectoryView');
 const SettingsView = named(() => import('./components/settings/SettingsView'), 'SettingsView');
@@ -149,7 +150,10 @@ export default function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/team" element={<TeamDirectoryView />} />
             <Route path="/profile" element={<EmployeeProfileView />} />
+            {/* Own payslips: employees, and managers/admins linked to an employee (the server checks ownership). */}
             <Route path="/salary/slips" element={<EmployeeSalarySlipsView />} />
+            <Route path="/salary/slips/:id" element={<EmployeeSalarySlipsView />} />
+            <Route path="/salary/slips/:id/print" element={<PayslipPrintView />} />
 
             <Route element={<RequireRole roles={['admin', 'manager']} />}>
               <Route path="/employees" element={<EmployeesView />} />

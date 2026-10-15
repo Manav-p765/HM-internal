@@ -1,5 +1,5 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
+import { Link } from 'react-router';
 import { employeesApi } from '../../api/employees';
 import { useApiData } from '../../api/useApiData';
 import { EMPLOYMENT_STATUS_LABEL, Employee } from '../../types';
@@ -20,7 +20,7 @@ import {
   Clock,
   Edit2,
 } from 'lucide-react';
-import { formatCurrency, formatDate, formatMonthYear } from '../../utils/formatters';
+import { formatCurrency, formatDate } from '../../utils/formatters';
 import { CURRENCY } from '../../utils/money';
 
 interface EmployeeDetailModalProps {
@@ -31,7 +31,6 @@ interface EmployeeDetailModalProps {
 
 // Loads the employee itself so /employees/:id works as a direct link.
 export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({ employeeId, onClose, onEdit }) => {
-  const { salaries } = useApp();
   const { data: employee, error, reload } = useApiData(() => employeesApi.get(employeeId), [employeeId]);
 
   if (!employee || employee.id !== employeeId) {
@@ -47,9 +46,6 @@ export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({ employ
       </Modal>
     );
   }
-
-  // Salary records are still local until the salary phase.
-  const employeeSalaries = salaries.filter(s => s.employeeId === employee.id);
 
   // The server only sends salary fields to admins.
   const canViewSalary = employee.monthlySalary !== undefined;
@@ -152,58 +148,14 @@ export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({ employ
               </span>
             </div>
 
-            {/* Salary History */}
-            <div>
-              <span className="text-xs font-semibold text-[#111827] block mb-2">
-                Salary Disbursement History ({employeeSalaries.length})
-              </span>
-              {employeeSalaries.length === 0 ? (
-                <p className="text-xs text-[#7185A5] py-2">
-                  No salary records generated yet for this employee.
-                </p>
-              ) : (
-                <div className="border border-[#DFE6F1] rounded-lg overflow-hidden">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-[#F7F9FC] border-b border-[#DFE6F1] text-[#7185A5]">
-                      <tr>
-                        <th className="py-2 px-3">Month</th>
-                        <th className="py-2 px-3 text-right">Base</th>
-                        <th className="py-2 px-3 text-right">Adjustments</th>
-                        <th className="py-2 px-3 text-right">Payable</th>
-                        <th className="py-2 px-3 text-center">Status</th>
-                        <th className="py-2 px-3">Disbursed Date</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#DFE6F1]">
-                      {employeeSalaries.map(sal => (
-                        <tr key={sal.id}>
-                          <td className="py-2.5 px-3 font-medium text-[#111827]">
-                            {formatMonthYear(sal.salaryMonth)}
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-mono text-[#7185A5]">
-                            {formatCurrency(sal.baseSalary, CURRENCY)}
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-mono text-[#7185A5]">
-                            {sal.adjustments > 0 ? `+${formatCurrency(sal.adjustments, CURRENCY)}` : formatCurrency(sal.adjustments, CURRENCY)}
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-mono font-bold text-[#111827]">
-                            {formatCurrency(sal.finalPayableAmount, CURRENCY)}
-                          </td>
-                          <td className="py-2.5 px-3 text-center">
-                            <Badge variant={sal.status === 'Paid' ? 'success' : 'warning'}>
-                              {sal.status}
-                            </Badge>
-                          </td>
-                          <td className="py-2.5 px-3 text-[#7185A5]">
-                            {sal.paymentDate ? formatDate(sal.paymentDate) : '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+            {/* Monthly salary rows, payments and payslips are on the Salary page (admin). */}
+            <p className="text-[11px] text-[#7185A5]">
+              Monthly payroll, adjustments, payments and payslips are on the{' '}
+              <Link to="/salary" className="text-[#5038F5] font-semibold hover:underline">
+                Salary
+              </Link>{' '}
+              page.
+            </p>
           </div>
         ) : (
           <div className="p-3 bg-[#F1F5F9] rounded-lg text-center text-xs text-[#7185A5]">

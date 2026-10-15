@@ -87,7 +87,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
 
   return (
     <>
-      <Modal isOpen onClose={onClose} title={invoice ? `Invoice ${invoiceLabel(invoice)}` : 'Invoice'} description="Billing record" maxWidth="4xl">
+      <Modal isOpen onClose={onClose} title={invoice ? (invoice.invoiceNumber ? `Invoice ${invoice.invoiceNumber}` : 'Draft invoice') : 'Invoice'} description="Billing record" maxWidth="4xl">
         {detail.error ? (
           <LoadError message={detail.error} onRetry={detail.reload} />
         ) : !invoice ? (

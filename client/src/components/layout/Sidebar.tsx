@@ -35,7 +35,11 @@ interface NavItem {
   end?: boolean;
 }
 
-function getNavItems(role: UserRole): NavItem[] {
+// linkedToEmployee: the login has an employee record, so it has payslips of its own (/salary/slips).
+function getNavItems(role: UserRole, linkedToEmployee: boolean): NavItem[] {
+  const myPayslips: NavItem[] = linkedToEmployee
+    ? [{ to: '/salary/slips', label: 'My Payslips', icon: <Receipt className="w-4 h-4" /> }]
+    : [];
   if (role === 'employee') {
     return [
       { to: '/dashboard', label: 'My Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
@@ -43,7 +47,7 @@ function getNavItems(role: UserRole): NavItem[] {
       { to: '/my/projects', label: 'My Projects', icon: <FolderKanban className="w-4 h-4" /> },
       { to: '/my/attendance', label: 'My Attendance', icon: <Clock className="w-4 h-4" /> },
       { to: '/my/leaves', label: 'My Leaves', icon: <CalendarDays className="w-4 h-4" /> },
-      { to: '/salary/slips', label: 'My Salary Slips', icon: <Receipt className="w-4 h-4" /> },
+      { to: '/salary/slips', label: 'My Payslips', icon: <Receipt className="w-4 h-4" /> },
       { to: '/team', label: 'Team Directory', icon: <Contact className="w-4 h-4" /> },
       { to: '/profile', label: 'My Profile', icon: <User className="w-4 h-4" /> },
     ];
@@ -60,6 +64,8 @@ function getNavItems(role: UserRole): NavItem[] {
       { to: '/invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
       { to: '/clients', label: 'Clients', icon: <Building2 className="w-4 h-4" /> },
       { to: '/reports', label: 'Reports', icon: <BarChart3 className="w-4 h-4" /> },
+      // No Salary item for managers; only their own payslips when linked to an employee.
+      ...myPayslips,
     ];
   }
   return [
@@ -72,10 +78,11 @@ function getNavItems(role: UserRole): NavItem[] {
     { to: '/employees', label: 'Employees', icon: <Users className="w-4 h-4" /> },
     { to: '/attendance', label: 'Attendance', icon: <Clock className="w-4 h-4" /> },
     { to: '/leaves', label: 'Leaves', icon: <CalendarDays className="w-4 h-4" /> },
-    // 'end' so /salary/slips (own payslips) doesn't also light up Salary Management
-    { to: '/salary', label: 'Salary Management', icon: <Banknote className="w-4 h-4" />, end: true },
+    // 'end' so /salary/slips (own payslips) doesn't also light up Salary
+    { to: '/salary', label: 'Salary', icon: <Banknote className="w-4 h-4" />, end: true },
     { to: '/reports', label: 'Reports', icon: <BarChart3 className="w-4 h-4" /> },
     { to: '/team', label: 'Team Directory', icon: <Contact className="w-4 h-4" /> },
+    ...myPayslips,
     { to: '/settings', label: 'Settings', icon: <Settings className="w-4 h-4" /> },
   ];
 }
@@ -90,7 +97,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onMobileClose }) =
   const { logout } = useAuth();
 
   // Hiding items by role is cosmetic; RequireRole and the server are the real guards.
-  const navItems = getNavItems(currentUser.role);
+  const navItems = getNavItems(currentUser.role, !!currentUser.employeeId);
 
   return (
     <>

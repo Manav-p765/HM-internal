@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { useApp } from '../../context/AppContext';
 import { invoicesApi } from '../../api/invoices';
+import { salaryApi } from '../../api/salary';
 import { invoiceLabel } from '../../types/invoices';
 import { useApiData } from '../../api/useApiData';
 import {
@@ -33,7 +34,6 @@ export const TopNav: React.FC<TopNavProps> = ({
   const { pathname } = useLocation();
   const {
     currentUser,
-    salaries,
     transactions,
     setIsAddTransactionOpen,
     setIsAddEmployeeOpen,
@@ -51,10 +51,13 @@ export const TopNav: React.FC<TopNavProps> = ({
   );
   const overdueInvoices = overdue.data?.invoices ?? [];
   const overdueTotalCount = overdue.data?.total ?? 0;
-  const pendingSalaries = salaries.filter(s => s.status === 'Pending');
+  // Unpaid salaries of the current month (IST), admin only (managers never call /api/salary).
+  const isAdmin = currentUser.role === 'admin';
+  const salaryMonth = useApiData(() => (isAdmin ? salaryApi.list() : Promise.resolve(null)), [isAdmin]);
+  const pendingSalaryCount = salaryMonth.data ? salaryMonth.data.summary.headcount - salaryMonth.data.summary.paidCount : 0;
   const recentTransactions = transactions.slice(0, 3);
 
-  const notificationCount = overdueTotalCount + (currentUser.role === 'admin' ? pendingSalaries.length : 0);
+  const notificationCount = overdueTotalCount + (isAdmin ? pendingSalaryCount : 0);
 
   // Context-aware Quick Action button
   const renderQuickAction = () => {
@@ -190,11 +193,11 @@ export const TopNav: React.FC<TopNavProps> = ({
                   </div>
                 )}
 
-                {currentUser.role === 'admin' && pendingSalaries.length > 0 && (
+                {isAdmin && pendingSalaryCount > 0 && (
                   <div className="p-2.5 rounded-lg bg-[#B45309]/5 border border-[#B45309]/15 text-xs">
                     <div className="flex items-center gap-1.5 font-semibold text-[#B45309]">
                       <Clock className="w-4 h-4 shrink-0" />
-                      {pendingSalaries.length} Pending Salary Payouts
+                      {pendingSalaryCount} Pending Salary Payouts
                     </div>
                     <p className="text-[11px] text-[#475569] mt-1">
                       Salaries awaiting disbursement for current payroll cycle.

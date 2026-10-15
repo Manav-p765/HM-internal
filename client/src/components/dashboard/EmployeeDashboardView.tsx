@@ -4,6 +4,7 @@ import { TaskKpis } from '../work/TaskKpis';
 import { useApp } from '../../context/AppContext';
 import { attendanceApi } from '../../api/attendance';
 import { leavesApi } from '../../api/leaves';
+import { salaryApi } from '../../api/salary';
 import { useApiData } from '../../api/useApiData';
 import { errorMessage } from '../../api/client';
 import { LEAVE_TYPE_LABEL } from '../../types/attendance';
@@ -15,18 +16,20 @@ import { formatDate, formatMinutes, formatMonthYear, formatTimeIst } from '../..
 import { dayTypeLabel, daysLabel } from '../leaves/LeaveDetails';
 
 export const EmployeeDashboardView: React.FC = () => {
-  const { currentUser, mySalarySlips, showToast } = useApp();
+  const { currentUser, showToast } = useApp();
   const navigate = useNavigate();
 
   // Everything time-related comes from the server: today's IST date, punch times, worked minutes.
   const today = useApiData(() => attendanceApi.today(), []);
   const month = useApiData(() => attendanceApi.myMonth(), []);
   const leaves = useApiData(() => leavesApi.mine(), []);
+  // Own published payslips, newest first (only when the login is linked to an employee record).
+  const slips = useApiData(() => (currentUser.employeeId ? salaryApi.mySlips() : Promise.resolve([])), [currentUser.employeeId]);
   const [isPunchingOut, setIsPunchingOut] = useState(false);
 
   const record = today.data?.record ?? null;
   const todayLeave = today.data?.leave ?? null;
-  const latestSalarySlip = mySalarySlips.length > 0 ? mySalarySlips[0] : null;
+  const latestSalarySlip = slips.data?.[0] ?? null;
 
   const handlePunchOut = async () => {
     setIsPunchingOut(true);
@@ -174,12 +177,12 @@ export const EmployeeDashboardView: React.FC = () => {
         <Card padding="md">
           <span className="text-xs font-semibold text-[#7185A5] block">Latest Salary Slip</span>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-sm font-bold text-[#111827]">{latestSalarySlip ? formatMonthYear(latestSalarySlip.salaryMonth) : 'No Slips'}</span>
-            {latestSalarySlip && <Badge variant="success">{latestSalarySlip.paymentStatus}</Badge>}
+            <span className="text-sm font-bold text-[#111827]">{latestSalarySlip ? formatMonthYear(latestSalarySlip.month) : 'No Slips'}</span>
+            {latestSalarySlip && <Badge variant="success">Paid</Badge>}
           </div>
           <p className="text-[11px] text-[#7185A5] mt-1">
             {latestSalarySlip ? (
-              <button onClick={() => navigate('/salary/slips')} className="text-[#5038F5] font-semibold hover:underline flex items-center gap-1 cursor-pointer">
+              <button onClick={() => navigate(`/salary/slips/${latestSalarySlip.id}`)} className="text-[#5038F5] font-semibold hover:underline flex items-center gap-1 cursor-pointer">
                 View Slip <ArrowRight className="w-3 h-3" />
               </button>
             ) : (

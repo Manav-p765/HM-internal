@@ -1,411 +1,207 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { SalaryRecord, SalaryPaymentStatus, PaymentMethod } from '../../types';
+import { salaryApi } from '../../api/salary';
+import { useApiData } from '../../api/useApiData';
+import { errorMessage } from '../../api/client';
+import { SalaryRow, SalaryStatus } from '../../types/salary';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
-import { Badge } from '../common/Badge';
-import { Modal } from '../common/Modal';
 import { EmptyState } from '../common/EmptyState';
-import {
-  Banknote,
-  Plus,
-  CheckCircle2,
-  Clock,
-  Filter,
-  Search,
-  Edit2,
-  Calendar,
-  CreditCard,
-  AlertCircle,
-  Download,
-} from 'lucide-react';
-import { formatCurrency, formatDate, formatMonthYear, exportToCSV } from '../../utils/formatters';
-import { CURRENCY } from '../../utils/money';
-import { COMPANY_BRAND } from '../../utils/company';
+import { LoadError } from '../common/LoadError';
+import { SalaryDetailModal } from './SalaryDetailModal';
+import { SalaryStatusBadge } from './SalaryStatusBadge';
+import { Banknote, Plus, Search, Calendar, ChevronLeft, ChevronRight, FileCheck2, SlidersHorizontal } from 'lucide-react';
+import { formatDate, formatMonthYear } from '../../utils/formatters';
+import { formatMoney } from '../../utils/money';
 
-const PAYMENT_METHODS: PaymentMethod[] = [
-  'Bank Transfer',
-  'UPI',
-  'Credit Card',
-  'Cheque',
-  'Cash',
-];
+// 'YYYY-MM' n months later (calendar navigation only).
+function shiftMonth(month: string, n: number): string {
+  const [y, m] = month.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + n, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
 
+// /salary (admin). One month at a time; every amount and total comes from the server. The month defaults to
+// the current IST month as reported by the API.
 export const SalaryView: React.FC = () => {
-  const {
-    salaries,
-    generateMonthlySalaries,
-    updateSalaryRecord,
-    markSalaryPaid,
-    publishSalarySlip,
-    currentUser,
-  } = useApp();
+  const { showToast } = useApp();
+  const [month, setMonth] = useState<string | undefined>(undefined);
+  const list = useApiData(() => salaryApi.list(month), [month]);
+  const currentMonth = list.data?.month ?? month ?? '';
 
-  // Current selected month: default to current month YYYY-MM
-  const now = new Date();
-  const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthStr);
-
-  // Filters
-  const [statusFilter, setStatusFilter] = useState<'all' | SalaryPaymentStatus>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | SalaryStatus>('all');
   const [search, setSearch] = useState('');
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
 
-  // Modals
-  const [salaryToEdit, setSalaryToEdit] = useState<SalaryRecord | null>(null);
-  const [salaryToPay, setSalaryToPay] = useState<SalaryRecord | null>(null);
-  const [paymentDate, setPaymentDate] = useState<string>(now.toISOString().split('T')[0]);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Bank Transfer');
+  const rows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return (list.data?.salaries ?? []).filter(
+      s =>
+        (statusFilter === 'all' || s.status === statusFilter) &&
+        (!q || s.employeeName.toLowerCase().includes(q) || s.employeeCode.toLowerCase().includes(q) || s.department.toLowerCase().includes(q)),
+    );
+  }, [list.data, statusFilter, search]);
 
-  // Edit form state
-  const [editAdjustments, setEditAdjustments] = useState<string>('0');
-  const [editNotes, setEditNotes] = useState<string>('');
-
-  // List of distinct months available in salaries + current month
-  const availableMonths = useMemo(() => {
-    const set = new Set<string>();
-    set.add(currentMonthStr);
-    salaries.forEach(s => set.add(s.salaryMonth));
-    return Array.from(set).sort().reverse();
-  }, [salaries, currentMonthStr]);
-
-  // Filtered salaries for the selected month and search
-  const filteredSalaries = useMemo(() => {
-    return salaries.filter(s => {
-      if (selectedMonth && s.salaryMonth !== selectedMonth) return false;
-      if (statusFilter !== 'all' && s.status !== statusFilter) return false;
-      if (search.trim()) {
-        const query = search.toLowerCase();
-        const matchesName = s.employeeName.toLowerCase().includes(query);
-        const matchesDept = s.department.toLowerCase().includes(query);
-        const matchesId = s.employeeId.toLowerCase().includes(query);
-        if (!matchesName && !matchesDept && !matchesId) return false;
-      }
-      return true;
-    });
-  }, [salaries, selectedMonth, statusFilter, search]);
-
-  // Month-specific KPIs
-  const totalMonthPayable = useMemo(() => {
-    return filteredSalaries.reduce((sum, s) => sum + s.finalPayableAmount, 0);
-  }, [filteredSalaries]);
-
-  const totalMonthPaid = useMemo(() => {
-    return filteredSalaries
-      .filter(s => s.status === 'Paid')
-      .reduce((sum, s) => sum + s.finalPayableAmount, 0);
-  }, [filteredSalaries]);
-
-  const totalMonthPending = useMemo(() => {
-    return filteredSalaries
-      .filter(s => s.status === 'Pending')
-      .reduce((sum, s) => sum + s.finalPayableAmount, 0);
-  }, [filteredSalaries]);
-
-  const handleGenerate = () => {
-    generateMonthlySalaries(selectedMonth);
+  const handleGenerate = async () => {
+    if (!currentMonth) return;
+    setIsGenerating(true);
+    try {
+      const result = await salaryApi.generate(currentMonth);
+      showToast(
+        result.created > 0 ? 'success' : 'info',
+        result.created > 0
+          ? `Created ${result.created} salary row${result.created === 1 ? '' : 's'} for ${formatMonthYear(currentMonth)}${result.skipped ? ` (${result.skipped} already existed)` : ''}`
+          : `Every eligible employee already has a row for ${formatMonthYear(currentMonth)}`,
+      );
+      await list.reload();
+    } catch (err) {
+      showToast('error', errorMessage(err));
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
-  const handleOpenEdit = (salary: SalaryRecord) => {
-    setSalaryToEdit(salary);
-    setEditAdjustments(String(salary.adjustments));
-    setEditNotes(salary.notes || '');
-  };
-
-  const handleSaveEdit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!salaryToEdit) return;
-    const adj = parseFloat(editAdjustments) || 0;
-    updateSalaryRecord({
-      ...salaryToEdit,
-      adjustments: adj,
-      finalPayableAmount: salaryToEdit.baseSalary + adj,
-      notes: editNotes.trim() || undefined,
-    });
-    setSalaryToEdit(null);
-  };
-
-  const handleOpenPay = (salary: SalaryRecord) => {
-    setSalaryToPay(salary);
-    setPaymentDate(new Date().toISOString().split('T')[0]);
-    setPaymentMethod('Bank Transfer');
-  };
-
-  const handleConfirmPay = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!salaryToPay) return;
-    markSalaryPaid(salaryToPay.id, paymentDate, paymentMethod);
-    setSalaryToPay(null);
-  };
-
-  const handleExportCSV = () => {
-    const headers = [
-      'Record ID',
-      'Employee ID',
-      'Employee Name',
-      'Department',
-      'Salary Month',
-      `Base Salary (${CURRENCY})`,
-      `Adjustments (${CURRENCY})`,
-      `Final Payable (${CURRENCY})`,
-      'Status',
-      'Disbursement Date',
-      'Payment Method',
-      'Linked Transaction ID',
-      'Notes',
-    ];
-
-    const rows = filteredSalaries.map(s => [
-      s.id,
-      s.employeeId,
-      s.employeeName,
-      s.department,
-      s.salaryMonth,
-      s.baseSalary,
-      s.adjustments,
-      s.finalPayableAmount,
-      s.status,
-      s.paymentDate || '',
-      s.paymentMethod || '',
-      s.linkedExpenseTxnId || '',
-      s.notes || '',
-    ]);
-
-    exportToCSV(`salary_payroll_${selectedMonth}_${COMPANY_BRAND.toLowerCase().replace(/\s+/g, '_')}`, headers, rows);
-  };
+  const summary = list.data?.summary;
+  const canGenerate = list.data?.canGenerate ?? false;
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">
-            Salary & Monthly Payroll
-          </h1>
-          <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">
-            Generate monthly payroll records, record adjustments, and disburse salaries
-          </p>
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">Salary & Monthly Payroll</h1>
+          <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">Generate a monthly run, itemise adjustments, pay salaries and publish payslips</p>
         </div>
-
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            icon={<Download className="w-3.5 h-3.5" />}
-            onClick={handleExportCSV}
-          >
-            Export CSV
-          </Button>
-          {currentUser.role === 'admin' && (
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<Plus className="w-3.5 h-3.5" />}
-              onClick={handleGenerate}
-            >
-              Generate Records for {formatMonthYear(selectedMonth)}
-            </Button>
-          )}
-        </div>
+        <Button
+          variant="primary"
+          size="sm"
+          icon={<Plus className="w-3.5 h-3.5" />}
+          onClick={handleGenerate}
+          disabled={!list.data || !canGenerate || isGenerating}
+          title={canGenerate ? undefined : 'Runs can be generated at most one month ahead'}
+        >
+          {isGenerating ? 'Generating…' : `Generate run for ${currentMonth ? formatMonthYear(currentMonth) : '…'}`}
+        </Button>
       </div>
 
-      {/* Month Selector Strip */}
+      {/* Month and filters */}
       <Card padding="sm">
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
             <Calendar className="w-4 h-4 text-[#5038F5] shrink-0" />
-            <span className="text-xs font-semibold text-[#111827] shrink-0">
-              Payroll Month:
-            </span>
-            <select
-              value={selectedMonth}
-              onChange={e => setSelectedMonth(e.target.value)}
-              className="text-xs font-semibold px-3 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+            <span className="text-xs font-semibold text-[#111827] shrink-0">Payroll month</span>
+            <button
+              onClick={() => currentMonth && setMonth(shiftMonth(currentMonth, -1))}
+              className="p-1.5 rounded-lg border border-[#DFE6F1] text-[#7185A5] hover:text-[#5038F5] cursor-pointer"
+              aria-label="Previous month"
             >
-              {availableMonths.map(m => (
-                <option key={m} value={m}>
-                  {formatMonthYear(m)} ({m})
-                </option>
-              ))}
-            </select>
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <input
+              type="month"
+              value={currentMonth}
+              onChange={e => e.target.value && setMonth(e.target.value)}
+              className="text-xs font-semibold px-2 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5] min-w-0"
+              aria-label="Payroll month"
+            />
+            <button
+              onClick={() => currentMonth && setMonth(shiftMonth(currentMonth, 1))}
+              className="p-1.5 rounded-lg border border-[#DFE6F1] text-[#7185A5] hover:text-[#5038F5] cursor-pointer"
+              aria-label="Next month"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
           </div>
-
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            <div className="relative flex-1 sm:w-60">
+          <div className="flex items-center gap-2 w-full md:w-auto">
+            <div className="relative flex-1 md:w-56">
               <Search className="w-4 h-4 text-[#7185A5] absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                placeholder="Search employee, ID, dept..."
+                placeholder="Search name, code, department…"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 className="w-full text-xs pl-9 pr-3 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+                aria-label="Search salaries"
               />
             </div>
             <select
               value={statusFilter}
-              onChange={e => setStatusFilter(e.target.value as any)}
-              className="text-xs px-3 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+              onChange={e => setStatusFilter(e.target.value as 'all' | SalaryStatus)}
+              className="text-xs px-2 py-1.5 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
+              aria-label="Status filter"
             >
-              <option value="all">All Statuses</option>
-              <option value="Pending">Pending Only</option>
-              <option value="Paid">Paid Only</option>
+              <option value="all">All statuses</option>
+              <option value="pending">Pending</option>
+              <option value="paid">Paid</option>
             </select>
           </div>
         </div>
       </Card>
 
-      {/* KPI Cards for Selected Month */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      {/* Summary (server totals for the whole month) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4" data-testid="salary-summary">
         <Card padding="md">
-          <span className="text-xs font-semibold text-[#7185A5] block">
-            Total Payroll Commitment ({formatMonthYear(selectedMonth)})
-          </span>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-mono font-bold text-[#111827]">
-              {formatCurrency(totalMonthPayable, CURRENCY)}
-            </span>
-            <span className="text-xs text-[#7185A5]">
-              {filteredSalaries.length} records
-            </span>
-          </div>
+          <span className="text-xs font-semibold text-[#7185A5] block">Total payable</span>
+          <span className="text-lg sm:text-2xl font-mono font-bold text-[#111827] block mt-2 break-all">{summary ? formatMoney(summary.totalPayable) : '—'}</span>
         </Card>
-
         <Card padding="md">
-          <span className="text-xs font-semibold text-[#7185A5] block">
-            Disbursed / Paid
-          </span>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-mono font-bold text-[#047857]">
-              {formatCurrency(totalMonthPaid, CURRENCY)}
-            </span>
-            <span className="text-xs text-[#047857] font-medium">
-              {filteredSalaries.filter(s => s.status === 'Paid').length} paid
-            </span>
-          </div>
+          <span className="text-xs font-semibold text-[#7185A5] block">Paid</span>
+          <span className="text-lg sm:text-2xl font-mono font-bold text-[#047857] block mt-2 break-all">{summary ? formatMoney(summary.totalPaid) : '—'}</span>
+          <span className="text-[11px] text-[#047857]">{summary ? `${summary.paidCount} paid` : ''}</span>
         </Card>
-
         <Card padding="md">
-          <span className="text-xs font-semibold text-[#7185A5] block">
-            Pending Payouts
-          </span>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-mono font-bold text-[#B45309]">
-              {formatCurrency(totalMonthPending, CURRENCY)}
-            </span>
-            <span className="text-xs text-[#B45309] font-medium">
-              {filteredSalaries.filter(s => s.status === 'Pending').length} pending
-            </span>
-          </div>
+          <span className="text-xs font-semibold text-[#7185A5] block">Pending</span>
+          <span className="text-lg sm:text-2xl font-mono font-bold text-[#B45309] block mt-2 break-all">{summary ? formatMoney(summary.totalPending) : '—'}</span>
+          <span className="text-[11px] text-[#B45309]">{summary ? `${summary.headcount - summary.paidCount} pending` : ''}</span>
+        </Card>
+        <Card padding="md">
+          <span className="text-xs font-semibold text-[#7185A5] block">Headcount</span>
+          <span className="text-lg sm:text-2xl font-mono font-bold text-[#111827] block mt-2">{summary ? summary.headcount : '—'}</span>
+          <span className="text-[11px] text-[#7185A5]">rows this month</span>
         </Card>
       </div>
 
-      {/* Salary Records Table */}
+      {/* Rows */}
       <Card padding="none" className="overflow-hidden">
-        {filteredSalaries.length === 0 ? (
+        {list.error ? (
+          <LoadError message={list.error} onRetry={list.reload} />
+        ) : !list.data ? (
+          <div className="py-10 text-center text-xs text-[#7185A5]">Loading salaries…</div>
+        ) : list.data.salaries.length === 0 ? (
           <EmptyState
             icon={<Banknote className="w-6 h-6" />}
-            title={`No salary records for ${formatMonthYear(selectedMonth)}`}
-            description="Generate payroll records for this month using active employee base salaries."
-            actionLabel={currentUser.role === 'admin' ? `Generate ${formatMonthYear(selectedMonth)} Records` : undefined}
-            onAction={handleGenerate}
+            title={`No salary run for ${formatMonthYear(currentMonth)}`}
+            description={
+              canGenerate
+                ? 'Generate the run to create a pending row for every active employee with a monthly salary.'
+                : 'Runs can be generated at most one month ahead.'
+            }
+            actionLabel={canGenerate ? `Generate ${formatMonthYear(currentMonth)} run` : undefined}
+            onAction={canGenerate ? handleGenerate : undefined}
           />
+        ) : rows.length === 0 ? (
+          <div className="py-10 text-center text-xs text-[#7185A5]">No rows match the filters.</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+            <table className="w-full text-left text-xs" data-testid="salary-table">
               <thead className="bg-[#F7F9FC] border-b border-[#DFE6F1] text-[#7185A5] font-semibold">
                 <tr>
-                  <th className="py-3 px-4">Employee</th>
-                  <th className="py-3 px-4">Department</th>
-                  <th className="py-3 px-4 text-right">Base Salary</th>
-                  <th className="py-3 px-4 text-right">Adjustments</th>
-                  <th className="py-3 px-4 text-right">Final Payable</th>
-                  <th className="py-3 px-4 text-center">Status</th>
-                  <th className="py-3 px-4">Disbursed Date</th>
-                  <th className="py-3 px-4">Linked Expense</th>
-                  <th className="py-3 px-4 text-right w-36">Actions</th>
+                  <th className="py-3 px-3">Employee</th>
+                  <th className="py-3 px-3 text-right">Base</th>
+                  <th className="py-3 px-3 text-right">Adjustments</th>
+                  <th className="py-3 px-3 text-right">Net payable</th>
+                  <th className="py-3 px-3 text-center whitespace-nowrap" title="Approved unpaid leave in this month (weekdays). Informational: nothing is deducted automatically.">
+                    Unpaid leave
+                  </th>
+                  <th className="py-3 px-3 text-center">Status</th>
+                  <th className="py-3 px-3">Paid on</th>
+                  <th className="py-3 px-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#DFE6F1]">
-                {filteredSalaries.map(sal => (
-                  <tr key={sal.id} className="hover:bg-[#F7F9FC]/60 transition-colors">
-                    <td className="py-3 px-4">
-                      <div className="font-semibold text-[#111827]">
-                        {sal.employeeName}
-                      </div>
-                      <div className="font-mono text-[10px] text-[#7185A5]">
-                        {sal.employeeId} · {sal.employeeEmail}
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 font-medium text-[#111827]">
-                      {sal.department}
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono text-[#7185A5] whitespace-nowrap">
-                      {formatCurrency(sal.baseSalary, CURRENCY)}
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono whitespace-nowrap">
-                      {sal.adjustments > 0 ? (
-                        <span className="text-[#047857]">
-                          +{formatCurrency(sal.adjustments, CURRENCY)}
-                        </span>
-                      ) : sal.adjustments < 0 ? (
-                        <span className="text-[#E11D48]">
-                          {formatCurrency(sal.adjustments, CURRENCY)}
-                        </span>
-                      ) : (
-                        <span className="text-[#7185A5]">₹0</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono font-bold text-[#111827] whitespace-nowrap">
-                      {formatCurrency(sal.finalPayableAmount, CURRENCY)}
-                    </td>
-                    <td className="py-3 px-4 text-center whitespace-nowrap">
-                      <Badge variant={sal.status === 'Paid' ? 'success' : 'warning'}>
-                        {sal.status}
-                      </Badge>
-                    </td>
-                    <td className="py-3 px-4 text-[#7185A5] whitespace-nowrap">
-                      {sal.paymentDate ? formatDate(sal.paymentDate) : '—'}
-                    </td>
-                    <td className="py-3 px-4 font-mono text-[11px] text-[#5038F5] whitespace-nowrap">
-                      {sal.linkedExpenseTxnId || '—'}
-                    </td>
-                    <td className="py-3 px-4 text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end gap-1.5">
-                        {sal.status === 'Pending' && currentUser.role === 'admin' && (
-                          <>
-                            <button
-                              onClick={() => handleOpenEdit(sal)}
-                              className="p-1.5 text-[#7185A5] hover:text-[#5038F5] hover:bg-[#F1F5F9] rounded cursor-pointer"
-                              title="Edit Adjustments"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                            <Button
-                              variant="primary"
-                              size="sm"
-                              icon={<CreditCard className="w-3 h-3" />}
-                              onClick={() => handleOpenPay(sal)}
-                            >
-                              Pay
-                            </Button>
-                          </>
-                        )}
-                        {sal.status === 'Paid' && (
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[11px] text-[#047857] flex items-center gap-1 font-medium">
-                              <CheckCircle2 className="w-3.5 h-3.5" /> Disbursed
-                            </span>
-                            <button
-                              onClick={() => publishSalarySlip(sal.id)}
-                              className="px-2 py-1 text-[11px] font-semibold text-[#5038F5] bg-[#5038F5]/10 hover:bg-[#5038F5]/20 rounded-md transition-colors cursor-pointer"
-                              title="Publish/update payslip for employee viewing"
-                            >
-                              {sal.isSlipPublished ? 'Slip Published' : 'Publish Slip'}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
+                {rows.map(row => (
+                  <SalaryTableRow key={row.id} row={row} onOpen={() => setOpenId(row.id)} />
                 ))}
               </tbody>
             </table>
@@ -413,138 +209,59 @@ export const SalaryView: React.FC = () => {
         )}
       </Card>
 
-      {/* Edit Salary Modal */}
-      <Modal
-        isOpen={!!salaryToEdit}
-        onClose={() => setSalaryToEdit(null)}
-        title="Adjust Payable Amount"
-        description={`Employee: ${salaryToEdit?.employeeName} · Month: ${formatMonthYear(salaryToEdit?.salaryMonth || '')}`}
-        maxWidth="md"
-      >
-        {salaryToEdit && (
-          <form onSubmit={handleSaveEdit} className="space-y-4">
-            <div className="p-3 bg-[#F7F9FC] rounded-lg border border-[#DFE6F1] grid grid-cols-2 gap-3 text-xs">
-              <div>
-                <span className="text-[#7185A5] block">Current Base Salary</span>
-                <span className="font-mono font-bold text-[#111827]">
-                  {formatCurrency(salaryToEdit.baseSalary, CURRENCY)}
-                </span>
-              </div>
-              <div>
-                <span className="text-[#7185A5] block">Calculated Total</span>
-                <span className="font-mono font-bold text-[#5038F5]">
-                  {formatCurrency(
-                    salaryToEdit.baseSalary + (parseFloat(editAdjustments) || 0),
-                    CURRENCY
-                  )}
-                </span>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-[#111827] mb-1">
-                Adjustments / Bonus / Deductions ({CURRENCY})
-              </label>
-              <input
-                type="number"
-                step="any"
-                placeholder="e.g. 5000 for bonus or -2000 for deduction"
-                value={editAdjustments}
-                onChange={e => setEditAdjustments(e.target.value)}
-                className="w-full text-xs font-mono px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-              />
-              <span className="text-[10px] text-[#7185A5] mt-1 block">
-                Enter positive value for bonuses or negative value for unpaid leave deductions.
-              </span>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-[#111827] mb-1">
-                Remarks / Notes
-              </label>
-              <input
-                type="text"
-                placeholder="Reason for adjustment"
-                value={editNotes}
-                onChange={e => setEditNotes(e.target.value)}
-                className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-              />
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#DFE6F1]">
-              <Button type="button" variant="outline" size="md" onClick={() => setSalaryToEdit(null)}>
-                Cancel
-              </Button>
-              <Button type="submit" variant="primary" size="md">
-                Update Payable
-              </Button>
-            </div>
-          </form>
-        )}
-      </Modal>
-
-      {/* Mark Salary Paid Modal */}
-      <Modal
-        isOpen={!!salaryToPay}
-        onClose={() => setSalaryToPay(null)}
-        title="Disburse Salary & Create Linked Expense"
-        description={`Paying: ${salaryToPay?.employeeName} · Payable: ${formatCurrency(salaryToPay?.finalPayableAmount || 0, CURRENCY)}`}
-        maxWidth="md"
-      >
-        {salaryToPay && (
-          <form onSubmit={handleConfirmPay} className="space-y-4">
-            <div className="p-3 bg-[#047857]/5 border border-[#047857]/20 rounded-lg text-xs space-y-1">
-              <span className="font-semibold text-[#047857] block flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4" /> Atomic Accounting Integration
-              </span>
-              <p className="text-[#475569]">
-                Marking this salary as paid will atomically generate a linked{' '}
-                <strong className="text-[#111827]">Expense Transaction</strong> under category 'Salaries' with reference #{salaryToPay.id}. Duplicate expense entries are automatically prevented.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-[#111827] mb-1">
-                  Payment Date *
-                </label>
-                <input
-                  type="date"
-                  value={paymentDate}
-                  onChange={e => setPaymentDate(e.target.value)}
-                  className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-[#111827] mb-1">
-                  Payment Method *
-                </label>
-                <select
-                  value={paymentMethod}
-                  onChange={e => setPaymentMethod(e.target.value as PaymentMethod)}
-                  className="w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]"
-                >
-                  {PAYMENT_METHODS.map(m => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#DFE6F1]">
-              <Button type="button" variant="outline" size="md" onClick={() => setSalaryToPay(null)}>
-                Cancel
-              </Button>
-              <Button type="submit" variant="primary" size="md">
-                Disburse & Record Expense
-              </Button>
-            </div>
-          </form>
-        )}
-      </Modal>
+      {openId && (
+        <SalaryDetailModal
+          salaryId={openId}
+          today={list.data?.today ?? ''}
+          onClose={() => setOpenId(null)}
+          onChanged={() => list.reload()}
+        />
+      )}
     </div>
+  );
+};
+
+const SalaryTableRow: React.FC<{ row: SalaryRow; onOpen: () => void }> = ({ row, onOpen }) => {
+  const adjustmentClass = row.adjustments.startsWith('-') ? 'text-[#E11D48]' : row.adjustments === '0.00' ? 'text-[#7185A5]' : 'text-[#047857]';
+  return (
+    <tr className="hover:bg-[#F7F9FC]/60 transition-colors" data-testid={`salary-row-${row.employeeCode}`}>
+      <td className="py-3 px-3">
+        <div className="font-semibold text-[#111827] whitespace-nowrap">{row.employeeName}</div>
+        <div className="text-[10px] text-[#7185A5] whitespace-nowrap">
+          <span className="font-mono">{row.employeeCode}</span> · {row.department}
+        </div>
+      </td>
+      <td className="py-3 px-3 text-right font-mono text-[#7185A5] whitespace-nowrap">{formatMoney(row.baseSalary)}</td>
+      <td className={`py-3 px-3 text-right font-mono whitespace-nowrap ${adjustmentClass}`}>
+        {row.adjustments.startsWith('-') || row.adjustments === '0.00' ? formatMoney(row.adjustments) : `+${formatMoney(row.adjustments)}`}
+        {row.lineCount ? <span className="block text-[10px] text-[#7185A5]">{row.lineCount} line{row.lineCount === 1 ? '' : 's'}</span> : null}
+      </td>
+      <td className="py-3 px-3 text-right font-mono font-bold text-[#111827] whitespace-nowrap">{formatMoney(row.netPayable)}</td>
+      <td className="py-3 px-3 text-center whitespace-nowrap">
+        {row.unpaidLeaveDays > 0 ? (
+          <span className="text-[11px] font-semibold text-[#B45309]" title="Approved unpaid leave this month (weekdays)">
+            {row.unpaidLeaveDays} day{row.unpaidLeaveDays === 1 ? '' : 's'}
+          </span>
+        ) : (
+          <span className="text-[#7185A5]">—</span>
+        )}
+      </td>
+      <td className="py-3 px-3 text-center whitespace-nowrap">
+        <div className="flex items-center justify-center gap-1">
+          <SalaryStatusBadge status={row.status} />
+          {row.slipPublished && (
+            <span title="Payslip published" className="text-[#5038F5]">
+              <FileCheck2 className="w-3.5 h-3.5" />
+            </span>
+          )}
+        </div>
+      </td>
+      <td className="py-3 px-3 text-[#7185A5] whitespace-nowrap">{row.paidOn ? formatDate(row.paidOn) : '—'}</td>
+      <td className="py-3 px-3 text-right whitespace-nowrap">
+        <Button variant="outline" size="sm" icon={<SlidersHorizontal className="w-3 h-3" />} onClick={onOpen} aria-label={`Manage salary of ${row.employeeName}`}>
+          {row.status === 'pending' ? 'Manage' : 'View'}
+        </Button>
+      </td>
+    </tr>
   );
 };

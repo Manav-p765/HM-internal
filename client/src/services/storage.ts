@@ -1,7 +1,4 @@
 import {
-  Employee,
-  SalaryRecord,
-  SalarySlip,
   Transaction,
   ActivityLog,
   AuditLog,
@@ -14,8 +11,7 @@ const STORAGE_KEYS = {
   // v2: the invoice payments that used to live here are income transactions on the server now
   // (invoices, payments and company settings moved to /api/invoices and /api/settings).
   TRANSACTIONS: 'monks_transactions_v2',
-  SALARIES: 'monks_salaries_v2',
-  SALARY_SLIPS: 'monks_salary_slips_v2',
+  // Salaries and payslips moved to the API (/api/salary); their old keys are removed in AuthContext.
   ACTIVITY_LOGS: 'monks_activity_logs_v1',
   AUDIT_LOGS: 'monks_audit_logs_v1',
 };
@@ -101,11 +97,6 @@ const INITIAL_TRANSACTIONS: Transaction[] = [
     createdAt: '2026-09-02T10:10:00.000Z',
   },
 ];
-
-const INITIAL_SALARIES: SalaryRecord[] = [];
-
-// Initial Seed Salary Slips (Published for September 2026)
-const INITIAL_SALARY_SLIPS: SalarySlip[] = [];
 
 const INITIAL_ACTIVITY_LOGS: ActivityLog[] = [
   {
@@ -209,88 +200,6 @@ export class StorageService {
   static currentActor: { id: string; name: string; email: string; role: UserRole } | null = null;
 
   // ----------------------------------------------------
-  // SALARY SLIPS
-  // ----------------------------------------------------
-
-  static getSalarySlips(): SalarySlip[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.SALARY_SLIPS);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.SALARY_SLIPS, JSON.stringify(INITIAL_SALARY_SLIPS));
-      return INITIAL_SALARY_SLIPS;
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return INITIAL_SALARY_SLIPS;
-    }
-  }
-
-  static saveSalarySlips(slips: SalarySlip[]): void {
-    localStorage.setItem(STORAGE_KEYS.SALARY_SLIPS, JSON.stringify(slips));
-  }
-
-  static publishSalarySlip(salaryRecordId: string, publishedBy: string = 'Admin'): SalarySlip | null {
-    const salaries = this.getSalaries();
-    const sal = salaries.find(s => s.id === salaryRecordId);
-    if (!sal) return null;
-
-    const slips = this.getSalarySlips();
-    const existingIndex = slips.findIndex(s => s.salaryRecordId === salaryRecordId);
-
-    const base = sal.baseSalary;
-    const hra = Math.round(base * 0.3);
-    const special = Math.round(base * 0.2);
-    const pf = 1800;
-    const pt = 200;
-
-    const slip: SalarySlip = {
-      id: `SLIP-${sal.salaryMonth}-${sal.employeeId}`,
-      salaryRecordId: sal.id,
-      employeeId: sal.employeeId,
-      employeeName: sal.employeeName,
-      employeeEmail: sal.employeeEmail,
-      department: sal.department,
-      designation: 'Specialist',
-      salaryMonth: sal.salaryMonth,
-      issueDate: new Date().toISOString().split('T')[0],
-      basicSalary: base,
-      allowances: [
-        { title: 'House Rent Allowance (HRA)', amount: hra },
-        { title: 'Special Allowance', amount: special },
-      ],
-      deductions: [
-        { title: 'Provident Fund (PF)', amount: pf },
-        { title: 'Professional Tax (PT)', amount: pt },
-      ],
-      netPayable: sal.finalPayableAmount,
-      paymentDate: sal.paymentDate,
-      paymentMethod: sal.paymentMethod,
-      paymentStatus: sal.status,
-      isPublished: true,
-      publishedAt: new Date().toISOString(),
-      publishedBy,
-    };
-
-    if (existingIndex !== -1) {
-      slips[existingIndex] = slip;
-    } else {
-      slips.unshift(slip);
-    }
-
-    this.saveSalarySlips(slips);
-
-    // Also mark on salary record
-    const salIndex = salaries.findIndex(s => s.id === salaryRecordId);
-    if (salIndex !== -1) {
-      salaries[salIndex].isSlipPublished = true;
-      this.saveSalaries(salaries);
-    }
-
-    this.addLog(publishedBy, 'admin', 'Published Salary Slip', `Published ${sal.salaryMonth} slip for ${sal.employeeName}`, 'salary');
-    return slip;
-  }
-
-  // ----------------------------------------------------
   // TRANSACTIONS & AUDIT LOGS
   // ----------------------------------------------------
 
@@ -352,186 +261,6 @@ export class StorageService {
     const filtered = transactions.filter(t => t.id !== id);
     this.saveTransactions(filtered);
     this.addLog('User', 'admin', 'Deleted Transaction', `Deleted transaction ${id}`, 'transaction');
-  }
-
-  static getSalaries(): SalaryRecord[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.SALARIES);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.SALARIES, JSON.stringify(INITIAL_SALARIES));
-      return INITIAL_SALARIES;
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return INITIAL_SALARIES;
-    }
-  }
-
-  static saveSalaries(salaries: SalaryRecord[]): void {
-    localStorage.setItem(STORAGE_KEYS.SALARIES, JSON.stringify(salaries));
-  }
-
-  static generateMonthlySalaries(
-    month: string,
-    activeEmployees: Employee[],
-    generatedBy: string = 'Admin'
-  ): { createdCount: number; skippedCount: number } {
-    const employees = activeEmployees.filter(e => e.status === 'active');
-    const existingSalaries = this.getSalaries();
-    let createdCount = 0;
-    let skippedCount = 0;
-
-    const newRecords: SalaryRecord[] = [];
-
-    for (const emp of employees) {
-      const alreadyExists = existingSalaries.some(
-        s => s.employeeId === emp.id && s.salaryMonth === month
-      );
-
-      if (alreadyExists) {
-        skippedCount++;
-        continue;
-      }
-
-      const record: SalaryRecord = {
-        id: `SAL-${month}-${emp.id}`,
-        employeeId: emp.id,
-        employeeName: emp.fullName,
-        employeeEmail: emp.workEmail,
-        department: emp.department,
-        salaryMonth: month,
-        baseSalary: roundToTwoDecimals(Number(emp.monthlySalary ?? 0)),
-        adjustments: 0,
-        finalPayableAmount: roundToTwoDecimals(Number(emp.monthlySalary ?? 0)),
-        status: 'Pending',
-        isSlipPublished: false,
-        notes: `Auto-generated monthly salary for ${month}`,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      newRecords.push(record);
-      createdCount++;
-    }
-
-    if (newRecords.length > 0) {
-      const updatedList = [...newRecords, ...existingSalaries];
-      this.saveSalaries(updatedList);
-      this.addLog(
-        generatedBy,
-        'admin',
-        'Generated Salaries',
-        `Generated ${createdCount} salary records for month ${month} (${skippedCount} already existed)`,
-        'salary'
-      );
-    }
-
-    return { createdCount, skippedCount };
-  }
-
-  static updateSalaryRecord(salary: SalaryRecord): void {
-    const salaries = this.getSalaries();
-    const index = salaries.findIndex(s => s.id === salary.id);
-    if (index !== -1) {
-      const baseSalary = roundToTwoDecimals(salary.baseSalary);
-      const adjustments = roundToTwoDecimals(salary.adjustments);
-      const finalPayableAmount = roundToTwoDecimals(baseSalary + adjustments);
-
-      salaries[index] = {
-        ...salary,
-        baseSalary,
-        adjustments,
-        finalPayableAmount,
-        updatedAt: new Date().toISOString(),
-      };
-      this.saveSalaries(salaries);
-      this.addLog('Admin', 'admin', 'Updated Salary', `Updated payable for ${salary.employeeName} to ${finalPayableAmount}`, 'salary');
-    }
-  }
-
-  static markSalaryPaid(
-    salaryId: string,
-    paymentDate: string,
-    paymentMethod: SalaryRecord['paymentMethod'] = 'Bank Transfer',
-    markedBy: string = 'Admin'
-  ): { success: boolean; message: string; auditLog?: AuditLog } {
-    const salaries = this.getSalaries();
-    const salary = salaries.find(s => s.id === salaryId);
-    if (!salary) return { success: false, message: 'Salary record not found' };
-
-    if (salary.status === 'Paid') {
-      return { success: false, message: 'Salary is already marked as paid' };
-    }
-
-    const previousState = {
-      status: salary.status,
-      paymentDate: salary.paymentDate || null,
-      paymentMethod: salary.paymentMethod || null,
-      finalPayableAmount: salary.finalPayableAmount,
-      linkedExpenseTxnId: salary.linkedExpenseTxnId || null,
-    };
-
-    // Atomically create linked Expense Transaction if one does not exist
-    const transactions = this.getTransactions();
-    let linkedTxnId = salary.linkedExpenseTxnId;
-
-    const existingTxn = transactions.find(t => t.linkedSalaryId === salary.id);
-    if (existingTxn) {
-      linkedTxnId = existingTxn.id;
-    } else {
-      const newTxn = this.addTransaction({
-        date: paymentDate,
-        type: 'expense',
-        category: 'Salaries',
-        description: `Salary payout for ${salary.employeeName} (${salary.salaryMonth})`,
-        amount: salary.finalPayableAmount,
-        paymentMethod: paymentMethod || 'Bank Transfer',
-        referenceNumber: `SAL-${salary.salaryMonth}-${salary.employeeId}`,
-        notes: `Disbursed to ${salary.employeeName} via ${paymentMethod}`,
-        linkedSalaryId: salary.id,
-        createdBy: markedBy,
-      });
-      linkedTxnId = newTxn.id;
-    }
-
-    const index = salaries.findIndex(s => s.id === salaryId);
-    salaries[index] = {
-      ...salary,
-      status: 'Paid',
-      paymentDate,
-      paymentMethod,
-      linkedExpenseTxnId: linkedTxnId,
-      updatedAt: new Date().toISOString(),
-    };
-    this.saveSalaries(salaries);
-
-    // Auto publish salary slip when paid
-    this.publishSalarySlip(salaryId, markedBy);
-
-    // Record formal accountability audit log with state diff
-    const audit = this.logAuditAction({
-      action: 'SALARY_PAYMENT',
-      entityType: 'salary',
-      entityId: salary.id,
-      details: `Disbursed ${salary.salaryMonth} salary of ₹${salary.finalPayableAmount.toLocaleString()} to ${salary.employeeName} (${salary.department}) via ${paymentMethod}. Linked ledger expense: ${linkedTxnId}`,
-      previousState,
-      newState: {
-        status: 'Paid',
-        paymentDate,
-        paymentMethod,
-        finalPayableAmount: salary.finalPayableAmount,
-        linkedExpenseTxnId: linkedTxnId,
-        isSlipPublished: true,
-      },
-      userName: markedBy,
-      userRole: 'admin',
-    });
-
-    return {
-      success: true,
-      message: 'Salary successfully marked as paid and linked expense created.',
-      auditLog: audit,
-    };
   }
 
   // ----------------------------------------------------

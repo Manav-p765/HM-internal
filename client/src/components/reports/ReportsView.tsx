@@ -17,6 +17,8 @@ import {
 } from 'lucide-react';
 import { formatCurrency, formatDate, exportToCSV } from '../../utils/formatters';
 import { invoicesApi } from '../../api/invoices';
+import { salaryApi } from '../../api/salary';
+import { SALARY_STATUS_LABEL } from '../../types/salary';
 import { useApiData } from '../../api/useApiData';
 import { InvoiceStatusBadge } from '../invoices/InvoiceStatusBadge';
 import { INVOICE_STATUS_LABEL, invoiceLabel } from '../../types/invoices';
@@ -25,7 +27,9 @@ import { CURRENCY, formatMoney, sumMoney } from '../../utils/money';
 type ReportType = 'income' | 'expense' | 'pnl' | 'invoices' | 'salary';
 
 export const ReportsView: React.FC = () => {
-  const { transactions, salaries } = useApp();
+  const { transactions, currentUser } = useApp();
+  // Salary data is admin only on the server; managers don't get the salary report.
+  const isAdmin = currentUser.role === 'admin';
 
   const [activeReport, setActiveReport] = useState<ReportType>('pnl');
 
@@ -82,31 +86,34 @@ export const ReportsView: React.FC = () => {
   const totalInvoicePaidValue = sumMoney(rangeInvoices.map(i => i.amountPaid));
   const totalInvoiceOutstandingValue = sumMoney(rangeInvoices.map(i => i.balance));
 
-  // 3. Salaries in range
-  const rangeSalaries = useMemo(() => {
-    return salaries.filter(s => {
-      const salDate = s.paymentDate || `${s.salaryMonth}-01`;
-      if (startDate && salDate < startDate) return false;
-      if (endDate && salDate > endDate) return false;
-      return true;
-    });
-  }, [salaries, startDate, endDate]);
-
-  const totalSalaryCommitted = useMemo(() => {
-    return rangeSalaries.reduce((sum, s) => sum + s.finalPayableAmount, 0);
-  }, [rangeSalaries]);
-
-  const totalSalaryPaid = useMemo(() => {
-    return rangeSalaries
-      .filter(s => s.status === 'Paid')
-      .reduce((sum, s) => sum + s.finalPayableAmount, 0);
-  }, [rangeSalaries]);
-
-  const totalSalaryPending = useMemo(() => {
-    return rangeSalaries
-      .filter(s => s.status === 'Pending')
-      .reduce((sum, s) => sum + s.finalPayableAmount, 0);
-  }, [rangeSalaries]);
+  // 3. Salaries: every payroll month touched by the range (at most 24), from the server, loaded only
+  // while the salary report is open. Totals are the server's month summaries added up exactly.
+  const salaryMonths = useMemo(() => {
+    const months: string[] = [];
+    if (!startDate || !endDate || startDate > endDate) return months;
+    let [y, m] = startDate.slice(0, 7).split('-').map(Number);
+    const last = endDate.slice(0, 7);
+    while (months.length < 24) {
+      const month = `${y}-${String(m).padStart(2, '0')}`;
+      if (month > last) break;
+      months.push(month);
+      m += 1;
+      if (m > 12) {
+        m = 1;
+        y += 1;
+      }
+    }
+    return months;
+  }, [startDate, endDate]);
+  const salaryReport = useApiData(
+    () => (isAdmin && activeReport === 'salary' ? Promise.all(salaryMonths.map(month => salaryApi.list(month))) : Promise.resolve(null)),
+    [isAdmin, activeReport, salaryMonths.join(',')],
+  );
+  const rangeSalaries = useMemo(() => (salaryReport.data ?? []).flatMap(list => list.salaries), [salaryReport.data]);
+  const salarySummaries = (salaryReport.data ?? []).map(list => list.summary);
+  const totalSalaryCommitted = sumMoney(salarySummaries.map(s => s.totalPayable));
+  const totalSalaryPaid = sumMoney(salarySummaries.map(s => s.totalPaid));
+  const totalSalaryPending = sumMoney(salarySummaries.map(s => s.totalPending));
 
   // Category breakdown for expenses
   const expenseByCategory = useMemo(() => {
@@ -150,7 +157,7 @@ export const ReportsView: React.FC = () => {
       exportToCSV(`invoice_payment_report_${startDate}_to_${endDate}`, headers, rows);
     } else if (activeReport === 'salary') {
       const headers = ['Employee', 'Department', 'Month', `Base (${CURRENCY})`, `Adjustments (${CURRENCY})`, `Final Payable (${CURRENCY})`, 'Status', 'Payment Date'];
-      const rows = rangeSalaries.map(s => [s.employeeName, s.department, s.salaryMonth, s.baseSalary, s.adjustments, s.finalPayableAmount, s.status, s.paymentDate || '']);
+      const rows = rangeSalaries.map(s => [s.employeeName, s.department, s.month, s.baseSalary, s.adjustments, s.netPayable, SALARY_STATUS_LABEL[s.status], s.paidOn || '']);
       exportToCSV(`salary_report_${startDate}_to_${endDate}`, headers, rows);
     }
   };
@@ -161,7 +168,7 @@ export const ReportsView: React.FC = () => {
     { id: 'expense', label: 'Expense Report', icon: <TrendingDown className="w-4 h-4" /> },
     { id: 'invoices', label: 'Invoice Payment Report', icon: <Receipt className="w-4 h-4" /> },
     { id: 'salary', label: 'Monthly Salary Report', icon: <Banknote className="w-4 h-4" /> },
-  ] as const;
+  ].filter(tab => isAdmin || tab.id !== 'salary') as { id: ReportType; label: string; icon: React.ReactNode }[];
 
   return (
     <div className="space-y-6">
@@ -458,25 +465,25 @@ export const ReportsView: React.FC = () => {
       )}
 
       {/* REPORT 5: MONTHLY SALARY REPORT */}
-      {activeReport === 'salary' && (
+      {activeReport === 'salary' && isAdmin && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Card padding="md">
               <span className="text-xs font-semibold text-[#7185A5] block">Total Salary Committed</span>
               <span className="text-2xl font-mono font-bold text-[#111827] block mt-1">
-                {formatCurrency(totalSalaryCommitted, CURRENCY)}
+                {formatMoney(totalSalaryCommitted)}
               </span>
             </Card>
             <Card padding="md">
               <span className="text-xs font-semibold text-[#7185A5] block">Disbursed (Paid)</span>
               <span className="text-2xl font-mono font-bold text-[#047857] block mt-1">
-                {formatCurrency(totalSalaryPaid, CURRENCY)}
+                {formatMoney(totalSalaryPaid)}
               </span>
             </Card>
             <Card padding="md">
               <span className="text-xs font-semibold text-[#7185A5] block">Pending Payouts</span>
               <span className="text-2xl font-mono font-bold text-[#B45309] block mt-1">
-                {formatCurrency(totalSalaryPending, CURRENCY)}
+                {formatMoney(totalSalaryPending)}
               </span>
             </Card>
           </div>
@@ -487,8 +494,9 @@ export const ReportsView: React.FC = () => {
                 Salary Payment Distribution
               </h3>
               <p className="text-xs text-[#7185A5]">
-                Active team payroll records for the selected period
+                Payroll rows for every month in the selected period{salaryMonths.length === 24 ? ' (first 24 months)' : ''}
               </p>
+              {salaryReport.error && <p className="text-xs text-[#E11D48] mt-1">{salaryReport.error}</p>}
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
@@ -509,16 +517,16 @@ export const ReportsView: React.FC = () => {
                     <tr key={sal.id}>
                       <td className="py-2.5 px-4 font-semibold text-[#111827]">{sal.employeeName}</td>
                       <td className="py-2.5 px-4">{sal.department}</td>
-                      <td className="py-2.5 px-4 text-[#7185A5] font-mono">{sal.salaryMonth}</td>
-                      <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(sal.baseSalary, CURRENCY)}</td>
-                      <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(sal.adjustments, CURRENCY)}</td>
-                      <td className="py-2.5 px-4 text-right font-mono font-bold">{formatCurrency(sal.finalPayableAmount, CURRENCY)}</td>
+                      <td className="py-2.5 px-4 text-[#7185A5] font-mono">{sal.month}</td>
+                      <td className="py-2.5 px-4 text-right font-mono">{formatMoney(sal.baseSalary)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono">{formatMoney(sal.adjustments)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono font-bold">{formatMoney(sal.netPayable)}</td>
                       <td className="py-2.5 px-4 text-center">
-                        <Badge variant={sal.status === 'Paid' ? 'success' : 'warning'}>
-                          {sal.status}
+                        <Badge variant={sal.status === 'paid' ? 'success' : 'warning'}>
+                          {SALARY_STATUS_LABEL[sal.status]}
                         </Badge>
                       </td>
-                      <td className="py-2.5 px-4 text-[#7185A5]">{sal.paymentDate ? formatDate(sal.paymentDate) : '—'}</td>
+                      <td className="py-2.5 px-4 text-[#7185A5]">{sal.paidOn ? formatDate(sal.paidOn) : '—'}</td>
                     </tr>
                   ))}
                 </tbody>

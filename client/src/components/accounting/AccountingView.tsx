@@ -152,6 +152,13 @@ export const AccountingView: React.FC = () => {
         </div>
       </div>
 
+      {/* This page still reads the browser-local ledger; invoice payments and salary payments are recorded
+          on the server and are not listed here until the ledger moves too. */}
+      <div className="p-3 rounded-xl bg-[#5038F5]/5 border border-[#5038F5]/20 text-xs text-[#475569]" role="note" data-testid="ledger-note">
+        <span className="font-semibold text-[#111827]">Ledger moves to the server in the next release.</span> Invoice payments and
+        salary payments are already recorded on the server (see Invoices and Salary) and are not listed on this page yet.
+      </div>
+
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card padding="md">

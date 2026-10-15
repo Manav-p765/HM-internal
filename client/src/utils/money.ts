@@ -64,6 +64,15 @@ export function compareAmounts(a: string, b: string): number | null {
   return x < y ? -1 : x > y ? 1 : 0;
 }
 
+// Salary adjustment form, LIVE PREVIEW only: the net payable if a line of `amount` were added. The server
+// recomputes (services/salary.ts) and refuses a negative net; null while the amount isn't a valid number.
+export function previewNetAfterLine(netPayable: string, kind: 'earning' | 'deduction', amount: string): string | null {
+  const net = toHundredths(netPayable);
+  const value = toHundredths(amount);
+  if (net === null || value === null) return null;
+  return fromHundredths(kind === 'earning' ? net + value : net - value);
+}
+
 // Exact sum of server amounts for report footers (no floats). Invalid entries count as 0.
 export function sumMoney(values: string[]): string {
   return fromHundredths(values.reduce<bigint>((sum, v) => sum + (toHundredths(v) ?? 0n), 0n));

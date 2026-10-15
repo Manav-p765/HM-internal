@@ -47,7 +47,6 @@ export interface Transaction {
   paymentMethod: PaymentMethod;
   referenceNumber?: string;
   notes?: string;
-  linkedSalaryId?: string;
   linkedInvoiceId?: string;
   createdBy: string;
   createdAt: string;
@@ -162,51 +161,7 @@ export interface MyEmployeeProfile {
   avatarUrl: string | null;
 }
 
-export type SalaryPaymentStatus = 'Pending' | 'Paid';
-
-export interface SalaryRecord {
-  id: string;
-  employeeId: string;
-  employeeName: string;
-  employeeEmail: string;
-  department: Department;
-  salaryMonth: string; // Format: 'YYYY-MM'
-  baseSalary: number;
-  adjustments: number; // Positive (bonus) or negative (deduction)
-  finalPayableAmount: number;
-  paymentDate?: string;
-  paymentMethod?: PaymentMethod;
-  status: SalaryPaymentStatus;
-  linkedExpenseTxnId?: string;
-  isSlipPublished?: boolean;
-  notes?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface SalarySlip {
-  id: string;
-  salaryRecordId: string;
-  employeeId: string;
-  employeeName: string;
-  employeeEmail: string;
-  department: Department;
-  designation: string;
-  salaryMonth: string; // YYYY-MM
-  issueDate: string;
-  basicSalary: number;
-  allowances: { title: string; amount: number }[];
-  deductions: { title: string; amount: number }[];
-  netPayable: number;
-  paymentDate?: string;
-  paymentMethod?: PaymentMethod;
-  paymentStatus: SalaryPaymentStatus;
-  isPublished: boolean;
-  publishedAt?: string;
-  publishedBy?: string;
-  notes?: string;
-}
-
+// Salaries and payslips live in types/salary.ts.
 // Attendance and leave types live in types/attendance.ts; invoices and company settings in
 // types/invoices.ts (API shapes).
 
