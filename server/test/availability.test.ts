@@ -2,7 +2,7 @@
 // database-backed availabilityFor with an injected clock.
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { pool, query } from '../src/db.js';
-import { availabilityFor, deriveAvailability, ONLINE_WINDOW_MS, type AvailabilityFacts } from '../src/services/availability.js';
+import { availabilityFor, dayStatus, deriveAvailability, ONLINE_WINDOW_MS, type AvailabilityFacts } from '../src/services/availability.js';
 import { countWeekdays, istDate, isWeekend } from '../src/services/clock.js';
 import { employee, resetAll, user } from './fixtures.js';
 
@@ -16,6 +16,15 @@ const facts = (overrides: Partial<AvailabilityFacts>): AvailabilityFacts => ({
   punchedOut: false,
   lastSeenAt: null,
   ...overrides,
+});
+
+describe('dayStatus (shared by the roster and availability)', () => {
+  it('approved full-day leave wins over a punch; otherwise a punch means present', () => {
+    expect(dayStatus({ onFullDayLeave: true, punchedIn: true })).toBe('on_leave');
+    expect(dayStatus({ onFullDayLeave: true, punchedIn: false })).toBe('on_leave');
+    expect(dayStatus({ onFullDayLeave: false, punchedIn: true })).toBe('present');
+    expect(dayStatus({ onFullDayLeave: false, punchedIn: false })).toBe('absent');
+  });
 });
 
 describe('deriveAvailability (rules in order)', () => {

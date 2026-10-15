@@ -300,6 +300,20 @@ describe('roster and corrections', () => {
     expect(yesterday.body.employees.map((e: { fullName: string }) => e.fullName)).not.toContain('Morgan Manager');
   });
 
+  it('approved full-day leave wins over a punch-in: on_leave with punch times, counted as on leave, not present', async () => {
+    await approvedLeave(ids.empA, DAY, DAY); // A was punched in at login
+    await approvedLeave(ids.empB, DAY, DAY, 'half'); // half day: still present
+    const res = await agents.admin.get(`/api/attendance?date=${DAY}`).expect(200);
+    const avery = res.body.employees.find((e: { fullName: string }) => e.fullName === 'Avery A');
+    expect(avery.status).toBe('on_leave');
+    expect(avery.record.punchIn).toBe(T0.toISOString());
+    expect(res.body.employees.find((e: { fullName: string }) => e.fullName === 'Blake B').status).toBe('present');
+    expect(res.body.summary).toMatchObject({ total: 2, present: 1, absent: 0, onApprovedLeave: 1, halfDayLeave: 1 });
+    // Availability agrees.
+    const team = await agents.admin.get('/api/team/availability').expect(200);
+    expect(team.body.availability.find((a: { employeeId: string }) => a.employeeId === ids.empA).status).toBe('on_leave');
+  });
+
   it('defaults to today (IST) and validates the date', async () => {
     setClock(new Date('2026-10-14T19:00:00Z')); // already the 15th in IST
     const admin = await signIn('admin@example.test'); // a fresh sign-in (the 09:30 one would be 15 h old)

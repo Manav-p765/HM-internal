@@ -15,7 +15,7 @@ export interface EmployeeList {
   limit: number;
   offset: number;
   // Whole roster, ignoring filters. monthlyPayroll is admin-only.
-  summary: { total: number; active: number; onLeave: number; inactive: number; monthlyPayroll?: string };
+  summary: { total: number; active: number; onLeave: number; onLeaveToday: number; inactive: number; monthlyPayroll?: string };
 }
 
 // What the admin form sends. monthlySalary is a decimal string (never a float).

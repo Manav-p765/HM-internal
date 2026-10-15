@@ -6,6 +6,7 @@ import { istDate, isWeekend, now } from '../services/clock.js';
 import { createRouter, STAFF } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
 import { isoDate } from './shared.js';
+import { dayStatus } from '../services/availability.js';
 
 // Attendance: one row per employee per IST work date. Rows are created by the automatic punch-in at
 // login (services/attendance.ts) or by an admin/manager correction; employees can only punch out.
@@ -196,7 +197,8 @@ attendanceRouter.get('/', ['admin', 'manager'], async (req, res) => {
     const record = row.record
       ? shape({ ...row.record, punchIn: new Date(row.record.punchIn), punchOut: row.record.punchOut ? new Date(row.record.punchOut) : null }, at)
       : null;
-    const status = record ? 'present' : row.leave?.dayType === 'full' ? 'on_leave' : 'absent';
+    // One shared rule with availability: approved full-day leave wins over a punch (times still returned).
+    const status = dayStatus({ onFullDayLeave: row.leave?.dayType === 'full', punchedIn: record !== null });
     return { ...row, record, status };
   });
 

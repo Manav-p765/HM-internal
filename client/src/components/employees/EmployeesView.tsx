@@ -155,10 +155,10 @@ export const EmployeesView: React.FC = () => {
         </Card>
 
         <Card padding="sm">
-          <span className="text-[11px] font-semibold text-[#7185A5] block">On Leave</span>
+          <span className="text-[11px] font-semibold text-[#7185A5] block">On Leave Today</span>
           <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-xl font-mono font-bold text-[#B45309]">{summary?.onLeave ?? '—'}</span>
-            <span className="text-xs text-[#B45309]">Scheduled leave</span>
+            <span className="text-xl font-mono font-bold text-[#B45309]">{summary?.onLeaveToday ?? '—'}</span>
+            <span className="text-xs text-[#B45309]">Approved full day</span>
           </div>
         </Card>
 

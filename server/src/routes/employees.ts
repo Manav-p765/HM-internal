@@ -3,6 +3,7 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { audit } from '../services/audit.js';
+import { istDate, now } from '../services/clock.js';
 import { deleteUserSessions } from '../middleware/auth.js';
 import { createRouter, STAFF } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
@@ -175,13 +176,19 @@ employeesRouter.get('/', ['admin', 'manager'], async (req, res) => {
     ),
     query<{ total: number }>(`SELECT count(*)::int AS total FROM employees e ${whereSql}`, params),
     // Headline numbers for the whole roster (not the filtered page).
-    query<{ total: number; active: number; onLeave: number; inactive: number; monthlyPayroll: string }>(
+    // onLeaveToday: approved full-day leave covering today (IST), the same rule as attendance and availability.
+    query<{ total: number; active: number; onLeave: number; onLeaveToday: number; inactive: number; monthlyPayroll: string }>(
       `SELECT count(*)::int AS total,
               count(*) FILTER (WHERE status = 'active')::int AS active,
               count(*) FILTER (WHERE status = 'on_leave')::int AS "onLeave",
               count(*) FILTER (WHERE status = 'inactive')::int AS inactive,
+              count(*) FILTER (WHERE status <> 'inactive' AND EXISTS (
+                SELECT 1 FROM leave_requests l
+                 WHERE l.employee_id = employees.id AND l.status = 'approved' AND l.day_type = 'full'
+                   AND $1::date BETWEEN l.start_date AND l.end_date))::int AS "onLeaveToday",
               coalesce(sum(monthly_salary) FILTER (WHERE status = 'active'), 0)::numeric(14,2)::text AS "monthlyPayroll"
          FROM employees`,
+      [istDate(now())],
     ),
   ]);
 

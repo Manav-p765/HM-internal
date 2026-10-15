@@ -15,14 +15,24 @@ export interface AvailabilityFacts {
   lastSeenAt: Date | null; // last presence heartbeat
 }
 
+// A person's status for one day, shared by the attendance roster and availability so they always agree.
+// Leave wins over a punch: an approved full-day leave covering the day means on_leave even when an
+// attendance record exists (its punch times are still shown). Half-day leave does not count.
+export type DayStatus = 'on_leave' | 'present' | 'absent';
+
+export function dayStatus(facts: { onFullDayLeave: boolean; punchedIn: boolean }): DayStatus {
+  if (facts.onFullDayLeave) return 'on_leave';
+  return facts.punchedIn ? 'present' : 'absent';
+}
+
 // The rules, in order:
-//   1. approved full-day leave covering today         -> on_leave
+//   1. approved full-day leave covering today         -> on_leave   (dayStatus)
 //   2. punched in today, not punched out, heartbeat
 //      within the last 5 minutes                      -> online
 //   3. punched in today (open or closed)              -> available
 //   4. otherwise                                      -> not_in_today
 export function deriveAvailability(facts: AvailabilityFacts, at: Date): Availability {
-  if (facts.onFullDayLeave) return 'on_leave';
+  if (dayStatus(facts) === 'on_leave') return 'on_leave';
   if (
     facts.punchedIn &&
     !facts.punchedOut &&

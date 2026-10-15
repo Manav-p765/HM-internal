@@ -3,6 +3,7 @@ import request from 'supertest';
 import { app } from '../src/app.js';
 import { pool, query } from '../src/db.js';
 import { hashPassword } from '../src/services/passwords.js';
+import { istDate, now } from '../src/services/clock.js';
 
 const PASSWORD = 'correct-horse-battery';
 
@@ -134,6 +135,22 @@ describe('salary visibility', () => {
 
     const adminList = await agents.admin.get('/api/employees').expect(200);
     expect(adminList.body.summary).toMatchObject({ total: 4, active: 4, monthlyPayroll: '200000.00' });
+  });
+
+  it('summary.onLeaveToday counts approved full-day leave covering today (IST), not employment status', async () => {
+    await query(`UPDATE employees SET status = 'on_leave' WHERE id = $1`, [ids.staffEmp]); // employment status only
+    const today = istDate(now());
+    await query(
+      `INSERT INTO leave_requests (employee_id, leave_type, start_date, end_date, day_type, half_day_period, total_days, reason, status, reviewed_by, reviewed_at)
+       SELECT v.emp, 'sick', $3::date, $3::date, v.day_type, v.period, v.days, 'Fake', v.status,
+              CASE WHEN v.status = 'approved' THEN u.id END, CASE WHEN v.status = 'approved' THEN now() END
+         FROM (VALUES ($1::uuid, 'full', NULL, 1, 'approved'), ($2::uuid, 'half', 'first', 0.5, 'approved'), ($2::uuid, 'full', NULL, 1, 'pending'))
+              AS v(emp, day_type, period, days, status)
+         JOIN users u ON u.email = 'admin@example.test'`,
+      [ids.otherEmp, ids.managerEmp, today],
+    );
+    const res = await agents.manager.get('/api/employees').expect(200);
+    expect(res.body.summary).toMatchObject({ onLeave: 1, onLeaveToday: 1 });
   });
 
   it('never sends salary, phone or notes in the directory, and no salary in /me', async () => {
