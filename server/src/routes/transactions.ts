@@ -181,7 +181,13 @@ transactionsRouter.get('/export.csv', ['admin'], async (req, res) => {
     ['Date', 'Type', 'Category', 'Description', 'Amount (INR)', 'Payment method', 'Reference', 'Source', 'Voided', 'Void reason'],
     data,
   );
-  await audit(req, { action: 'export.downloaded', entityType: 'export', metadata: { export: 'transactions', filters: f, rows: data.length, capped } });
+  // Filters as given, except the free-text search, which is only recorded as used or not.
+  const { search, ...filters } = f;
+  await audit(req, {
+    action: 'export.downloaded',
+    entityType: 'export',
+    metadata: { export: 'transactions', filters: { ...filters, search: Boolean(search) }, rows: data.length, capped },
+  });
   sendCsv(res, 'transactions', csv, capped);
 });
 
@@ -251,6 +257,16 @@ transactionsRouter.patch('/categories/:id', ['admin'], async (req, res) => {
     }
     let renamedRows = 0;
     if (renaming) {
+      // Invoice and salary rows are owned by their records and never rewritten here. They normally use the
+      // system categories (which can't be renamed), but legacy rows may use another name: refuse instead.
+      const { rows: linked } = await db.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM transactions
+          WHERE lower(category) = lower($1) AND (invoice_id IS NOT NULL OR salary_id IS NOT NULL)`,
+        [current.name],
+      );
+      if (linked[0].n > 0) {
+        throw new HttpError(409, 'Invoice or salary payments use this category, so it cannot be renamed', 'CATEGORY_LINKED');
+      }
       await db.query('UPDATE transaction_categories SET name = $2 WHERE id = $1', [id, body.name]).catch(duplicateName);
       const updated = await db.query('UPDATE transactions SET category = $2 WHERE lower(category) = lower($1)', [current.name, body.name]);
       renamedRows = updated.rowCount ?? 0;
@@ -305,7 +321,8 @@ const patchSchema = z
 // Returns the canonical name. A row being edited may keep its current (now inactive) category.
 async function checkCategory(db: PoolClient, name: string, type: string, keep?: string): Promise<string> {
   const { rows } = await db.query<{ name: string; type: string; isSystem: boolean; active: boolean }>(
-    `SELECT name::text AS name, type, is_system AS "isSystem", active FROM transaction_categories WHERE name = $1::citext`,
+    // FOR SHARE: a concurrent rename (FOR UPDATE on this row) finishes first, so the old name is never written.
+    `SELECT name::text AS name, type, is_system AS "isSystem", active FROM transaction_categories WHERE name = $1::citext FOR SHARE`,
     [name],
   );
   const c = rows[0];

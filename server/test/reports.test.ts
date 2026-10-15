@@ -130,7 +130,7 @@ describe('role matrix', () => {
     for (const leak of ['paymentMethod', 'payment_method', 'category', 'transaction', 'Invoice Payment', 'createdBy', 'reference']) {
       expect(text).not.toContain(leak);
     }
-    expect(Object.keys(res.body).sort()).toEqual(['aging', 'byStatus', 'openInvoices', 'period', 'summary', 'today', 'topClients']);
+    expect(Object.keys(res.body).sort()).toEqual(['aging', 'byStatus', 'openInvoices', 'openInvoicesTruncated', 'period', 'summary', 'today', 'topClients']);
   });
 });
 
@@ -302,7 +302,7 @@ describe('invoice report', () => {
     await invoiceRow({ total: '700.00', due: '2026-09-30', invoiceDate: '2026-09-01' }); // before the period, still open
     const res = await get('/invoices?preset=this_month').expect(200);
     expect(res.body.byStatus).toEqual([
-      { status: 'draft', count: 1, total: '100.00', outstanding: '100.00' },
+      { status: 'draft', count: 1, total: '100.00', outstanding: '0.00' }, // a draft is not owed yet
       { status: 'sent', count: 1, total: '200.00', outstanding: '200.00' },
       { status: 'partially_paid', count: 1, total: '300.00', outstanding: '200.00' },
       { status: 'overdue', count: 1, total: '400.00', outstanding: '400.00' },

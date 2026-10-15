@@ -341,6 +341,16 @@ describe('categories', () => {
     await create({ category: 'SaaS Tools' }).expect(201);
   });
 
+  it('a category used by invoice or salary rows (a legacy name) cannot be renamed; linked rows are never rewritten', async () => {
+    await query(`INSERT INTO transaction_categories (name, type, active) VALUES ('Client Payments', 'income', false)`);
+    const inv = await invoicePayment();
+    await query(`UPDATE transactions SET category = 'Client Payments' WHERE id = $1`, [inv.txn]);
+    const id = (await query<{ id: string }>(`SELECT id FROM transaction_categories WHERE name = 'Client Payments'`))[0].id;
+    expect((await agents.admin.patch(`/api/transactions/categories/${id}`).send({ name: 'Renamed' }).expect(409)).body.code).toBe('CATEGORY_LINKED');
+    expect((await query<{ category: string }>('SELECT category FROM transactions WHERE id = $1', [inv.txn]))[0].category).toBe('Client Payments');
+    await agents.admin.patch(`/api/transactions/categories/${id}`).send({ active: true }).expect(200); // other changes are fine
+  });
+
   it('system categories cannot be renamed or deactivated', async () => {
     const list = (await agents.admin.get('/api/transactions/categories')).body.categories;
     for (const name of ['Invoice Payment', 'Salary']) {
@@ -387,8 +397,13 @@ describe('export.csv', () => {
     expect(text).not.toContain('Old (fake)');
     expect(text).toContain(',10.00,');
     const [audited] = await auditRows('export.downloaded');
-    expect(audited.metadata).toMatchObject({ export: 'transactions', filters: { from: '2026-10-01' }, rows: 3, capped: false });
+    expect(audited.metadata).toMatchObject({ export: 'transactions', filters: { from: '2026-10-01', search: false }, rows: 3, capped: false });
     expect(JSON.stringify(audited.metadata)).not.toContain('HYPERLINK');
+    // A search is recorded as used, never the typed text.
+    await getCsv('?search=secret%20vendor');
+    const searched = (await auditRows('export.downloaded'))[1];
+    expect(searched.metadata.filters).toMatchObject({ search: true });
+    expect(JSON.stringify(searched.metadata)).not.toContain('secret');
   });
 
   it(`stops at ${CSV_ROW_CAP} rows and says so in a header`, async () => {

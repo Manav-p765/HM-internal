@@ -139,16 +139,18 @@ const BUCKET_SQL = (today: string) => `
        ELSE '90_plus' END`;
 // An open invoice: sent with a balance (paid and cancelled ones have none).
 const OPEN_SQL = `i.status = 'sent' AND i.total_amount > p.paid`;
-const CLIENT_KEY = `coalesce(i.client_id::text, 'name:' || lower(i.client_name))`;
+const OPEN_LIST_LIMIT = 200; // a constant, never request input
+const CLIENT_KEY =`coalesce(i.client_id::text, 'name:' || lower(i.client_name))`;
 const CLIENT_NAME = `coalesce(max(c.company_name), max(i.client_name))`;
 
 async function invoiceReport(period: Period) {
   const today = todayIst();
   const [byStatusRows, [summary], agingRows, open, topInvoiced, topOutstanding] = await Promise.all([
     query<{ status: string; count: number; total: string; outstanding: string }>(
+      // Outstanding counts sent invoices only (a draft is not owed yet), the same as summary.outstanding.
       `SELECT x.status, count(*)::int AS count, sum(x.total_amount)::numeric(14,2)::text AS total,
-              sum(x.balance)::numeric(14,2)::text AS outstanding
-         FROM (SELECT ${derivedStatusSql('$3')} AS status, i.total_amount, ${BALANCE_SQL} AS balance
+              coalesce(sum(x.balance) FILTER (WHERE x.base_status = 'sent'), 0)::numeric(14,2)::text AS outstanding
+         FROM (SELECT ${derivedStatusSql('$3')} AS status, i.status AS base_status, i.total_amount, ${BALANCE_SQL} AS balance
                  FROM invoices i ${PAID_JOIN}
                 WHERE i.invoice_date BETWEEN $1::date AND $2::date) x
         GROUP BY x.status`,
@@ -174,7 +176,7 @@ async function invoiceReport(period: Period) {
               i.total_amount::text AS total, ${BALANCE_SQL}::text AS balance
          FROM invoices i ${PAID_JOIN} WHERE ${OPEN_SQL}
         ORDER BY i.due_date, i.invoice_number
-        LIMIT 200`,
+        LIMIT ${OPEN_LIST_LIMIT + 1}`,
       [today],
     ),
     query(
@@ -205,7 +207,17 @@ async function invoiceReport(period: Period) {
     const row = agingRows.find(r => r.bucket === bucket);
     return { bucket, count: row?.count ?? 0, balance: row?.balance ?? '0.00' };
   });
-  return { today, period: periodJson(period), summary, byStatus, aging, openInvoices: open, topClients: { byInvoiced: topInvoiced, byOutstanding: topOutstanding } };
+  return {
+    today,
+    period: periodJson(period),
+    summary,
+    byStatus,
+    aging,
+    openInvoices: open.slice(0, OPEN_LIST_LIMIT),
+    // The aging totals always cover every open invoice; only this list stops.
+    openInvoicesTruncated: open.length > OPEN_LIST_LIMIT,
+    topClients: { byInvoiced: topInvoiced, byOutstanding: topOutstanding },
+  };
 }
 
 reportsRouter.get('/invoices', ['admin', 'manager'], async (req, res) => {
