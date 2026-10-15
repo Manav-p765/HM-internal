@@ -4,6 +4,7 @@ import { audit } from '../services/audit.js';
 import { deleteUserSessions } from '../middleware/auth.js';
 import { clientScope, createRouter } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
+import { optionalEmail, optionalGstin, optionalText } from './shared.js';
 
 // Client companies. Admin and manager create and edit; only admin deactivates/reactivates. Never deleted.
 // Client users see only their own company, through GET /me (scoped by req.user.clientId).
@@ -42,36 +43,13 @@ function parseId(raw: unknown): string {
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
-const optionalText = (max: number) =>
-  z
-    .string()
-    .trim()
-    .max(max)
-    .nullish()
-    .transform(v => (v ? v : null));
-
-const optionalEmail = z
-  .string()
-  .trim()
-  .toLowerCase()
-  .max(254)
-  .refine(v => v === '' || z.email().safeParse(v).success, 'Enter a valid email address')
-  .nullish()
-  .transform(v => (v ? v : null));
-
 const createSchema = z.object({
   companyName: z.string().trim().min(1, 'Company name is required').max(200),
   contactName: optionalText(120),
   contactEmail: optionalEmail,
   contactPhone: optionalText(40),
   address: optionalText(1000),
-  gstin: z
-    .string()
-    .trim()
-    .toUpperCase()
-    .refine(v => v === '' || /^[0-9A-Z]{15}$/.test(v), 'GSTIN must be 15 letters/digits')
-    .nullish()
-    .transform(v => (v ? v : null)),
+  gstin: optionalGstin,
   notes: optionalText(2000),
 });
 

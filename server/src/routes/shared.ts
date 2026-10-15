@@ -10,6 +10,25 @@ export const optionalText = (max: number) =>
     .nullish()
     .transform(v => (v ? v : null));
 
+// Optional email: lower-cased, '' becomes null.
+export const optionalEmail = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .max(254)
+  .refine(v => v === '' || z.email().safeParse(v).success, 'Enter a valid email address')
+  .nullish()
+  .transform(v => (v ? v : null));
+
+// Optional GSTIN: 15 upper-case letters/digits, '' becomes null.
+export const optionalGstin = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .refine(v => v === '' || /^[0-9A-Z]{15}$/.test(v), 'GSTIN must be 15 letters/digits')
+  .nullish()
+  .transform(v => (v ? v : null));
+
 export const isoDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the format YYYY-MM-DD')

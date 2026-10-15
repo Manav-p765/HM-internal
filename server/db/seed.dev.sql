@@ -9,8 +9,11 @@ UPDATE company_settings SET
   company_email   = 'accounts@example.test',
   company_gstin   = '00AAAAA0000A0Z0',
   default_gst_rate = 18,
-  invoice_prefix  = 'INV-DEV-',
-  currency        = 'INR';
+  invoice_prefix  = 'HM-',
+  invoice_next_number = 7,
+  currency        = 'INR',
+  bank_details    = E'Fake Bank of Testville (DEV DATA)\nA/C name: Example Studio LLP\nA/C no: 000000000000\nIFSC: FAKE0000000',
+  terms           = E'Payment due within 15 days of the invoice date.\nThis is fake development data.';
 
 -- Employees (the admin has no employee record; EMP-004 has no login yet, for trying "Add user")
 INSERT INTO employees (id, employee_code, full_name, work_email, phone, department, designation, joining_date, status, monthly_salary, payment_method) VALUES
@@ -72,18 +75,48 @@ INSERT INTO task_comments (task_id, author_user_id, comment_type, body, created_
   ('00000000-0000-4000-a000-000000000805', '00000000-0000-4000-a000-000000000003', 'internal_note',   'Internal: OTP edge case still flaky on Android.',                    '2026-10-01 15:30+05:30'),
   ('00000000-0000-4000-a000-000000000805', '00000000-0000-4000-a000-000000000602', 'client_feedback', 'Can the login screen show our logo larger?',                         '2026-10-02 09:15+05:30');
 
--- Invoices: one paid, one sent + partially paid, one draft
-INSERT INTO invoices (id, invoice_number, client_name, client_email, client_address, client_gstin, invoice_date, due_date, subtotal, tax_rate, tax_amount, total_amount, status, notes, created_by) VALUES
-  ('00000000-0000-4000-a000-000000000201', 'INV-DEV-001', 'Acme Corp (Fake)',   'billing@acme.example.test',   '42 Sample Road, Faketown', '00BBBBB0000B0Z0', '2026-08-01', '2026-08-16', 100000.00, 18, 18000.00, 118000.00, 'paid',  NULL,                 '00000000-0000-4000-a000-000000000001'),
-  ('00000000-0000-4000-a000-000000000202', 'INV-DEV-002', 'Globex Ltd (Fake)',  'accounts@globex.example.test', '7 Demo Lane, Mockville',   NULL,              '2026-09-10', '2026-09-25',  50000.00, 18,  9000.00,  59000.00, 'sent',  'Net 15',             '00000000-0000-4000-a000-000000000002'),
-  ('00000000-0000-4000-a000-000000000203', 'INV-DEV-003', 'Initech (Fake)',     'ap@initech.example.test',     NULL,                       NULL,              '2026-10-05', '2026-10-20',  25000.00, 18,  4500.00,  29500.00, 'draft', 'Awaiting PO number', '00000000-0000-4000-a000-000000000001');
+-- Invoices: one of each state, dated relative to today (IST) when the seed runs, so "overdue" stays true.
+-- Totals follow services/money.ts (subtotal + round half up(subtotal * rate / 100)); payments are the
+-- "Invoice Payment" income transactions further down.
+--   HM-0001 Acme   paid            HM-0002 Globex partially paid   HM-0003 Acme   overdue (sent, past due)
+--   HM-0004 Globex sent (not due)   HM-0005 Acme   draft            HM-0006 Globex cancelled
+WITH d AS (SELECT (now() AT TIME ZONE 'Asia/Kolkata')::date AS today)
+INSERT INTO invoices (id, invoice_number, client_id, client_name, client_email, client_address, client_gstin, invoice_date, due_date,
+                      subtotal, tax_rate, tax_amount, total_amount, status, notes, sent_at, cancelled_at, cancel_reason, created_by)
+SELECT v.id::uuid, v.num, v.client_id::uuid, v.client_name, v.client_email, v.client_address, v.client_gstin,
+       d.today + v.inv_off, d.today + v.due_off, v.subtotal, 18, v.tax, v.subtotal + v.tax, v.status, v.notes,
+       CASE WHEN v.status IN ('sent', 'paid') THEN (d.today + v.inv_off)::timestamp AT TIME ZONE 'Asia/Kolkata' + interval '11 hours' END,
+       CASE WHEN v.status = 'cancelled' THEN (d.today + v.inv_off + 2)::timestamp AT TIME ZONE 'Asia/Kolkata' + interval '15 hours' END,
+       CASE WHEN v.status = 'cancelled' THEN 'Raised twice by mistake (fake)' END,
+       v.created_by::uuid
+  FROM d, (VALUES
+    ('00000000-0000-4000-a000-000000000201', 'HM-0001', '00000000-0000-4000-a000-000000000501', 'Acme Corp (Fake)',  'billing@acme.example.test',    '42 Sample Road, Faketown', '00BBBBB0000B0Z0', -60, -45, 100000.00, 18000.00, 'paid',      NULL,                 '00000000-0000-4000-a000-000000000001'),
+    ('00000000-0000-4000-a000-000000000202', 'HM-0002', '00000000-0000-4000-a000-000000000502', 'Globex Ltd (Fake)', 'accounts@globex.example.test', '7 Demo Lane, Mockville',   '00CCCCC0000C0Z0', -20,  10,  50000.00,  9000.00, 'sent',      'Net 30',             '00000000-0000-4000-a000-000000000002'),
+    ('00000000-0000-4000-a000-000000000203', 'HM-0003', '00000000-0000-4000-a000-000000000501', 'Acme Corp (Fake)',  'billing@acme.example.test',    '42 Sample Road, Faketown', '00BBBBB0000B0Z0', -40, -10,  45000.00,  8100.00, 'sent',      NULL,                 '00000000-0000-4000-a000-000000000001'),
+    ('00000000-0000-4000-a000-000000000204', 'HM-0004', '00000000-0000-4000-a000-000000000502', 'Globex Ltd (Fake)', 'accounts@globex.example.test', '7 Demo Lane, Mockville',   '00CCCCC0000C0Z0',  -3,  27,  18000.00,  3240.00, 'sent',      NULL,                 '00000000-0000-4000-a000-000000000002'),
+    ('00000000-0000-4000-a000-000000000205', 'HM-0005', '00000000-0000-4000-a000-000000000501', 'Acme Corp (Fake)',  'billing@acme.example.test',    '42 Sample Road, Faketown', '00BBBBB0000B0Z0',   0,  15,  25000.00,  4500.00, 'draft',     'Awaiting PO number', '00000000-0000-4000-a000-000000000001'),
+    ('00000000-0000-4000-a000-000000000206', 'HM-0006', '00000000-0000-4000-a000-000000000502', 'Globex Ltd (Fake)', 'accounts@globex.example.test', '7 Demo Lane, Mockville',   '00CCCCC0000C0Z0', -30, -15,  12000.00,  2160.00, 'cancelled', NULL,                 '00000000-0000-4000-a000-000000000002')
+  ) AS v(id, num, client_id, client_name, client_email, client_address, client_gstin, inv_off, due_off, subtotal, tax, status, notes, created_by);
 
 INSERT INTO invoice_items (invoice_id, position, description, quantity, unit_price) VALUES
   ('00000000-0000-4000-a000-000000000201', 0, 'Website redesign',        1, 80000.00),
   ('00000000-0000-4000-a000-000000000201', 1, 'Hosting setup (monthly)', 4,  5000.00),
   ('00000000-0000-4000-a000-000000000202', 0, 'Mobile app sprint',       2, 25000.00),
-  ('00000000-0000-4000-a000-000000000203', 0, 'SEO audit',               1, 15000.00),
-  ('00000000-0000-4000-a000-000000000203', 1, 'Content writing (pages)', 10, 1000.00);
+  ('00000000-0000-4000-a000-000000000203', 0, 'Landing page build',      1, 30000.00),
+  ('00000000-0000-4000-a000-000000000203', 1, 'Copywriting (pages)',    10,  1500.00),
+  ('00000000-0000-4000-a000-000000000204', 0, 'Brand workshop (hours)', 12,  1500.00),
+  ('00000000-0000-4000-a000-000000000205', 0, 'SEO audit',               1, 15000.00),
+  ('00000000-0000-4000-a000-000000000205', 1, 'Content writing (pages)', 10, 1000.00),
+  ('00000000-0000-4000-a000-000000000206', 0, 'Logo concepts',           1, 12000.00);
+
+-- Invoice payments (income, category "Invoice Payment"), relative to today; recorded by the admin.
+INSERT INTO transactions (txn_date, type, category, description, amount, payment_method, reference_number, invoice_id, created_by)
+SELECT (now() AT TIME ZONE 'Asia/Kolkata')::date + v.off, 'income', 'Invoice Payment', v.description, v.amount, v.method, v.ref, v.invoice_id::uuid,
+       '00000000-0000-4000-a000-000000000001'::uuid
+  FROM (VALUES
+    (-50, 'Payment for HM-0001', 118000.00, 'Bank Transfer', 'UTR-FAKE-0001', '00000000-0000-4000-a000-000000000201'),
+    ( -5, 'Payment for HM-0002',  20000.00, 'UPI',           'UPI-FAKE-0002', '00000000-0000-4000-a000-000000000202')
+  ) AS v(off, description, amount, method, ref, invoice_id);
 
 -- One salary run: September 2026 (two paid, one pending with a deduction)
 INSERT INTO salaries (id, employee_id, salary_month, base_salary, adjustments, status, paid_on, payment_method, slip_published_at, notes) VALUES
@@ -93,8 +126,6 @@ INSERT INTO salaries (id, employee_id, salary_month, base_salary, adjustments, s
 
 -- Ledger
 INSERT INTO transactions (txn_date, type, category, description, amount, payment_method, reference_number, invoice_id, salary_id, created_by) VALUES
-  ('2026-08-14', 'income',  'Client Payments',            'Payment for INV-DEV-001',           118000.00, 'Bank Transfer', 'UTR-FAKE-0001', '00000000-0000-4000-a000-000000000201', NULL,                                   '00000000-0000-4000-a000-000000000002'),
-  ('2026-09-22', 'income',  'Client Payments',            'Part payment for INV-DEV-002',       20000.00, 'UPI',           'UPI-FAKE-0002', '00000000-0000-4000-a000-000000000202', NULL,                                   '00000000-0000-4000-a000-000000000002'),
   ('2026-09-30', 'expense', 'Salaries',                   'September 2026 salary - EMP-001',   120000.00, 'Bank Transfer', NULL,            NULL,                                   '00000000-0000-4000-a000-000000000301', '00000000-0000-4000-a000-000000000001'),
   ('2026-09-30', 'expense', 'Salaries',                   'September 2026 salary - EMP-002',    95000.00, 'Bank Transfer', NULL,            NULL,                                   '00000000-0000-4000-a000-000000000302', '00000000-0000-4000-a000-000000000001'),
   ('2026-09-05', 'expense', 'Software and Tools',         'Design tool seats (fake vendor)',     4999.00, 'Credit Card',   NULL,            NULL,                                   NULL,                                   '00000000-0000-4000-a000-000000000002'),

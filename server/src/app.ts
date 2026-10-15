@@ -18,6 +18,8 @@ import { portalRouter } from './routes/portal.js';
 import { attendanceRouter } from './routes/attendance.js';
 import { presenceRouter, teamRouter } from './routes/presence.js';
 import { leavesRouter } from './routes/leaves.js';
+import { invoicesRouter } from './routes/invoices.js';
+import { settingsRouter } from './routes/settings.js';
 import { createRouter, mountRouter } from './middleware/access.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -75,6 +77,8 @@ mountRouter(api, '/attendance', attendanceRouter);
 mountRouter(api, '/presence', presenceRouter);
 mountRouter(api, '/team', teamRouter);
 mountRouter(api, '/leaves', leavesRouter);
+mountRouter(api, '/invoices', invoicesRouter);
+mountRouter(api, '/settings', settingsRouter);
 
 api.use(apiNotFound);
 app.use('/api', api);

@@ -39,7 +39,15 @@ export type AuditAction =
   | 'leave.updated'
   | 'leave.cancelled'
   | 'leave.approved'
-  | 'leave.rejected';
+  | 'leave.rejected'
+  | 'settings.company_updated'
+  | 'invoice.created'
+  | 'invoice.updated'
+  | 'invoice.sent'
+  | 'invoice.cancelled'
+  | 'invoice.deleted'
+  | 'invoice.payment_recorded'
+  | 'invoice.payment_reversed';
 
 interface AuditEntry {
   action: AuditAction;
