@@ -10,7 +10,7 @@ UPDATE company_settings SET
   company_gstin   = '00AAAAA0000A0Z0',
   default_gst_rate = 18,
   invoice_prefix  = 'HM-',
-  invoice_next_number = 7,
+  invoice_next_number = 6,
   currency        = 'INR',
   bank_details    = E'Fake Bank of Testville (DEV DATA)\nA/C name: Example Studio LLP\nA/C no: 000000000000\nIFSC: FAKE0000000',
   terms           = E'Payment due within 15 days of the invoice date.\nThis is fake development data.';
@@ -79,13 +79,14 @@ INSERT INTO task_comments (task_id, author_user_id, comment_type, body, created_
 -- Totals follow services/money.ts (subtotal + round half up(subtotal * rate / 100)); payments are the
 -- "Invoice Payment" income transactions further down.
 --   HM-0001 Acme   paid            HM-0002 Globex partially paid   HM-0003 Acme   overdue (sent, past due)
---   HM-0004 Globex sent (not due)   HM-0005 Acme   draft            HM-0006 Globex cancelled
+--   HM-0004 Globex sent (not due)   (no number) Acme draft          HM-0005 Globex cancelled (after sending)
+-- Drafts have no number: it is assigned when the invoice is sent.
 WITH d AS (SELECT (now() AT TIME ZONE 'Asia/Kolkata')::date AS today)
 INSERT INTO invoices (id, invoice_number, client_id, client_name, client_email, client_address, client_gstin, invoice_date, due_date,
                       subtotal, tax_rate, tax_amount, total_amount, status, notes, sent_at, cancelled_at, cancel_reason, created_by)
 SELECT v.id::uuid, v.num, v.client_id::uuid, v.client_name, v.client_email, v.client_address, v.client_gstin,
        d.today + v.inv_off, d.today + v.due_off, v.subtotal, 18, v.tax, v.subtotal + v.tax, v.status, v.notes,
-       CASE WHEN v.status IN ('sent', 'paid') THEN (d.today + v.inv_off)::timestamp AT TIME ZONE 'Asia/Kolkata' + interval '11 hours' END,
+       CASE WHEN v.status IN ('sent', 'paid', 'cancelled') THEN (d.today + v.inv_off)::timestamp AT TIME ZONE 'Asia/Kolkata' + interval '11 hours' END,
        CASE WHEN v.status = 'cancelled' THEN (d.today + v.inv_off + 2)::timestamp AT TIME ZONE 'Asia/Kolkata' + interval '15 hours' END,
        CASE WHEN v.status = 'cancelled' THEN 'Raised twice by mistake (fake)' END,
        v.created_by::uuid
@@ -94,8 +95,8 @@ SELECT v.id::uuid, v.num, v.client_id::uuid, v.client_name, v.client_email, v.cl
     ('00000000-0000-4000-a000-000000000202', 'HM-0002', '00000000-0000-4000-a000-000000000502', 'Globex Ltd (Fake)', 'accounts@globex.example.test', '7 Demo Lane, Mockville',   '00CCCCC0000C0Z0', -20,  10,  50000.00,  9000.00, 'sent',      'Net 30',             '00000000-0000-4000-a000-000000000002'),
     ('00000000-0000-4000-a000-000000000203', 'HM-0003', '00000000-0000-4000-a000-000000000501', 'Acme Corp (Fake)',  'billing@acme.example.test',    '42 Sample Road, Faketown', '00BBBBB0000B0Z0', -40, -10,  45000.00,  8100.00, 'sent',      NULL,                 '00000000-0000-4000-a000-000000000001'),
     ('00000000-0000-4000-a000-000000000204', 'HM-0004', '00000000-0000-4000-a000-000000000502', 'Globex Ltd (Fake)', 'accounts@globex.example.test', '7 Demo Lane, Mockville',   '00CCCCC0000C0Z0',  -3,  27,  18000.00,  3240.00, 'sent',      NULL,                 '00000000-0000-4000-a000-000000000002'),
-    ('00000000-0000-4000-a000-000000000205', 'HM-0005', '00000000-0000-4000-a000-000000000501', 'Acme Corp (Fake)',  'billing@acme.example.test',    '42 Sample Road, Faketown', '00BBBBB0000B0Z0',   0,  15,  25000.00,  4500.00, 'draft',     'Awaiting PO number', '00000000-0000-4000-a000-000000000001'),
-    ('00000000-0000-4000-a000-000000000206', 'HM-0006', '00000000-0000-4000-a000-000000000502', 'Globex Ltd (Fake)', 'accounts@globex.example.test', '7 Demo Lane, Mockville',   '00CCCCC0000C0Z0', -30, -15,  12000.00,  2160.00, 'cancelled', NULL,                 '00000000-0000-4000-a000-000000000002')
+    ('00000000-0000-4000-a000-000000000205', NULL,      '00000000-0000-4000-a000-000000000501', 'Acme Corp (Fake)',  'billing@acme.example.test',    '42 Sample Road, Faketown', '00BBBBB0000B0Z0',   0,  15,  25000.00,  4500.00, 'draft',     'Awaiting PO number', '00000000-0000-4000-a000-000000000001'),
+    ('00000000-0000-4000-a000-000000000206', 'HM-0005', '00000000-0000-4000-a000-000000000502', 'Globex Ltd (Fake)', 'accounts@globex.example.test', '7 Demo Lane, Mockville',   '00CCCCC0000C0Z0', -30, -15,  12000.00,  2160.00, 'cancelled', NULL,                 '00000000-0000-4000-a000-000000000002')
   ) AS v(id, num, client_id, client_name, client_email, client_address, client_gstin, inv_off, due_off, subtotal, tax, status, notes, created_by);
 
 INSERT INTO invoice_items (invoice_id, position, description, quantity, unit_price) VALUES

@@ -5,7 +5,7 @@ import { invoicesApi, InvoiceInput } from '../../api/invoices';
 import { clientsApi } from '../../api/clients';
 import { settingsApi } from '../../api/settings';
 import { Client } from '../../types';
-import { Invoice } from '../../types/invoices';
+import { Invoice, invoiceLabel } from '../../types/invoices';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { FormField } from '../common/FormField';
@@ -157,7 +157,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, invoiceId, o
         };
         saved = existing ? await invoicesApi.update(existing.id, body) : await invoicesApi.create(body);
       }
-      showToast('success', existing ? `Invoice ${saved.invoiceNumber} saved` : `Draft ${saved.invoiceNumber} created`);
+      showToast('success', existing ? `Invoice ${invoiceLabel(saved)} saved` : 'Draft created');
       onSaved(saved);
     } catch (err) {
       if (err instanceof ApiError && err.details?.length) {
@@ -172,7 +172,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, invoiceId, o
   };
 
   const input = 'w-full min-w-0 text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5] disabled:bg-[#F7F9FC] disabled:text-[#7185A5]';
-  const title = !invoiceId ? 'Create Invoice (Draft)' : existing ? `Edit ${existing.invoiceNumber}` : 'Edit Invoice';
+  const title = !invoiceId ? 'Create Invoice (Draft)' : existing ? `Edit ${invoiceLabel(existing)}` : 'Edit Invoice';
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={title} description="The number and all totals are assigned by the server when you save." maxWidth="2xl">

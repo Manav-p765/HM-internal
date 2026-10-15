@@ -21,11 +21,13 @@ import { formatInvoiceNumber } from './settings.js';
 // Invoices. Admins and managers manage them; only admins record or reverse payments and cancel.
 // Employees and clients are refused everywhere (clients never see finance).
 //
-// Lifecycle: draft (everything editable, may be deleted) -> sent (number and lines locked; only the due
-// date and notes change) -> paid (when payments reach the total; locked). Draft or sent invoices without
-// payments can be cancelled; cancelled invoices keep their number and are never deleted.
-// Payments are income transactions (category "Invoice Payment", invoice_id set). Derived states are never
-// stored: amount paid, balance, overdue (sent, balance > 0, due date before today IST) and partially paid.
+// Lifecycle: draft (no number; everything editable, may be deleted) -> sent (the number is assigned now;
+// client and lines locked; only the due date and notes change) -> paid (when payments reach the total;
+// locked). Draft or sent invoices without payments can be cancelled; a cancelled invoice keeps its number
+// (if it had one) and is never deleted. Numbers are never changed or reused.
+// Payments are income transactions (category "Invoice Payment", invoice_id set). A reversed payment stays in
+// the ledger (reversed_at/by/reason) and is ignored by every sum. Derived states are never stored: amount
+// paid, balance, overdue (sent, balance > 0, due date before today IST) and partially paid.
 // All money is computed by services/money.ts and travels as 2-decimal strings.
 export const invoicesRouter = createRouter();
 
@@ -47,7 +49,7 @@ function parseId(raw: unknown): string {
 // ---------------------------------------------------------------------------
 const PAID_JOIN = `
   LEFT JOIN LATERAL (
-    SELECT coalesce(sum(t.amount), 0)::numeric(14,2) AS paid FROM transactions t WHERE t.invoice_id = i.id
+    SELECT coalesce(sum(t.amount), 0)::numeric(14,2) AS paid FROM transactions t WHERE t.invoice_id = i.id AND t.reversed_at IS NULL
   ) p ON true`;
 
 const BALANCE_SQL = `(CASE WHEN i.status = 'cancelled' THEN 0 ELSE i.total_amount - p.paid END)::numeric(14,2)`;
@@ -71,7 +73,7 @@ const invoiceColumns = (today: string) => `
 
 interface InvoiceRow {
   id: string;
-  invoiceNumber: string;
+  invoiceNumber: string | null;
   clientId: string | null;
   clientName: string;
   invoiceDate: string;
@@ -98,10 +100,14 @@ async function loadInvoice(id: string, db: Pick<PoolClient, 'query'> | null = nu
   const payments = await run(
     `SELECT t.id, t.txn_date AS "txnDate", t.amount::text AS amount, t.payment_method AS "paymentMethod",
             t.reference_number AS "referenceNumber", t.notes, t.created_at AS "createdAt",
-            coalesce(e.full_name, u.email::text) AS "recordedByName"
+            coalesce(e.full_name, u.email::text) AS "recordedByName",
+            t.reversed_at AS "reversedAt", t.reverse_reason AS "reverseReason",
+            CASE WHEN t.reversed_by IS NULL THEN NULL ELSE coalesce(re.full_name, ru.email::text) END AS "reversedByName"
        FROM transactions t
        JOIN users u ON u.id = t.created_by
        LEFT JOIN employees e ON e.id = u.employee_id
+       LEFT JOIN users ru ON ru.id = t.reversed_by
+       LEFT JOIN employees re ON re.id = ru.employee_id
       WHERE t.invoice_id = $1
       ORDER BY t.txn_date, t.created_at`,
     [id],
@@ -140,6 +146,7 @@ invoicesRouter.get('/', ['admin', 'manager'], async (req, res) => {
   if (clientId) add(p => `i.client_id = ${p}`, clientId);
   if (from) add(p => `i.invoice_date >= ${p}::date`, from);
   if (to) add(p => `i.invoice_date <= ${p}::date`, to);
+  // Drafts have no number, so a number search only ever matches numbered invoices.
   if (search) add(p => `(i.invoice_number ILIKE ${p} OR i.client_name ILIKE ${p})`, likePattern(search));
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -147,7 +154,7 @@ invoicesRouter.get('/', ['admin', 'manager'], async (req, res) => {
   const [invoices, [{ total }], [summary]] = await Promise.all([
     query(
       `SELECT ${invoiceColumns('$1')} FROM invoices i ${PAID_JOIN} ${whereSql}
-        ORDER BY i.invoice_date DESC, i.invoice_number DESC
+        ORDER BY i.invoice_date DESC, i.invoice_number DESC NULLS FIRST, i.created_at DESC
         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, limit, offset],
     ),
@@ -163,7 +170,7 @@ invoicesRouter.get('/', ['admin', 'manager'], async (req, res) => {
               count(*) FILTER (WHERE ${overdueSql('$1')})::int AS "overdueCount",
               count(*) FILTER (WHERE i.status = 'draft')::int AS "draftCount",
               (SELECT coalesce(sum(t.amount), 0)::numeric(14,2)::text FROM transactions t
-                WHERE t.invoice_id IS NOT NULL AND t.txn_date BETWEEN $2::date AND $1::date) AS "collectedThisMonth"
+                WHERE t.invoice_id IS NOT NULL AND t.reversed_at IS NULL AND t.txn_date BETWEEN $2::date AND $1::date) AS "collectedThisMonth"
          FROM invoices i ${PAID_JOIN}`,
       [today, monthStart],
     ),
@@ -265,7 +272,8 @@ async function insertItems(db: PoolClient, invoiceId: string, items: { descripti
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/invoices  (admin, manager): a draft. The server assigns the number and computes the totals.
+// POST /api/invoices  (admin, manager): a draft, without a number (it gets one at send). The server
+// computes the totals.
 // ---------------------------------------------------------------------------
 invoicesRouter.post('/', ['admin', 'manager'], async (req, res) => {
   const body = parseBody(createSchema, req.body);
@@ -278,35 +286,22 @@ invoicesRouter.post('/', ['admin', 'manager'], async (req, res) => {
   }
 
   const id = await withTransaction(async db => {
-    // One row, locked: concurrent creates queue here, so numbers are unique and sequential.
     const {
       rows: [settings],
-    } = await db.query<{ prefix: string; next: number; rate: string }>(
-      `SELECT invoice_prefix AS prefix, invoice_next_number AS next, default_gst_rate::text AS rate FROM company_settings FOR UPDATE`,
-    );
+    } = await db.query<{ rate: string }>(`SELECT default_gst_rate::text AS rate FROM company_settings`);
     const taxRate = body.taxRate ?? settings.rate;
     const totals = totalsFor(body.items, taxRate);
     const snapshot = body.clientId
       ? await clientSnapshot(db, body.clientId, body, sentKeys(req.body))
       : Object.fromEntries(SNAPSHOT.map(k => [k, body[k] ?? null]));
 
-    // Skip numbers already taken (e.g. after the prefix was changed back to an old one).
-    let next = settings.next;
-    let number = formatInvoiceNumber(settings.prefix, next);
-    while ((await db.query('SELECT 1 FROM invoices WHERE invoice_number = $1', [number])).rowCount) {
-      next += 1;
-      number = formatInvoiceNumber(settings.prefix, next);
-    }
-    await db.query('UPDATE company_settings SET invoice_next_number = $1', [next + 1]);
-
     const {
       rows: [row],
     } = await db.query<{ id: string }>(
-      `INSERT INTO invoices (invoice_number, client_id, client_name, client_email, client_address, client_gstin,
+      `INSERT INTO invoices (client_id, client_name, client_email, client_address, client_gstin,
                              invoice_date, due_date, subtotal, tax_rate, tax_amount, total_amount, status, notes, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'draft', $13, $14) RETURNING id`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'draft', $12, $13) RETURNING id`,
       [
-        number,
         body.clientId ?? null,
         snapshot.clientName ?? '',
         snapshot.clientEmail ?? null,
@@ -335,7 +330,7 @@ invoicesRouter.post('/', ['admin', 'manager'], async (req, res) => {
 async function lockInvoice(db: PoolClient, id: string) {
   const { rows } = await db.query<{
     id: string;
-    invoiceNumber: string;
+    invoiceNumber: string | null;
     status: InvoiceRow['status'];
     clientId: string | null;
     clientName: string;
@@ -355,7 +350,7 @@ async function lockInvoice(db: PoolClient, id: string) {
 
 async function paidSoFar(db: PoolClient, id: string): Promise<string> {
   const { rows } = await db.query<{ paid: string }>(
-    `SELECT coalesce(sum(amount), 0)::numeric(14,2)::text AS paid FROM transactions WHERE invoice_id = $1`,
+    `SELECT coalesce(sum(amount), 0)::numeric(14,2)::text AS paid FROM transactions WHERE invoice_id = $1 AND reversed_at IS NULL`,
     [id],
   );
   return rows[0].paid;
@@ -432,8 +427,28 @@ invoicesRouter.patch('/:id', ['admin', 'manager'], async (req, res) => {
   res.json({ invoice: await loadInvoice(id) });
 });
 
+// The next invoice number. The settings row is locked for the rest of the transaction, so concurrent sends
+// queue here: numbers are unique and sequential, and only a send that commits consumes one (a deleted or
+// cancelled draft never does). Numbers already taken (e.g. after the prefix was changed back) are skipped.
+async function takeInvoiceNumber(db: PoolClient): Promise<string> {
+  const {
+    rows: [settings],
+  } = await db.query<{ prefix: string; next: number }>(
+    `SELECT invoice_prefix AS prefix, invoice_next_number AS next FROM company_settings FOR UPDATE`,
+  );
+  let next = settings.next;
+  let number = formatInvoiceNumber(settings.prefix, next);
+  while ((await db.query('SELECT 1 FROM invoices WHERE invoice_number = $1', [number])).rowCount) {
+    next += 1;
+    number = formatInvoiceNumber(settings.prefix, next);
+  }
+  await db.query('UPDATE company_settings SET invoice_next_number = $1', [next + 1]);
+  return number;
+}
+
 // ---------------------------------------------------------------------------
-// POST /api/invoices/:id/send  (admin, manager): draft -> sent. No email is sent (v2).
+// POST /api/invoices/:id/send  (admin, manager): draft -> sent; the invoice gets its number. No email is
+// sent (v2).
 // ---------------------------------------------------------------------------
 invoicesRouter.post('/:id/send', ['admin', 'manager'], async (req, res) => {
   const id = parseId(req.params.id);
@@ -445,7 +460,9 @@ invoicesRouter.post('/:id/send', ['admin', 'manager'], async (req, res) => {
     // A zero total could never be paid (payments must be greater than 0), so it would stay "sent" forever.
     if (compareMoney(current.total, '0.00') <= 0) throw new HttpError(409, 'The invoice total must be more than zero', 'INVOICE_INCOMPLETE');
     if (!current.clientName.trim()) throw new HttpError(409, 'Enter a client name before sending', 'INVOICE_INCOMPLETE');
-    await db.query(`UPDATE invoices SET status = 'sent', sent_at = $2 WHERE id = $1`, [id, now()]);
+    // Drafts from before numbers moved to send (migration 007) already have one and keep it.
+    const number = current.invoiceNumber ?? (await takeInvoiceNumber(db));
+    await db.query(`UPDATE invoices SET status = 'sent', sent_at = $2, invoice_number = $3 WHERE id = $1`, [id, now(), number]);
   });
   const invoice = await loadInvoice(id);
   await audit(req, { action: 'invoice.sent', entityType: 'invoice', entityId: id, metadata: { invoiceNumber: invoice.invoiceNumber } });
@@ -453,7 +470,8 @@ invoicesRouter.post('/:id/send', ['admin', 'manager'], async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/invoices/:id/cancel  (admin): draft or sent, no payments, reason required. Keeps its number.
+// POST /api/invoices/:id/cancel  (admin): draft or sent, no live payments, reason required. Keeps its number
+// if it has one; a cancelled draft never gets one.
 // ---------------------------------------------------------------------------
 const cancelSchema = z.object({ reason: z.string().trim().min(1, 'A reason is required').max(500) });
 
@@ -513,7 +531,7 @@ invoicesRouter.post('/:id/payments', ['admin'], async (req, res) => {
     } = await db.query<{ id: string }>(
       `INSERT INTO transactions (txn_date, type, category, description, amount, payment_method, reference_number, notes, invoice_id, created_by)
        VALUES ($1, 'income', $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-      [body.txnDate, PAYMENT_CATEGORY, `Payment for ${current.invoiceNumber}`, body.amount, body.paymentMethod, body.referenceNumber, body.notes, id, req.user!.id],
+      [body.txnDate, PAYMENT_CATEGORY, `Payment for ${current.invoiceNumber ?? 'invoice'}`, body.amount, body.paymentMethod, body.referenceNumber, body.notes, id, req.user!.id],
     );
     // Fully paid -> paid, in the same transaction.
     if (compareMoney(body.amount, balance) === 0) await db.query(`UPDATE invoices SET status = 'paid' WHERE id = $1`, [id]);
@@ -530,32 +548,51 @@ invoicesRouter.post('/:id/payments', ['admin'], async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// DELETE /api/invoices/:id/payments/:txnId  (admin): reverses a payment; a paid invoice goes back to sent.
+// DELETE /api/invoices/:id/payments/:txnId  (admin) { reason }: reverses a payment. The ledger row is kept
+// and marked reversed (who, when, why) and no longer counts; a paid invoice goes back to sent.
 // ---------------------------------------------------------------------------
+const reverseSchema = z.object({ reason: z.string().trim().min(1, 'A reason is required').max(500) });
+
 invoicesRouter.delete('/:id/payments/:txnId', ['admin'], async (req, res) => {
   const id = parseId(req.params.id);
   const txnResult = z.uuid().safeParse(req.params.txnId);
   if (!txnResult.success) throw new HttpError(404, 'Payment not found', 'NOT_FOUND');
   const txnId = txnResult.data;
+  const { reason } = parseBody(reverseSchema, req.body);
 
-  const removed = await withTransaction(async db => {
+  const reversed = await withTransaction(async db => {
     const current = await lockInvoice(db, id);
-    const { rows } = await db.query<{ amount: string; txnDate: string; paymentMethod: string; referenceNumber: string | null }>(
-      `DELETE FROM transactions WHERE id = $1 AND invoice_id = $2
-        RETURNING amount::text AS amount, txn_date AS "txnDate", payment_method AS "paymentMethod", reference_number AS "referenceNumber"`,
+    const { rows } = await db.query<{
+      amount: string;
+      txnDate: string;
+      paymentMethod: string;
+      referenceNumber: string | null;
+      reversedAt: Date | null;
+    }>(
+      `SELECT amount::text AS amount, txn_date AS "txnDate", payment_method AS "paymentMethod",
+              reference_number AS "referenceNumber", reversed_at AS "reversedAt"
+         FROM transactions WHERE id = $1 AND invoice_id = $2 FOR UPDATE`,
       [txnId, id],
     );
     if (!rows[0]) throw new HttpError(404, 'Payment not found', 'NOT_FOUND');
+    const { reversedAt, ...payment } = rows[0];
+    if (reversedAt) throw new HttpError(409, 'This payment has already been reversed', 'ALREADY_REVERSED');
+    await db.query(`UPDATE transactions SET reversed_at = $2, reversed_by = $3, reverse_reason = $4 WHERE id = $1`, [
+      txnId,
+      now(),
+      req.user!.id,
+      reason,
+    ]);
     if (current.status === 'paid') await db.query(`UPDATE invoices SET status = 'sent' WHERE id = $1`, [id]);
-    return rows[0];
+    return payment;
   });
 
-  // The ledger row is deleted, so the audit row keeps what it said.
+  // The audit row keeps what the payment said; the reason is internal free text kept on the ledger row.
   await audit(req, {
     action: 'invoice.payment_reversed',
     entityType: 'invoice',
     entityId: id,
-    metadata: { transactionId: txnId, ...removed },
+    metadata: { transactionId: txnId, ...reversed },
   });
   res.json({ invoice: await loadInvoice(id) });
 });

@@ -4,7 +4,7 @@ import { useApp } from '../../context/AppContext';
 import { invoicesApi } from '../../api/invoices';
 import { useApiData } from '../../api/useApiData';
 import { errorMessage } from '../../api/client';
-import { InvoiceListStatus, InvoiceSummaryRow, INVOICE_STATUS_LABEL } from '../../types/invoices';
+import { InvoiceListStatus, InvoiceSummaryRow, INVOICE_STATUS_LABEL, invoiceLabel } from '../../types/invoices';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
 import { EmptyState } from '../common/EmptyState';
@@ -76,7 +76,7 @@ export const InvoicesView: React.FC = () => {
   const handleExportCSV = () => {
     const headers = ['Invoice Number', 'Client', 'Invoice Date', 'Due Date', 'Subtotal (INR)', 'Tax Rate (%)', 'Tax (INR)', 'Total (INR)', 'Paid (INR)', 'Balance (INR)', 'Status'];
     const rows = invoices.map(i => [
-      i.invoiceNumber,
+      invoiceLabel(i),
       i.clientName,
       i.invoiceDate,
       i.dueDate,
@@ -95,7 +95,7 @@ export const InvoicesView: React.FC = () => {
     if (!toDelete) return;
     try {
       await invoicesApi.remove(toDelete.id);
-      showToast('info', `Draft ${toDelete.invoiceNumber} deleted`);
+      showToast('info', 'Draft deleted');
       setToDelete(null);
       if (viewId === toDelete.id) navigate('/invoices');
       list.reload();
@@ -237,8 +237,8 @@ export const InvoicesView: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-[#DFE6F1]">
                 {invoices.map(inv => (
-                  <tr key={inv.id} className="hover:bg-[#F7F9FC]/60 transition-colors" data-testid={`invoice-row-${inv.invoiceNumber}`}>
-                    <td className="py-3 px-4 font-mono font-bold text-[#111827] whitespace-nowrap">{inv.invoiceNumber}</td>
+                  <tr key={inv.id} className="hover:bg-[#F7F9FC]/60 transition-colors" data-testid={`invoice-row-${inv.invoiceNumber ?? inv.id}`}>
+                    <td className="py-3 px-4 font-mono font-bold text-[#111827] whitespace-nowrap">{invoiceLabel(inv)}</td>
                     <td className="py-3 px-4">
                       <div className="font-semibold text-[#111827]">{inv.clientName || '—'}</div>
                       {inv.clientEmail && <div className="text-[11px] text-[#7185A5]">{inv.clientEmail}</div>}
@@ -262,7 +262,7 @@ export const InvoicesView: React.FC = () => {
                         <button
                           onClick={() => navigate(`/invoices/${inv.id}`)}
                           className="p-1.5 text-[#7185A5] hover:text-[#5038F5] hover:bg-[#F1F5F9] rounded cursor-pointer"
-                          aria-label={`View ${inv.invoiceNumber}`}
+                          aria-label={`View ${invoiceLabel(inv)}`}
                           title="View"
                         >
                           <Eye className="w-3.5 h-3.5" />
@@ -270,7 +270,7 @@ export const InvoicesView: React.FC = () => {
                         <button
                           onClick={() => navigate(`/invoices/${inv.id}/print`)}
                           className="p-1.5 text-[#7185A5] hover:text-[#5038F5] hover:bg-[#F1F5F9] rounded cursor-pointer"
-                          aria-label={`Print ${inv.invoiceNumber}`}
+                          aria-label={`Print ${invoiceLabel(inv)}`}
                           title="Print / Save as PDF"
                         >
                           <Printer className="w-3.5 h-3.5" />
@@ -279,7 +279,7 @@ export const InvoicesView: React.FC = () => {
                           <button
                             onClick={() => navigate(`/invoices/${inv.id}/edit`)}
                             className="p-1.5 text-[#7185A5] hover:text-[#5038F5] hover:bg-[#F1F5F9] rounded cursor-pointer"
-                            aria-label={`Edit ${inv.invoiceNumber}`}
+                            aria-label={`Edit ${invoiceLabel(inv)}`}
                             title={inv.status === 'draft' ? 'Edit draft' : 'Edit due date / notes'}
                           >
                             <Edit2 className="w-3.5 h-3.5" />
@@ -289,7 +289,7 @@ export const InvoicesView: React.FC = () => {
                           <button
                             onClick={() => setToDelete(inv)}
                             className="p-1.5 text-[#7185A5] hover:text-[#E11D48] hover:bg-[#F1F5F9] rounded cursor-pointer"
-                            aria-label={`Delete draft ${inv.invoiceNumber}`}
+                            aria-label={`Delete draft ${invoiceLabel(inv)}`}
                             title="Delete draft"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -347,7 +347,7 @@ export const InvoicesView: React.FC = () => {
         onClose={() => setToDelete(null)}
         onConfirm={handleDelete}
         title="Delete Draft"
-        message={`Delete draft ${toDelete?.invoiceNumber} for ${toDelete?.clientName || 'no client'}? Only drafts can be deleted; this cannot be undone.`}
+        message={`Delete the draft for ${toDelete?.clientName || 'no client'}? Only drafts can be deleted; this cannot be undone.`}
         confirmLabel="Delete Draft"
         isDestructive
       />

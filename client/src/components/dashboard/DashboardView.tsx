@@ -31,6 +31,7 @@ import { attendanceApi } from '../../api/attendance';
 import { leavesApi } from '../../api/leaves';
 import { LEAVE_TYPE_LABEL } from '../../types/attendance';
 import { invoicesApi } from '../../api/invoices';
+import { invoiceLabel } from '../../types/invoices';
 import { InvoiceStatusBadge } from '../invoices/InvoiceStatusBadge';
 import { CURRENCY, formatMoney } from '../../utils/money';
 import { COMPANY_BRAND } from '../../utils/company';
@@ -742,7 +743,7 @@ export const DashboardView: React.FC = () => {
                 >
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono font-bold text-[#111827]">{inv.invoiceNumber}</span>
+                      <span className="text-xs font-mono font-bold text-[#111827]">{invoiceLabel(inv)}</span>
                       <InvoiceStatusBadge status={inv.derivedStatus} size="sm" />
                     </div>
                     <div className="text-[11px] text-[#7185A5] mt-0.5 truncate">

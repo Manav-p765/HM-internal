@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ApiError, errorMessage } from '../../api/client';
 import { invoicesApi } from '../../api/invoices';
-import { Invoice, InvoicePaymentMethod, PAYMENT_METHODS } from '../../types/invoices';
+import { Invoice, InvoicePaymentMethod, PAYMENT_METHODS, invoiceLabel } from '../../types/invoices';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { FormField } from '../common/FormField';
@@ -43,7 +43,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({ isOpen, 
         referenceNumber: referenceNumber.trim() || null,
         notes: notes.trim() || null,
       });
-      showToast('success', `Payment of ${formatMoney(amount.trim())} recorded on ${updated.invoiceNumber}`);
+      showToast('success', `Payment of ${formatMoney(amount.trim())} recorded on ${invoiceLabel(updated)}`);
       onRecorded(updated);
     } catch (err) {
       if (err instanceof ApiError && err.details?.length) setErrors(Object.fromEntries(err.details.map(d => [d.path, d.message])));
@@ -56,7 +56,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({ isOpen, 
   const input = 'w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]';
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Record payment" description={`${invoice.invoiceNumber} · Balance due ${formatMoney(invoice.balance)}`} maxWidth="md">
+    <Modal isOpen={isOpen} onClose={onClose} title="Record payment" description={`${invoiceLabel(invoice)} · Balance due ${formatMoney(invoice.balance)}`} maxWidth="md">
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         {formError && (
           <div className="p-3 text-xs bg-[#E11D48]/10 border border-[#E11D48]/20 text-[#E11D48] rounded-lg" role="alert">

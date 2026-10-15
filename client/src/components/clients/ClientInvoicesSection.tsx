@@ -2,6 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router';
 import { FileText } from 'lucide-react';
 import { invoicesApi } from '../../api/invoices';
+import { invoiceLabel } from '../../types/invoices';
 import { useApiData } from '../../api/useApiData';
 import { InvoiceStatusBadge } from '../invoices/InvoiceStatusBadge';
 import { formatDate } from '../../utils/formatters';
@@ -43,7 +44,7 @@ export const ClientInvoicesSection: React.FC<{ clientId: string }> = ({ clientId
             <tbody className="divide-y divide-[#DFE6F1]">
               {invoices.map(inv => (
                 <tr key={inv.id} className="hover:bg-[#F7F9FC]/60 cursor-pointer" onClick={() => navigate(`/invoices/${inv.id}`)}>
-                  <td className="px-4 py-2.5 font-mono font-semibold text-[#5038F5] whitespace-nowrap">{inv.invoiceNumber}</td>
+                  <td className="px-4 py-2.5 font-mono font-semibold text-[#5038F5] whitespace-nowrap">{invoiceLabel(inv)}</td>
                   <td className="px-4 py-2.5 text-[#475569] whitespace-nowrap">{formatDate(inv.invoiceDate)}</td>
                   <td className="px-4 py-2.5">
                     <InvoiceStatusBadge status={inv.derivedStatus} size="sm" />

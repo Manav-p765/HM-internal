@@ -4,10 +4,11 @@ import { useApp } from '../../context/AppContext';
 import { invoicesApi } from '../../api/invoices';
 import { useApiData } from '../../api/useApiData';
 import { errorMessage } from '../../api/client';
-import { Invoice, InvoicePayment } from '../../types/invoices';
+import { Invoice, InvoicePayment, invoiceLabel } from '../../types/invoices';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { ConfirmDialog } from '../common/ConfirmDialog';
+import { ReasonDialog } from '../common/ReasonDialog';
 import { LoadError } from '../common/LoadError';
 import { InvoiceStatusBadge } from './InvoiceStatusBadge';
 import { RecordPaymentModal } from './RecordPaymentModal';
@@ -61,32 +62,32 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
       const updated = await invoicesApi.send(invoiceId);
       applyUpdate(updated);
       setConfirmSend(false);
-      showToast('success', `${updated.invoiceNumber} marked as sent. Its lines are now locked.`);
+      showToast('success', `${invoiceLabel(updated)} marked as sent. Its lines are now locked.`);
     });
 
   const handleDelete = () =>
     run(async () => {
       await invoicesApi.remove(invoiceId);
       setConfirmDelete(false);
-      showToast('info', `Draft ${invoice?.invoiceNumber} deleted`);
+      showToast('info', 'Draft deleted');
       onDeleted();
     });
 
-  const handleReverse = () =>
-    run(async () => {
-      if (!toReverse) return;
-      const updated = await invoicesApi.reversePayment(invoiceId, toReverse.id);
-      applyUpdate(updated);
-      showToast('info', `Payment of ${formatMoney(toReverse.amount)} reversed`);
-      setToReverse(null);
-    });
+  // Errors (e.g. already reversed) are shown inside the reason dialog.
+  const handleReverse = async (reason: string) => {
+    if (!toReverse) return;
+    const updated = await invoicesApi.reversePayment(invoiceId, toReverse.id, reason);
+    applyUpdate(updated);
+    showToast('info', `Payment of ${formatMoney(toReverse.amount)} reversed`);
+    setToReverse(null);
+  };
 
   const canPay = isAdmin && invoice?.status === 'sent' && invoice.balance !== '0.00';
   const canCancel = isAdmin && (invoice?.status === 'draft' || invoice?.status === 'sent') && invoice.amountPaid === '0.00';
 
   return (
     <>
-      <Modal isOpen onClose={onClose} title={invoice ? `Invoice ${invoice.invoiceNumber}` : 'Invoice'} description="Billing record" maxWidth="4xl">
+      <Modal isOpen onClose={onClose} title={invoice ? `Invoice ${invoiceLabel(invoice)}` : 'Invoice'} description="Billing record" maxWidth="4xl">
         {detail.error ? (
           <LoadError message={detail.error} onRetry={detail.reload} />
         ) : !invoice ? (
@@ -236,26 +237,49 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#DFE6F1]">
-                      {invoice.payments.map(p => (
-                        <tr key={p.id}>
-                          <td className="py-2 px-3 text-[#111827] whitespace-nowrap">{formatDate(p.txnDate)}</td>
-                          <td className="py-2 px-3 text-[#7185A5]">{p.paymentMethod}</td>
-                          <td className="py-2 px-3 font-mono text-[#7185A5]">{p.referenceNumber || '—'}</td>
-                          <td className="py-2 px-3 text-[#7185A5]">{p.recordedByName}</td>
-                          <td className="py-2 px-3 text-right font-mono font-medium text-[#047857] whitespace-nowrap">{formatMoney(p.amount)}</td>
-                          {isAdmin && (
-                            <td className="py-2 px-3 text-right">
-                              <button
-                                onClick={() => setToReverse(p)}
-                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-[#E11D48] bg-[#E11D48]/10 hover:bg-[#E11D48]/20 rounded cursor-pointer"
-                                aria-label={`Reverse payment of ${formatMoney(p.amount)}`}
-                              >
-                                <Undo2 className="w-3 h-3" /> Reverse
-                              </button>
-                            </td>
-                          )}
-                        </tr>
-                      ))}
+                      {invoice.payments.map(p =>
+                        p.reversedAt ? (
+                          // Reversed: kept on record, struck through, not counted in "Paid".
+                          <React.Fragment key={p.id}>
+                            <tr className="bg-[#F7F9FC]/60 text-[#94A3B8]" data-testid="reversed-payment">
+                              <td className="pt-2 px-3 whitespace-nowrap line-through">{formatDate(p.txnDate)}</td>
+                              <td className="pt-2 px-3 line-through">{p.paymentMethod}</td>
+                              <td className="pt-2 px-3 font-mono line-through">{p.referenceNumber || '—'}</td>
+                              <td className="pt-2 px-3">{p.recordedByName}</td>
+                              <td className="pt-2 px-3 text-right font-mono whitespace-nowrap line-through">{formatMoney(p.amount)}</td>
+                              {isAdmin && (
+                                <td className="pt-2 px-3 text-right">
+                                  <span className="text-[11px] font-semibold uppercase tracking-wider">Reversed</span>
+                                </td>
+                              )}
+                            </tr>
+                            <tr className="bg-[#F7F9FC]/60">
+                              <td colSpan={isAdmin ? 6 : 5} className="pb-2 pt-0.5 px-3 text-[11px] text-[#7185A5]">
+                                Reversed by {p.reversedByName ?? 'unknown'} on {formatDate(p.reversedAt.slice(0, 10))}: {p.reverseReason}
+                              </td>
+                            </tr>
+                          </React.Fragment>
+                        ) : (
+                          <tr key={p.id}>
+                            <td className="py-2 px-3 text-[#111827] whitespace-nowrap">{formatDate(p.txnDate)}</td>
+                            <td className="py-2 px-3 text-[#7185A5]">{p.paymentMethod}</td>
+                            <td className="py-2 px-3 font-mono text-[#7185A5]">{p.referenceNumber || '—'}</td>
+                            <td className="py-2 px-3 text-[#7185A5]">{p.recordedByName}</td>
+                            <td className="py-2 px-3 text-right font-mono font-medium text-[#047857] whitespace-nowrap">{formatMoney(p.amount)}</td>
+                            {isAdmin && (
+                              <td className="py-2 px-3 text-right">
+                                <button
+                                  onClick={() => setToReverse(p)}
+                                  className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-[#E11D48] bg-[#E11D48]/10 hover:bg-[#E11D48]/20 rounded cursor-pointer"
+                                  aria-label={`Reverse payment of ${formatMoney(p.amount)}`}
+                                >
+                                  <Undo2 className="w-3 h-3" /> Reverse
+                                </button>
+                              </td>
+                            )}
+                          </tr>
+                        ),
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -272,7 +296,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
             onClose={() => setConfirmSend(false)}
             onConfirm={handleSend}
             title="Send invoice"
-            message={`Mark ${invoice.invoiceNumber} as sent to ${invoice.clientName || 'the client'} (${formatMoney(invoice.total)})? Its number, client and lines are locked from then on; only the due date and notes can change. No email is sent.`}
+            message={`Mark ${invoiceLabel(invoice)} as sent to ${invoice.clientName || 'the client'} (${formatMoney(invoice.total)})? Its number, client and lines are locked from then on; only the due date and notes can change. No email is sent.`}
             confirmLabel="Mark as sent"
           />
           <ConfirmDialog
@@ -280,19 +304,20 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
             onClose={() => setConfirmDelete(false)}
             onConfirm={handleDelete}
             title="Delete draft"
-            message={`Delete draft ${invoice.invoiceNumber}? This cannot be undone.`}
+            message={`Delete this draft for ${invoice.clientName || 'no client'}? This cannot be undone.`}
             confirmLabel="Delete draft"
             isDestructive
           />
-          <ConfirmDialog
-            isOpen={!!toReverse}
-            onClose={() => setToReverse(null)}
-            onConfirm={handleReverse}
-            title="Reverse payment"
-            message={`Reverse the ${toReverse ? formatMoney(toReverse.amount) : ''} payment of ${toReverse ? formatDate(toReverse.txnDate) : ''}? Its income transaction is removed and the balance goes back up.`}
-            confirmLabel="Reverse payment"
-            isDestructive
-          />
+          {toReverse && (
+            <ReasonDialog
+              title="Reverse payment"
+              message={`Reverse the ${formatMoney(toReverse.amount)} payment of ${formatDate(toReverse.txnDate)}? It stays on record, marked reversed, and no longer counts: the balance goes back up.`}
+              confirmLabel="Reverse payment"
+              reasonLabel="Reason for reversing"
+              onClose={() => setToReverse(null)}
+              onConfirm={handleReverse}
+            />
+          )}
           {payOpen && (
           <RecordPaymentModal
             isOpen

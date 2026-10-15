@@ -46,11 +46,15 @@ export interface InvoicePayment {
   notes: string | null;
   createdAt: string;
   recordedByName: string;
+  // A reversed payment stays listed (struck through) but no longer counts towards amountPaid.
+  reversedAt: string | null;
+  reversedByName: string | null;
+  reverseReason: string | null;
 }
 
 export interface InvoiceSummaryRow {
   id: string;
-  invoiceNumber: string;
+  invoiceNumber: string | null; // null for drafts: the number is assigned when the invoice is sent
   clientId: string | null;
   clientName: string;
   clientEmail: string | null;
@@ -73,6 +77,9 @@ export interface InvoiceSummaryRow {
   createdAt: string;
   updatedAt: string;
 }
+
+// What to show where a number would be: drafts have none yet.
+export const invoiceLabel = (invoice: Pick<InvoiceSummaryRow, 'invoiceNumber'>): string => invoice.invoiceNumber ?? 'Draft';
 
 export interface Invoice extends InvoiceSummaryRow {
   items: InvoiceItem[];

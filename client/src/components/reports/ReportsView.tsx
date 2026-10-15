@@ -19,7 +19,7 @@ import { formatCurrency, formatDate, exportToCSV } from '../../utils/formatters'
 import { invoicesApi } from '../../api/invoices';
 import { useApiData } from '../../api/useApiData';
 import { InvoiceStatusBadge } from '../invoices/InvoiceStatusBadge';
-import { INVOICE_STATUS_LABEL } from '../../types/invoices';
+import { INVOICE_STATUS_LABEL, invoiceLabel } from '../../types/invoices';
 import { CURRENCY, formatMoney, sumMoney } from '../../utils/money';
 
 type ReportType = 'income' | 'expense' | 'pnl' | 'invoices' | 'salary';
@@ -146,7 +146,7 @@ export const ReportsView: React.FC = () => {
       exportToCSV(`pnl_summary_${startDate}_to_${endDate}`, headers, rows);
     } else if (activeReport === 'invoices') {
       const headers = ['Invoice #', 'Client', 'Date', 'Due Date', `Billed Total (${CURRENCY})`, `Paid (${CURRENCY})`, `Outstanding (${CURRENCY})`, 'Status'];
-      const rows = rangeInvoices.map(i => [i.invoiceNumber, i.clientName, i.invoiceDate, i.dueDate, i.total, i.amountPaid, i.balance, INVOICE_STATUS_LABEL[i.derivedStatus]]);
+      const rows = rangeInvoices.map(i => [invoiceLabel(i), i.clientName, i.invoiceDate, i.dueDate, i.total, i.amountPaid, i.balance, INVOICE_STATUS_LABEL[i.derivedStatus]]);
       exportToCSV(`invoice_payment_report_${startDate}_to_${endDate}`, headers, rows);
     } else if (activeReport === 'salary') {
       const headers = ['Employee', 'Department', 'Month', `Base (${CURRENCY})`, `Adjustments (${CURRENCY})`, `Final Payable (${CURRENCY})`, 'Status', 'Payment Date'];
@@ -439,7 +439,7 @@ export const ReportsView: React.FC = () => {
                 <tbody className="divide-y divide-[#DFE6F1]">
                   {rangeInvoices.map(inv => (
                     <tr key={inv.id}>
-                      <td className="py-2.5 px-4 font-mono font-bold">{inv.invoiceNumber}</td>
+                      <td className="py-2.5 px-4 font-mono font-bold">{invoiceLabel(inv)}</td>
                       <td className="py-2.5 px-4 font-medium">{inv.clientName}</td>
                       <td className="py-2.5 px-4 text-[#7185A5]">{formatDate(inv.invoiceDate)}</td>
                       <td className="py-2.5 px-4 text-right font-mono">{formatMoney(inv.total)}</td>

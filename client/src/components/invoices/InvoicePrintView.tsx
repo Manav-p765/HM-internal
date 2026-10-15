@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { invoicesApi } from '../../api/invoices';
+import { invoiceLabel } from '../../types/invoices';
 import { settingsApi } from '../../api/settings';
 import { useApiData } from '../../api/useApiData';
 import { LoadError } from '../common/LoadError';
@@ -37,7 +38,17 @@ export const InvoicePrintView: React.FC = () => {
         </div>
       </div>
 
-      <article className="invoice-sheet bg-white text-[#111827] mx-auto border border-[#DFE6F1] shadow-sm" data-testid="invoice-sheet">
+      <article className="invoice-sheet relative bg-white text-[#111827] mx-auto border border-[#DFE6F1] shadow-sm" data-testid="invoice-sheet">
+        {invoice.status === 'draft' && (
+          // Printed too: a draft has no number and is not a tax invoice.
+          <div
+            aria-hidden
+            data-testid="draft-watermark"
+            className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden"
+          >
+            <span className="text-[96px] font-black tracking-[0.2em] text-[#E11D48]/10 -rotate-30 select-none">DRAFT</span>
+          </div>
+        )}
         {/* Header */}
         <header className="flex flex-col sm:flex-row justify-between gap-6 pb-6 border-b border-[#DFE6F1]">
           <div className="min-w-0">
@@ -48,7 +59,7 @@ export const InvoicePrintView: React.FC = () => {
           </div>
           <div className="sm:text-right shrink-0">
             <p className="text-xs uppercase font-bold tracking-wider text-[#5038F5]">{isTaxInvoice ? 'Tax Invoice' : invoice.status === 'draft' ? 'Draft Invoice' : 'Invoice (Cancelled)'}</p>
-            <p className="text-lg font-mono font-bold">{invoice.invoiceNumber}</p>
+            <p className="text-lg font-mono font-bold">{invoiceLabel(invoice)}</p>
             <div className="text-xs text-[#475569] mt-2 space-y-0.5">
               <div>
                 Invoice date: <span className="font-medium text-[#111827]">{formatDate(invoice.invoiceDate)}</span>
@@ -125,9 +136,9 @@ export const InvoicePrintView: React.FC = () => {
               <span>Total (INR)</span>
               <span className="font-mono">{formatMoney(invoice.total)}</span>
             </div>
-            {invoice.payments.length > 0 && (
+            {invoice.payments.some(p => !p.reversedAt) && (
               <>
-                {invoice.payments.map(p => (
+                {invoice.payments.filter(p => !p.reversedAt).map(p => (
                   <div key={p.id} className="flex justify-between gap-2 text-[#047857]">
                     <span className="min-w-0">
                       Paid {formatDate(p.txnDate)} ({p.paymentMethod})

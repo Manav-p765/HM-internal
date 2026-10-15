@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ApiError, errorMessage } from '../../api/client';
 import { invoicesApi } from '../../api/invoices';
-import { Invoice } from '../../types/invoices';
+import { Invoice, invoiceLabel } from '../../types/invoices';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { FormField } from '../common/FormField';
@@ -26,7 +26,7 @@ export const CancelInvoiceModal: React.FC<{
     setIsSaving(true);
     try {
       const updated = await invoicesApi.cancel(invoice.id, reason.trim());
-      showToast('info', `${updated.invoiceNumber} cancelled`);
+      showToast('info', `${invoiceLabel(updated)} cancelled`);
       onCancelled(updated);
     } catch (err) {
       setError(err instanceof ApiError && err.details?.[0] ? err.details[0].message : errorMessage(err));
@@ -36,7 +36,7 @@ export const CancelInvoiceModal: React.FC<{
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`Cancel ${invoice.invoiceNumber}`} description="The invoice keeps its number and stays on record." maxWidth="md">
+    <Modal isOpen={isOpen} onClose={onClose} title={`Cancel ${invoiceLabel(invoice)}`} description={invoice.invoiceNumber ? "The invoice keeps its number and stays on record." : "The draft stays on record without a number."} maxWidth="md">
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         <FormField label="Reason" required error={error}>
           <textarea

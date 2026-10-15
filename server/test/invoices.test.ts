@@ -101,7 +101,7 @@ describe('role matrix', () => {
     { name: 'POST /invoices/:id/send', method: 'post', path: f => `/api/invoices/${f.draft}/send`, allowed: ['admin', 'manager'] },
     { name: 'POST /invoices/:id/cancel', method: 'post', path: f => `/api/invoices/${f.sent}/cancel`, allowed: ['admin'], body: { reason: 'Duplicate' } },
     { name: 'POST /invoices/:id/payments', method: 'post', path: f => `/api/invoices/${f.sent}/payments`, allowed: ['admin'], body: { amount: '1.00', txnDate: TODAY, paymentMethod: 'UPI' } },
-    { name: 'DELETE /invoices/:id/payments/:txnId', method: 'delete', path: f => `/api/invoices/${f.paid}/payments/${f.txn}`, allowed: ['admin'] },
+    { name: 'DELETE /invoices/:id/payments/:txnId', method: 'delete', path: f => `/api/invoices/${f.paid}/payments/${f.txn}`, allowed: ['admin'], body: { reason: 'Bounced (fake)' } },
     { name: 'DELETE /invoices/:id', method: 'delete', path: f => `/api/invoices/${f.draft}`, allowed: ['admin', 'manager'] },
     { name: 'GET /settings/company', method: 'get', path: () => '/api/settings/company', allowed: ['admin', 'manager'] },
     { name: 'PATCH /settings/company', method: 'patch', path: () => '/api/settings/company', allowed: ['admin'], body: { terms: 'Net 15 (fake)' } },
@@ -131,7 +131,7 @@ describe('role matrix', () => {
     await agents.manager.patch(`/api/invoices/${f.draft}`).send({ notes: 'ok' }).expect(200);
     await agents.manager.post(`/api/invoices/${f.draft}/send`).expect(200);
     await agents.admin.post(`/api/invoices/${f.sent}/cancel`).send({ reason: 'Duplicate (fake)' }).expect(200);
-    await agents.admin.delete(`/api/invoices/${f.paid}/payments/${f.txn}`).expect(200);
+    await agents.admin.delete(`/api/invoices/${f.paid}/payments/${f.txn}`).send({ reason: 'Bounced (fake)' }).expect(200);
     await agents.manager.get('/api/settings/company').expect(200);
     await agents.admin.patch('/api/settings/company').send({ terms: 'Net 15' }).expect(200);
   });
@@ -142,8 +142,8 @@ describe('role matrix', () => {
 // ---------------------------------------------------------------------------
 describe('company settings', () => {
   it('admin updates the invoice fields; the prefix only affects future numbers; currency is fixed', async () => {
-    const first = await createInvoice();
-    expect(first.invoiceNumber).toBe('HM-0001');
+    const first = await sentInvoice();
+    expect((await agents.admin.get(`/api/invoices/${first.id}`)).body.invoice.invoiceNumber).toBe('HM-0001');
     const res = await agents.admin
       .patch('/api/settings/company')
       .send({
@@ -164,8 +164,9 @@ describe('company settings', () => {
       nextInvoiceNumber: 'NEW-0002',
     });
     const second = await createInvoice();
-    expect(second.invoiceNumber).toBe('NEW-0002');
     expect(second.taxRate).toBe('12.00');
+    const sent = await agents.admin.post(`/api/invoices/${second.id}/send`).expect(200);
+    expect(sent.body.invoice.invoiceNumber).toBe('NEW-0002');
     expect((await agents.admin.get(`/api/invoices/${first.id}`)).body.invoice.invoiceNumber).toBe('HM-0001');
     const [row] = await auditRows('settings.company_updated');
     expect(row.metadata.fields).toEqual(['companyName', 'companyGstin', 'defaultGstRate', 'invoicePrefix', 'bankDetails', 'terms']);
@@ -194,7 +195,7 @@ describe('create and numbering', () => {
   it('creates a draft with server-computed totals as 2-decimal strings and the client snapshot', async () => {
     const invoice = await createInvoice({ items: [item('A', 3, '33.33')], taxRate: 18 });
     expect(invoice).toMatchObject({
-      invoiceNumber: 'HM-0001',
+      invoiceNumber: null, // assigned at send
       status: 'draft',
       derivedStatus: 'draft',
       clientId: ids.acme,
@@ -212,7 +213,9 @@ describe('create and numbering', () => {
     });
     expect(invoice.items).toEqual([expect.objectContaining({ description: 'A', quantity: '3.00', unitPrice: '33.33', lineTotal: '99.99' })]);
     const [row] = await auditRows('invoice.created');
-    expect(row).toMatchObject({ entity_id: invoice.id, metadata: { invoiceNumber: 'HM-0001' } });
+    expect(row).toMatchObject({ entity_id: invoice.id, metadata: { invoiceNumber: null } });
+    const [{ next }] = await query<{ next: number }>('SELECT invoice_next_number AS next FROM company_settings');
+    expect(next).toBe(1); // creating a draft consumes no number
   });
 
   it('defaults the invoice date to today (IST) and the tax rate to the company default; request fields override the snapshot', async () => {
@@ -228,20 +231,50 @@ describe('create and numbering', () => {
     expect(invoice).toMatchObject({ clientId: null, clientName: 'Walk-in Customer (Fake)', clientEmail: 'walkin@example.test' });
   });
 
-  it('numbers are unique and sequential, including 10 concurrent creates', async () => {
-    const first = await createInvoice();
-    const created = await Promise.all(Array.from({ length: 10 }, (_, i) => createInvoice({ notes: `n${i}` }, i % 2 ? agents.admin : agents.manager)));
-    const numbers = [first, ...created].map(i => i.invoiceNumber).sort();
-    expect(new Set(numbers).size).toBe(11);
+  it('numbers are assigned at send: unique and sequential with no gaps, including 10 concurrent sends', async () => {
+    const first = await sentInvoice();
+    const drafts = await Promise.all(Array.from({ length: 10 }, (_, i) => createInvoice({ notes: `n${i}` }, i % 2 ? agents.admin : agents.manager)));
+    expect(drafts.every(d => d.invoiceNumber === null)).toBe(true);
+    const sent = await Promise.all(
+      drafts.map((d, i) => (i % 2 ? agents.admin : agents.manager).post(`/api/invoices/${d.id}/send`).expect(200)),
+    );
+    const numbers = [(await agents.admin.get(`/api/invoices/${first.id}`)).body.invoice.invoiceNumber, ...sent.map(r => r.body.invoice.invoiceNumber)].sort();
     expect(numbers).toEqual(Array.from({ length: 11 }, (_, i) => `HM-${String(i + 1).padStart(4, '0')}`));
     const [{ next }] = await query<{ next: number }>('SELECT invoice_next_number AS next FROM company_settings');
     expect(next).toBe(12);
+    expect((await auditRows('invoice.sent')).map(r => r.metadata.invoiceNumber).sort()).toEqual(numbers);
+  });
+
+  it('deleting or cancelling a draft consumes no number; a cancelled sent invoice keeps its number', async () => {
+    const deleted = await createInvoice();
+    await agents.admin.delete(`/api/invoices/${deleted.id}`).expect(204);
+    const cancelledDraft = await createInvoice();
+    const c = await agents.admin.post(`/api/invoices/${cancelledDraft.id}/cancel`).send({ reason: 'Not needed (fake)' }).expect(200);
+    expect(c.body.invoice.invoiceNumber).toBeNull();
+    const a = await sentInvoice();
+    const aNumber = (await agents.admin.get(`/api/invoices/${a.id}`)).body.invoice.invoiceNumber;
+    expect(aNumber).toBe('HM-0001');
+    const cancelled = await agents.admin.post(`/api/invoices/${a.id}/cancel`).send({ reason: 'Raised in error (fake)' }).expect(200);
+    expect(cancelled.body.invoice).toMatchObject({ status: 'cancelled', invoiceNumber: 'HM-0001' });
+    // The next send gets HM-0002: the cancelled number is never reused.
+    const b = await sentInvoice();
+    expect((await agents.admin.get(`/api/invoices/${b.id}`)).body.invoice.invoiceNumber).toBe('HM-0002');
+  });
+
+  it('a draft that already had a number (from before migration 007) keeps it when sent', async () => {
+    const draft = await createInvoice();
+    await query(`UPDATE invoices SET invoice_number = 'HM-0042' WHERE id = $1`, [draft.id]);
+    const res = await agents.admin.post(`/api/invoices/${draft.id}/send`).expect(200);
+    expect(res.body.invoice.invoiceNumber).toBe('HM-0042');
+    const [{ next }] = await query<{ next: number }>('SELECT invoice_next_number AS next FROM company_settings');
+    expect(next).toBe(1);
   });
 
   it('skips a number that is already taken (e.g. a prefix changed back)', async () => {
-    await createInvoice(); // HM-0001
+    await sentInvoice(); // HM-0001
     await query(`UPDATE company_settings SET invoice_next_number = 1`);
-    expect((await createInvoice()).invoiceNumber).toBe('HM-0002');
+    const second = await createInvoice();
+    expect((await agents.admin.post(`/api/invoices/${second.id}/send`).expect(200)).body.invoice.invoiceNumber).toBe('HM-0002');
   });
 
   it('rejects an inactive or unknown client', async () => {
@@ -362,7 +395,8 @@ describe('lifecycle', () => {
     await agents.admin.get('/api/invoices/00000000-0000-4000-a000-00000000dead').expect(404);
     await agents.admin.patch('/api/invoices/00000000-0000-4000-a000-00000000dead').send({ notes: 'x' }).expect(404);
     const invoice = await sentInvoice();
-    await agents.admin.delete(`/api/invoices/${invoice.id}/payments/00000000-0000-4000-a000-00000000dead`).expect(404);
+    await agents.admin.delete(`/api/invoices/${invoice.id}/payments/00000000-0000-4000-a000-00000000dead`).send({ reason: 'x' }).expect(404);
+    await agents.admin.delete(`/api/invoices/${invoice.id}/payments/not-a-uuid`).send({ reason: 'x' }).expect(404);
   });
 });
 
@@ -442,15 +476,31 @@ describe('payments', () => {
     await bad({ txnDate: '2026-10-13' }, 'txnDate'); // before the invoice date (2026-10-14)
   });
 
-  it('reversal deletes that transaction, is audited with the amount, and flips paid back to sent', async () => {
+  const reverse = (id: string, txnId: string, reason: unknown = 'Cheque bounced (fake)') =>
+    agents.admin.delete(`/api/invoices/${id}/payments/${txnId}`).send({ reason });
+
+  it('reversal keeps the ledger row marked reversed, excludes it from the balance, and flips paid back to sent', async () => {
     const invoice = await sentInvoice();
     const a = await pay(invoice.id, '360.00').expect(201);
     const b = await pay(invoice.id, '2000.00').expect(201);
     expect(b.body.invoice.status).toBe('paid');
-    const res = await agents.admin.delete(`/api/invoices/${invoice.id}/payments/${b.body.paymentId}`).expect(200);
+    const res = await reverse(invoice.id, b.body.paymentId).expect(200);
     expect(res.body.invoice).toMatchObject({ status: 'sent', derivedStatus: 'partially_paid', amountPaid: '360.00', balance: '2000.00' });
-    expect((await query('SELECT id FROM transactions')).map(r => r.id)).toEqual([a.body.paymentId]);
-    // The ledger row is gone, so the audit row keeps what it said.
+
+    // The reversed row still exists, with who / when / why.
+    const rows = await query<{ id: string; reversed_at: Date | null; reversed_by: string | null; reverse_reason: string | null }>(
+      'SELECT id, reversed_at, reversed_by, reverse_reason FROM transactions ORDER BY created_at',
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows.find(r => r.id === a.body.paymentId)).toMatchObject({ reversed_at: null, reversed_by: null, reverse_reason: null });
+    expect(rows.find(r => r.id === b.body.paymentId)).toMatchObject({ reversed_at: T0, reversed_by: ids.adminUser, reverse_reason: 'Cheque bounced (fake)' });
+
+    // The detail lists both, the reversed one flagged; only the live one counts.
+    const reversedPayment = res.body.invoice.payments.find((p: { id: string }) => p.id === b.body.paymentId);
+    expect(reversedPayment).toMatchObject({ amount: '2000.00', reversedAt: T0.toISOString(), reverseReason: 'Cheque bounced (fake)', reversedByName: 'admin@example.test' });
+    expect(res.body.invoice.payments.find((p: { id: string }) => p.id === a.body.paymentId).reversedAt).toBeNull();
+
+    // The audit row keeps what the payment said (not the free-text reason).
     expect((await auditRows('invoice.payment_reversed'))[0].metadata).toEqual({
       transactionId: b.body.paymentId,
       amount: '2000.00',
@@ -458,9 +508,32 @@ describe('payments', () => {
       paymentMethod: 'UPI',
       referenceNumber: 'UTR-FAKE-1',
     });
+
+    // The balance is open again, so the full amount can be paid once more (the reversed row doesn't block it).
+    expect((await pay(invoice.id, '2000.00').expect(201)).body.invoice.status).toBe('paid');
+
     // Another invoice's payment can't be reversed through this one (404, like a missing id).
     const other = await sentInvoice();
-    await agents.admin.delete(`/api/invoices/${other.id}/payments/${a.body.paymentId}`).expect(404);
+    await reverse(other.id, a.body.paymentId).expect(404);
+  });
+
+  it('a reversed payment cannot be reversed twice (409); a reason is required', async () => {
+    const invoice = await sentInvoice();
+    const a = await pay(invoice.id, '100.00').expect(201);
+    const noReason = await reverse(invoice.id, a.body.paymentId, ' ').expect(400);
+    expect(noReason.body.details[0].path).toBe('reason');
+    await agents.admin.delete(`/api/invoices/${invoice.id}/payments/${a.body.paymentId}`).expect(400);
+    await reverse(invoice.id, a.body.paymentId).expect(200);
+    expect((await reverse(invoice.id, a.body.paymentId).expect(409)).body.code).toBe('ALREADY_REVERSED');
+    expect(await auditRows('invoice.payment_reversed')).toHaveLength(1);
+  });
+
+  it('after its payments are reversed, an invoice can be cancelled', async () => {
+    const invoice = await sentInvoice();
+    const a = await pay(invoice.id, '100.00').expect(201);
+    await agents.admin.post(`/api/invoices/${invoice.id}/cancel`).send({ reason: 'x' }).expect(409);
+    await reverse(invoice.id, a.body.paymentId).expect(200);
+    await agents.admin.post(`/api/invoices/${invoice.id}/cancel`).send({ reason: 'x' }).expect(200);
   });
 });
 
@@ -480,6 +553,9 @@ describe('list, derived statuses and summary', () => {
     await agents.admin.post(`/api/invoices/${cancelled.id}/cancel`).send({ reason: 'x' }).expect(200);
     // A payment last month does not count as collected this month.
     await query(`UPDATE transactions SET txn_date = '2026-09-30' WHERE invoice_id = $1`, [paid.id]);
+    // A reversed payment counts nowhere (neither paid nor collected).
+    const bounced = await pay(partial.id, '500.00').expect(201);
+    await agents.admin.delete(`/api/invoices/${partial.id}/payments/${bounced.body.paymentId}`).send({ reason: 'Bounced (fake)' }).expect(200);
 
     const list = async (q: string) => (await agents.manager.get(`/api/invoices${q}`).expect(200)).body;
     const all = await list('');
@@ -515,6 +591,9 @@ describe('list, derived statuses and summary', () => {
     const a = await createInvoice({ invoiceDate: '2026-10-01', dueDate: '2026-10-31' });
     const b = await createInvoice({ clientId: other, invoiceDate: '2026-10-10', dueDate: '2026-10-31' });
     const list = async (q: string) => (await agents.admin.get(`/api/invoices${q}`).expect(200)).body;
+    // A draft has no number, so a number search can't match it.
+    expect((await list('?search=HM-')).total).toBe(0);
+    a.invoiceNumber = (await agents.admin.post(`/api/invoices/${a.id}/send`).expect(200)).body.invoice.invoiceNumber;
     expect((await list(`?clientId=${other}`)).invoices.map((i: { id: string }) => i.id)).toEqual([b.id]);
     expect((await list('?from=2026-10-05&to=2026-10-31')).invoices.map((i: { id: string }) => i.id)).toEqual([b.id]);
     expect((await list('?search=globex')).invoices.map((i: { id: string }) => i.id)).toEqual([b.id]);

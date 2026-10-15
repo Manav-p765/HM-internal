@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { useApp } from '../../context/AppContext';
 import { invoicesApi } from '../../api/invoices';
+import { invoiceLabel } from '../../types/invoices';
 import { useApiData } from '../../api/useApiData';
 import {
   Search,
@@ -174,7 +175,7 @@ export const TopNav: React.FC<TopNavProps> = ({
                       {overdueTotalCount} Overdue Invoice{overdueTotalCount === 1 ? '' : 's'}
                     </div>
                     <p className="text-[11px] text-[#475569] mt-1">
-                      {overdueInvoices.map(i => i.invoiceNumber).join(', ')}
+                      {overdueInvoices.map(i => invoiceLabel(i)).join(', ')}
                       {overdueTotalCount > overdueInvoices.length ? ' and more' : ''} need follow-up.
                     </p>
                     <button

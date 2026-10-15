@@ -67,8 +67,9 @@ export const invoicesApi = {
   recordPayment: (id: string, input: PaymentInput) =>
     api<{ invoice: Invoice; paymentId: string }>(`/invoices/${id}/payments`, { method: 'POST', body: input }).then(r => r.invoice),
 
-  reversePayment: (id: string, paymentId: string) =>
-    api<{ invoice: Invoice }>(`/invoices/${id}/payments/${paymentId}`, { method: 'DELETE' }).then(r => r.invoice),
+  // The payment row is kept and marked reversed (reason required); it stops counting towards the balance.
+  reversePayment: (id: string, paymentId: string, reason: string) =>
+    api<{ invoice: Invoice }>(`/invoices/${id}/payments/${paymentId}`, { method: 'DELETE', body: { reason } }).then(r => r.invoice),
 
   remove: (id: string) => api<void>(`/invoices/${id}`, { method: 'DELETE' }),
 };
