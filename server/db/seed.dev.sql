@@ -119,16 +119,30 @@ SELECT (now() AT TIME ZONE 'Asia/Kolkata')::date + v.off, 'income', 'Invoice Pay
     ( -5, 'Payment for HM-0002',  20000.00, 'UPI',           'UPI-FAKE-0002', '00000000-0000-4000-a000-000000000202')
   ) AS v(off, description, amount, method, ref, invoice_id);
 
--- One salary run: September 2026 (two paid, one pending with a deduction)
+-- Salaries (fake amounts). September 2026: paid, slips published. October 2026: a pending run. Every row
+-- has one adjustment line; salaries.adjustments is the sum of its lines (earnings minus deductions), as
+-- services/salary.ts keeps it. EMP-004 joined in October and has no row yet ("Generate run" adds it).
 INSERT INTO salaries (id, employee_id, salary_month, base_salary, adjustments, status, paid_on, payment_method, slip_published_at, notes) VALUES
-  ('00000000-0000-4000-a000-000000000301', '00000000-0000-4000-a000-000000000101', '2026-09-01', 120000.00,     0.00, 'paid',    '2026-09-30', 'Bank Transfer', '2026-10-01 10:00:00+05:30', NULL),
-  ('00000000-0000-4000-a000-000000000302', '00000000-0000-4000-a000-000000000102', '2026-09-01',  90000.00,  5000.00, 'paid',    '2026-09-30', 'Bank Transfer', '2026-10-01 10:00:00+05:30', 'Release bonus'),
-  ('00000000-0000-4000-a000-000000000303', '00000000-0000-4000-a000-000000000103', '2026-09-01',  70000.00, -2000.00, 'pending', NULL,         NULL,            NULL,                        'Unpaid leave deduction');
+  ('00000000-0000-4000-a000-000000000301', '00000000-0000-4000-a000-000000000101', '2026-09-01', 120000.00,  10000.00, 'paid',    '2026-09-30', 'Bank Transfer', '2026-10-01 10:00:00+05:30', NULL),
+  ('00000000-0000-4000-a000-000000000302', '00000000-0000-4000-a000-000000000102', '2026-09-01',  90000.00,   5000.00, 'paid',    '2026-09-30', 'Bank Transfer', '2026-10-01 10:00:00+05:30', NULL),
+  ('00000000-0000-4000-a000-000000000303', '00000000-0000-4000-a000-000000000103', '2026-09-01',  70000.00,  -2000.00, 'paid',    '2026-09-30', 'UPI',           '2026-10-01 10:00:00+05:30', NULL),
+  ('00000000-0000-4000-a000-000000000304', '00000000-0000-4000-a000-000000000101', '2026-10-01', 120000.00,   3500.00, 'pending', NULL,         NULL,            NULL,                        NULL),
+  ('00000000-0000-4000-a000-000000000305', '00000000-0000-4000-a000-000000000102', '2026-10-01',  90000.00, -10000.00, 'pending', NULL,         NULL,            NULL,                        'Advance taken in September (fake)'),
+  ('00000000-0000-4000-a000-000000000306', '00000000-0000-4000-a000-000000000103', '2026-10-01',  70000.00,   7500.00, 'pending', NULL,         NULL,            NULL,                        NULL);
 
--- Ledger
+INSERT INTO salary_adjustment_lines (salary_id, label, kind, amount, created_by, created_at) VALUES
+  ('00000000-0000-4000-a000-000000000301', 'Performance bonus (fake)',      'earning',   10000.00, '00000000-0000-4000-a000-000000000001', '2026-09-28 11:00:00+05:30'),
+  ('00000000-0000-4000-a000-000000000302', 'Release bonus (fake)',          'earning',    5000.00, '00000000-0000-4000-a000-000000000001', '2026-09-28 11:00:00+05:30'),
+  ('00000000-0000-4000-a000-000000000303', 'Unpaid leave, 1 day (fake)',    'deduction',  2000.00, '00000000-0000-4000-a000-000000000001', '2026-09-28 11:00:00+05:30'),
+  ('00000000-0000-4000-a000-000000000304', 'Travel reimbursement (fake)',   'earning',    3500.00, '00000000-0000-4000-a000-000000000001', '2026-10-10 11:00:00+05:30'),
+  ('00000000-0000-4000-a000-000000000305', 'Salary advance recovery (fake)','deduction', 10000.00, '00000000-0000-4000-a000-000000000001', '2026-10-10 11:00:00+05:30'),
+  ('00000000-0000-4000-a000-000000000306', 'Referral bonus (fake)',         'earning',    7500.00, '00000000-0000-4000-a000-000000000001', '2026-10-10 11:00:00+05:30');
+
+-- Ledger. Paid salaries are expense rows (category "Salary", salary_id set, amount = net payable).
 INSERT INTO transactions (txn_date, type, category, description, amount, payment_method, reference_number, invoice_id, salary_id, created_by) VALUES
-  ('2026-09-30', 'expense', 'Salaries',                   'September 2026 salary - EMP-001',   120000.00, 'Bank Transfer', NULL,            NULL,                                   '00000000-0000-4000-a000-000000000301', '00000000-0000-4000-a000-000000000001'),
-  ('2026-09-30', 'expense', 'Salaries',                   'September 2026 salary - EMP-002',    95000.00, 'Bank Transfer', NULL,            NULL,                                   '00000000-0000-4000-a000-000000000302', '00000000-0000-4000-a000-000000000001'),
+  ('2026-09-30', 'expense', 'Salary',                     'Salary 2026-09 - EMP-001',          130000.00, 'Bank Transfer', 'UTR-FAKE-S001', NULL,                                   '00000000-0000-4000-a000-000000000301', '00000000-0000-4000-a000-000000000001'),
+  ('2026-09-30', 'expense', 'Salary',                     'Salary 2026-09 - EMP-002',           95000.00, 'Bank Transfer', 'UTR-FAKE-S002', NULL,                                   '00000000-0000-4000-a000-000000000302', '00000000-0000-4000-a000-000000000001'),
+  ('2026-09-30', 'expense', 'Salary',                     'Salary 2026-09 - EMP-003',           68000.00, 'UPI',           'UPI-FAKE-S003', NULL,                                   '00000000-0000-4000-a000-000000000303', '00000000-0000-4000-a000-000000000001'),
   ('2026-09-05', 'expense', 'Software and Tools',         'Design tool seats (fake vendor)',     4999.00, 'Credit Card',   NULL,            NULL,                                   NULL,                                   '00000000-0000-4000-a000-000000000002'),
   ('2026-09-12', 'expense', 'Hosting and Infrastructure', 'Cloud hosting (fake vendor)',        12000.00, 'Credit Card',   NULL,            NULL,                                   NULL,                                   '00000000-0000-4000-a000-000000000002'),
   ('2026-10-02', 'expense', 'Office Expenses',            'Stationery',                          1850.00, 'Cash',          NULL,            NULL,                                   NULL,                                   '00000000-0000-4000-a000-000000000002');

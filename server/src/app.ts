@@ -20,6 +20,7 @@ import { presenceRouter, teamRouter } from './routes/presence.js';
 import { leavesRouter } from './routes/leaves.js';
 import { invoicesRouter } from './routes/invoices.js';
 import { settingsRouter } from './routes/settings.js';
+import { salaryRouter } from './routes/salary.js';
 import { createRouter, mountRouter } from './middleware/access.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -79,6 +80,7 @@ mountRouter(api, '/team', teamRouter);
 mountRouter(api, '/leaves', leavesRouter);
 mountRouter(api, '/invoices', invoicesRouter);
 mountRouter(api, '/settings', settingsRouter);
+mountRouter(api, '/salary', salaryRouter);
 
 api.use(apiNotFound);
 app.use('/api', api);

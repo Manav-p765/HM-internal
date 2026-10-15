@@ -137,6 +137,30 @@ describe('route matrix (deny by default)', () => {
     }
   });
 
+  it('salary routes: admin only, except an employee’s own published slips', () => {
+    const salary = Object.fromEntries(
+      collectRoutes()
+        .routes.filter(r => r.path === '/api/salary' || r.path.startsWith('/api/salary/'))
+        .map(r => [r.key, r.declared?.access]),
+    );
+    const ADMIN = ['admin'];
+    const OWN_SLIPS = ['employee', 'manager', 'admin']; // ownership is checked in SQL by req.user.employeeId
+    expect(salary).toEqual({
+      'GET /api/salary/': ADMIN,
+      'POST /api/salary/generate': ADMIN,
+      'GET /api/salary/:id': ADMIN,
+      'PATCH /api/salary/:id': ADMIN,
+      'POST /api/salary/:id/adjustments': ADMIN,
+      'DELETE /api/salary/:id/adjustments/:lineId': ADMIN,
+      'POST /api/salary/:id/pay': ADMIN,
+      'POST /api/salary/:id/unpay': ADMIN,
+      'POST /api/salary/:id/publish-slip': ADMIN,
+      'POST /api/salary/:id/unpublish-slip': ADMIN,
+      'GET /api/salary/slips/me': OWN_SLIPS,
+      'GET /api/salary/slips/me/:id': OWN_SLIPS,
+    });
+  });
+
   it('a client session gets 403 on every route outside the allowlist', async () => {
     const checked: string[] = [];
     for (const route of collectRoutes().routes) {

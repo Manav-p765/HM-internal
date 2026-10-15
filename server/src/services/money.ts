@@ -98,7 +98,7 @@ export const percentValue = (label = 'Tax rate') =>
   decimalString(label, { min: 'nonnegative', maxHundredths: 10000n, maxLabel: '100' });
 
 // Signed variant for computed values such as a balance ("-5.00").
-function toSignedHundredths(value: string): bigint {
+export function toSignedHundredths(value: string): bigint {
   return value.startsWith('-') ? -toHundredths(value.slice(1)) : toHundredths(value);
 }
 

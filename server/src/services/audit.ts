@@ -47,7 +47,15 @@ export type AuditAction =
   | 'invoice.cancelled'
   | 'invoice.deleted'
   | 'invoice.payment_recorded'
-  | 'invoice.payment_reversed';
+  | 'invoice.payment_reversed'
+  | 'salary.generated'
+  | 'salary.updated'
+  | 'salary.adjustment_added'
+  | 'salary.adjustment_removed'
+  | 'salary.paid'
+  | 'salary.unpaid'
+  | 'salary.slip_published'
+  | 'salary.slip_unpublished';
 
 interface AuditEntry {
   action: AuditAction;
