@@ -359,7 +359,7 @@ const EditSalaryForm: React.FC<{ salary: SalaryDetail; onSaved: (s: SalaryDetail
         <FormField label="Override base (INR)" error={errors?.fields.baseSalary} hint={`Now ${formatMoney(salary.baseSalary)}`}>
           <input value={base} onChange={e => setBase(e.target.value)} inputMode="decimal" placeholder="Leave empty" className={`${inputClass} font-mono`} aria-label="Override base salary" />
         </FormField>
-        <FormField label="Reason for the override" required={baseChanged} error={errors?.fields.reason}>
+        <FormField label="Reason for the override" required={baseChanged} error={errors?.fields.reason} hint="Do not enter amounts or personal data">
           <input value={reason} onChange={e => setReason(e.target.value)} maxLength={500} disabled={!baseChanged} className={`${inputClass} disabled:bg-[#F7F9FC]`} aria-label="Override reason" />
         </FormField>
       </div>

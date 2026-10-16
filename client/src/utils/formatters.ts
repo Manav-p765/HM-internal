@@ -33,17 +33,22 @@ export function formatMonthYear(monthStr: string): string {
   }
 }
 
+// Browser-side CSV for the attendance and leave screens (the finance CSVs are built by the server,
+// server/src/services/csv.ts, with the same rules). Numbers are written as-is; a text cell starting with
+// = + - @ TAB or CR gets a leading single quote so a spreadsheet shows it as text instead of evaluating it.
+// UTF-8 with a BOM, every cell quoted (RFC 4180), CRLF line ends.
 export function exportToCSV(filename: string, headers: string[], rows: (string | number | undefined)[][]): void {
   const escapeValue = (val: string | number | undefined): string => {
     if (val === undefined || val === null) return '""';
-    const str = String(val).replace(/"/g, '""');
-    return `"${str}"`;
+    let str = String(val);
+    if (typeof val !== 'number' && /^[=+\-@\t\r]/.test(str)) str = `'${str}`;
+    return `"${str.replace(/"/g, '""')}"`;
   };
 
-  const csvContent = [
-    headers.map(escapeValue).join(','),
-    ...rows.map(row => row.map(escapeValue).join(',')),
-  ].join('\r\n');
+  const csvContent =
+    '﻿' +
+    [headers.map(escapeValue).join(','), ...rows.map(row => row.map(escapeValue).join(','))].join('\r\n') +
+    '\r\n';
 
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const link = document.createElement('a');

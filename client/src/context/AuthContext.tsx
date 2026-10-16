@@ -41,6 +41,9 @@ function removeLegacyAuthStorage() {
       'monks_salary_slips_v2',
       // The ledger moved to the API (/api/transactions).
       'monks_transactions_v2',
+      // The browser-side activity and audit logs were removed; the audit trail is server-side.
+      'monks_activity_logs_v1',
+      'monks_audit_logs_v1',
     ];
     legacy.forEach(key => localStorage.removeItem(key));
     Object.keys(localStorage)

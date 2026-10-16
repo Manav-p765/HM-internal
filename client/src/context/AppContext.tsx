@@ -1,11 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
-import {
-  UserProfile,
-  ActivityLog,
-  AuditLog,
-  AuditActionType,
-} from '../types';
-import { StorageService } from '../services/storage';
+import React, { createContext, useContext, useState, ReactNode, useMemo } from 'react';
+import { UserProfile } from '../types';
 import { useAuth } from './AuthContext';
 
 interface Toast {
@@ -15,27 +9,16 @@ interface Toast {
   message: string;
 }
 
+// Staff-shell UI state only: the signed-in user (from the server session), toasts and quick-action modals.
+// No business data lives here or in localStorage: every page fetches its data from the API
+// (api/*.ts with useApiData), and the audit trail is written by the server (audit_logs).
 interface AppContextType {
-  // Signed-in user (from the server session via AuthContext, mapped to the shape the views use)
   currentUser: UserProfile;
 
-  // The ledger and reports live on the server (api/transactions.ts, api/reports.ts); pages fetch them.
-
-  // Invoices and company settings live on the server (api/invoices.ts, api/settings.ts); pages fetch them.
-
-  // Salaries and payslips live on the server (api/salary.ts); pages fetch them.
-
-  // Audit Logs & Accountability
-  auditLogs: AuditLog[];
-  activityLogs: ActivityLog[];
-  logAuditAction: (entry: Parameters<typeof StorageService.logAuditAction>[0]) => AuditLog;
-
-  // Toasts
   toasts: Toast[];
   showToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
   dismissToast: (id: string) => void;
 
-  // Quick Action Modals
   isAddEmployeeOpen: boolean;
   setIsAddEmployeeOpen: (open: boolean) => void;
 }
@@ -49,17 +32,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     throw new Error('AppProvider requires a signed-in user');
   }
 
-  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(StorageService.getActivityLogs());
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(StorageService.getAuditLogs());
   const [toasts, setToasts] = useState<Toast[]>([]);
-
-  // Quick Action Modal states
   const [isAddEmployeeOpen, setIsAddEmployeeOpen] = useState(false);
-
-  const refreshData = () => {
-    setActivityLogs(StorageService.getActivityLogs());
-    setAuditLogs(StorageService.getAuditLogs());
-  };
 
   const showToast = (type: 'success' | 'error' | 'info', message: string, title?: string) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`;
@@ -89,33 +63,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   }, [user]);
 
-  // Audit entries written by the storage layer are attributed to the signed-in user.
-  StorageService.currentActor = {
-    id: currentUser.id,
-    name: currentUser.name,
-    email: currentUser.email,
-    role: currentUser.role,
-  };
-
-  const logAuditAction = (entry: Parameters<typeof StorageService.logAuditAction>[0]) => {
-    const log = StorageService.logAuditAction({
-      ...entry,
-      userName: entry.userName || currentUser.name,
-      userRole: entry.userRole || currentUser.role,
-      userEmail: entry.userEmail || currentUser.email,
-      userId: entry.userId || currentUser.id,
-    });
-    refreshData();
-    return log;
-  };
-
   return (
     <AppContext.Provider
       value={{
         currentUser,
-        auditLogs,
-        activityLogs,
-        logAuditAction,
         toasts,
         showToast,
         dismissToast,
