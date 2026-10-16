@@ -178,7 +178,8 @@ clientsRouter.post('/:id/deactivate', ['admin'], async (req, res) => {
 
     await client.query(`UPDATE clients SET status = 'inactive' WHERE id = $1`, [id]);
     const disabled = await client.query<{ id: string }>(
-      `UPDATE users SET status = 'disabled' WHERE client_id = $1 AND status = 'active' RETURNING id`,
+      `UPDATE users SET status = 'disabled', disabled_by_client_deactivation = true
+        WHERE client_id = $1 AND status = 'active' RETURNING id`,
       [id],
     );
     return disabled.rows.map(r => r.id);
@@ -213,12 +214,16 @@ clientsRouter.post('/:id/reactivate', ['admin'], async (req, res) => {
     if (company.status === 'active') throw new HttpError(409, 'This client is already active', 'ALREADY_ACTIVE');
 
     await client.query(`UPDATE clients SET status = 'active' WHERE id = $1`, [id]);
-    if (!restoreLogins) return 0;
+    // Only logins the deactivation disabled come back; ones disabled individually stay disabled. The flag is
+    // cleared either way, so a later deactivate/reactivate cycle can't bring back a login left disabled now.
     const result = await client.query(
-      `UPDATE users SET status = 'active' WHERE client_id = $1 AND status = 'disabled'`,
-      [id],
+      `UPDATE users
+          SET status = CASE WHEN $2::boolean THEN 'active' ELSE status END,
+              disabled_by_client_deactivation = false
+        WHERE client_id = $1 AND disabled_by_client_deactivation`,
+      [id, restoreLogins],
     );
-    return result.rowCount ?? 0;
+    return restoreLogins ? (result.rowCount ?? 0) : 0;
   });
 
   await audit(req, {

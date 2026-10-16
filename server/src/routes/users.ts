@@ -187,7 +187,13 @@ usersRouter.patch('/:id', ['admin', 'manager'], async (req, res) => {
       await assertClientActive(client, target.client_id);
     }
 
-    await client.query('UPDATE users SET role = $1, status = $2 WHERE id = $3', [next.role, next.status, id]);
+    // Any explicit status change is an individual decision, so a company reactivation no longer restores it.
+    await client.query(
+      `UPDATE users SET role = $1, status = $2,
+              disabled_by_client_deactivation = disabled_by_client_deactivation AND $4::boolean
+        WHERE id = $3`,
+      [next.role, next.status, id, body.status === undefined],
+    );
     return { before: target, after: next };
   });
 

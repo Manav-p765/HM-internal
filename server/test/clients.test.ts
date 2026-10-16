@@ -274,11 +274,49 @@ describe('deactivating and reactivating a company', () => {
     expect(plain.body.client).toMatchObject({ status: 'active', activePortalUsers: 0 });
     await request(app).post('/api/auth/login').send({ email: 'a1@example.test', password: PASSWORD }).expect(401);
 
+    const [a1] = await query<{ id: string }>(`SELECT id FROM users WHERE email = 'a1@example.test'`);
+    await agents.admin.patch(`/api/users/${a1.id}`).send({ status: 'active' }).expect(200);
     await agents.admin.post(`/api/clients/${companyA}/deactivate`).send({}).expect(200);
     const restored = await agents.admin.post(`/api/clients/${companyA}/reactivate`).send({ restoreLogins: true }).expect(200);
     expect(restored.body.client).toMatchObject({ status: 'active', activePortalUsers: 1 });
     await signIn('a1@example.test');
     await agents.admin.post(`/api/clients/${companyA}/reactivate`).send({}).expect(409);
+  });
+
+  it('restoreLogins re-enables only the logins the deactivation disabled', async () => {
+    const a2 = await createUser('a2@example.test', 'client', companyA);
+    await agents.admin.patch(`/api/users/${a2}`).send({ status: 'disabled' }).expect(200); // individually, before
+
+    await agents.admin.post(`/api/clients/${companyA}/deactivate`).send({}).expect(200);
+    const res = await agents.admin.post(`/api/clients/${companyA}/reactivate`).send({ restoreLogins: true }).expect(200);
+    expect(res.body.client).toMatchObject({ status: 'active', activePortalUsers: 1 });
+
+    await signIn('a1@example.test');
+    await request(app).post('/api/auth/login').send({ email: 'a2@example.test', password: PASSWORD }).expect(401);
+    const flags = await query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM users WHERE disabled_by_client_deactivation`,
+    );
+    expect(flags[0].n).toBe(0);
+    const [log] = await query<{ metadata: { loginsRestored: number } }>(
+      `SELECT metadata FROM audit_logs WHERE action = 'client.reactivated'`,
+    );
+    expect(log.metadata.loginsRestored).toBe(1);
+  });
+
+  it('a login disabled individually while the company is inactive stays disabled', async () => {
+    const [a1] = await query<{ id: string }>(`SELECT id FROM users WHERE email = 'a1@example.test'`);
+    await agents.admin.post(`/api/clients/${companyA}/deactivate`).send({}).expect(200);
+    await agents.admin.patch(`/api/users/${a1.id}`).send({ status: 'disabled' }).expect(200);
+    await agents.admin.post(`/api/clients/${companyA}/reactivate`).send({ restoreLogins: true }).expect(200);
+    await request(app).post('/api/auth/login').send({ email: 'a1@example.test', password: PASSWORD }).expect(401);
+  });
+
+  it('a plain reactivation clears the flag, so a later cycle does not restore the login', async () => {
+    await agents.admin.post(`/api/clients/${companyA}/deactivate`).send({}).expect(200);
+    await agents.admin.post(`/api/clients/${companyA}/reactivate`).send({}).expect(200);
+    await agents.admin.post(`/api/clients/${companyA}/deactivate`).send({}).expect(200);
+    await agents.admin.post(`/api/clients/${companyA}/reactivate`).send({ restoreLogins: true }).expect(200);
+    await request(app).post('/api/auth/login').send({ email: 'a1@example.test', password: PASSWORD }).expect(401);
   });
 
   it('disabling a single client user kills that session', async () => {
