@@ -6,6 +6,12 @@ coverage/
 *.log
 .env*
 !.env.example
+!.env.production.example
+
+# Database backups and dumps (scripts/backup.sh)
+backups/
+*.dump
+*.dump.gz
 
 # Playwright MCP output (screenshots, snapshots, console logs)
 .playwright-mcp/

@@ -160,7 +160,8 @@ authRouter.post('/forgot-password', 'public', forgotPasswordLimiter, async (req,
       );
     });
     // Not awaited: the response must not reveal (by timing or by error) whether the account exists.
-    sendPasswordResetEmail(user.email, token).catch(err => console.error('Failed to send password reset email', err));
+    // A failure is logged by mail.ts (purpose and SMTP code only).
+    sendPasswordResetEmail(user.email, token).catch(() => {});
   }
 
   await audit(req, {

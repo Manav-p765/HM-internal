@@ -14,6 +14,7 @@ import { hashPassword } from '../src/services/passwords.js';
 // Routes a client user may call. Anything added here is a deliberate decision.
 const CLIENT_ALLOWED = new Set([
   'GET /api/health',
+  'GET /api/health/ready',
   'POST /api/auth/login',
   'POST /api/auth/logout',
   'GET /api/auth/me',
@@ -33,6 +34,7 @@ const CLIENT_ALLOWED = new Set([
 // Routes that need no sign-in at all.
 const PUBLIC = new Set([
   'GET /api/health',
+  'GET /api/health/ready',
   'POST /api/auth/login',
   'POST /api/auth/logout',
   'POST /api/auth/forgot-password',

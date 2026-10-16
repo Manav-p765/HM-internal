@@ -3,24 +3,31 @@ import { rateLimit } from 'express-rate-limit';
 import { config } from '../config.js';
 import { HttpError } from './errors.js';
 
-const allowedOrigins = new Set([config.appOrigin]);
-if (!config.isProduction) {
-  // Vite dev server
-  allowedOrigins.add('http://localhost:3000');
-  allowedOrigins.add('http://127.0.0.1:3000');
+// CSRF defence on top of the SameSite=Lax cookie. Browsers always send Origin on POST/PATCH/PUT/DELETE, so:
+//   - a mutating request from another origin is rejected (403 BAD_ORIGIN);
+//   - in production a mutating /api request WITHOUT an Origin header is rejected too (403 ORIGIN_REQUIRED):
+//     only browsers use the API, and the only routes a non-browser client needs are the GET health checks;
+//   - in development and tests a missing Origin is allowed (curl, supertest).
+// GET/HEAD/OPTIONS never change anything and are not checked.
+export function createOriginCheck(opts: { allowed: string[]; requireOrigin: boolean }): RequestHandler {
+  const allowed = new Set(opts.allowed);
+  return (req, _res, next) => {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+    const origin = req.get('origin');
+    if (!origin) {
+      if (opts.requireOrigin) throw new HttpError(403, 'Request origin required', 'ORIGIN_REQUIRED');
+      return next();
+    }
+    if (!allowed.has(origin)) throw new HttpError(403, 'Request origin not allowed', 'BAD_ORIGIN');
+    next();
+  };
 }
 
-// CSRF defence on top of the SameSite=Lax cookie: browsers always send Origin on cross-site
-// POST/PATCH/DELETE, so a mismatching Origin is rejected. Requests with no Origin header
-// (curl, server-to-server) are not browser-driven and are let through.
-export const checkOrigin: RequestHandler = (req, _res, next) => {
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
-  const origin = req.get('origin');
-  if (origin && !allowedOrigins.has(origin)) {
-    throw new HttpError(403, 'Request origin not allowed', 'BAD_ORIGIN');
-  }
-  next();
-};
+export const checkOrigin = createOriginCheck({
+  // APP_URL's origin; in development also the Vite dev server.
+  allowed: config.isProduction ? [config.appOrigin] : [config.appOrigin, 'http://localhost:3000', 'http://127.0.0.1:3000'],
+  requireOrigin: config.isProduction,
+});
 
 function limiter(limit: number, message: string, skipSuccessfulRequests = false) {
   return rateLimit({

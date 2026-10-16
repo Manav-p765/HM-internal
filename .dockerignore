@@ -1,0 +1,27 @@
+# Never in the build context: secrets, local state, tooling, tests.
+.env
+.env.*
+!.env.production.example
+**/node_modules
+**/dist
+.git
+.gitignore
+.gitattributes
+.claude
+.playwright-mcp
+.vscode
+.idea
+coverage
+backups
+*.dump
+*.dump.gz
+*.sql.gz
+*.log
+server/test
+server/vitest.config.ts
+server/db/seed.dev.sql
+docs
+docker-compose*.yml
+scripts
+README.md
+CLAUDE.md
