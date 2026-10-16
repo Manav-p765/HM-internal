@@ -248,6 +248,31 @@ describe('create and edit', () => {
     await agents.admin.get('/api/employees/not-a-uuid').expect(404);
   });
 
+  it('accepts only https:// or app-relative /path avatar URLs', async () => {
+    const refused = [
+      'javascript:alert(1)',
+      'data:image/png;base64,AAAA',
+      'http://example.test/a.png',
+      '//evil.example.test/a.png',
+      '/\\evil.example.test/a.png',
+      'https://user:pw@example.test/a.png',
+      'https:///a.png',
+      'https://example.test/a b.png',
+      'avatars/a.png',
+      'ftp://example.test/a.png',
+    ];
+    for (const avatarUrl of refused) {
+      const res = await agents.employee.patch('/api/employees/me').send({ avatarUrl });
+      expect({ avatarUrl, status: res.status }).toEqual({ avatarUrl, status: 400 });
+      expect(res.body.details.map((d: { path: string }) => d.path)).toContain('avatarUrl');
+    }
+    for (const avatarUrl of ['/avatars/avatar-2.jpg', 'https://cdn.example.test/a.png', 'HTTPS://cdn.example.test/b.png']) {
+      const res = await agents.employee.patch('/api/employees/me').send({ avatarUrl }).expect(200);
+      expect(res.body.employee.avatarUrl).toBe(avatarUrl);
+    }
+    await agents.employee.patch('/api/employees/me').send({ avatarUrl: '' }).expect(200);
+  });
+
   it('edits only the fields sent', async () => {
     const res = await agents.admin.patch(`/api/employees/${ids.otherEmp}`).send({ designation: 'Lead Engineer' }).expect(200);
     expect(res.body.employee).toMatchObject({
