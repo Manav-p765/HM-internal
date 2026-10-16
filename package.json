@@ -12,7 +12,9 @@
     "lint": "npm run lint -w client && npm run lint -w server",
     "db:migrate": "npm run db:migrate -w server",
     "db:seed": "npm run db:seed -w server --",
-    "test": "npm run test -w server"
+    "test": "npm run test -w server",
+    "create-admin": "npm run create-admin -w server --",
+    "mail:test": "npm run mail:test -w server --"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

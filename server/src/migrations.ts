@@ -14,6 +14,8 @@ const LOCK_ID = 727274;
 export async function runMigrations(log: (message: string) => void = console.log): Promise<number> {
   const client = await pool.connect();
   try {
+    // A migration may take longer than the pool's statement timeout (DB_STATEMENT_TIMEOUT_MS).
+    await client.query('SET statement_timeout = 0');
     await client.query('SELECT pg_advisory_lock($1)', [LOCK_ID]);
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -48,4 +50,14 @@ export async function runMigrations(log: (message: string) => void = console.log
     await client.query('SELECT pg_advisory_unlock($1)', [LOCK_ID]).catch(() => {});
     client.release();
   }
+}
+
+// Migration files not yet recorded in schema_migrations (all of them if the table doesn't exist yet).
+// Used by /api/health/ready and the startup warning; never applies anything.
+export async function pendingMigrations(): Promise<string[]> {
+  const files = (await fs.readdir(migrationsDir)).filter(f => f.endsWith('.sql')).sort();
+  const { rows } = await pool.query<{ exists: boolean }>(`SELECT to_regclass('schema_migrations') IS NOT NULL AS exists`);
+  if (!rows[0].exists) return files;
+  const applied = new Set((await pool.query<{ filename: string }>('SELECT filename FROM schema_migrations')).rows.map(r => r.filename));
+  return files.filter(f => !applied.has(f));
 }

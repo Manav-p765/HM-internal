@@ -1,5 +1,5 @@
 // PreToolUse (Edit|Write|MultiEdit): refuse edits to files Claude must not hand-edit.
-//   - .env / .env.* (real secrets; .env.example is allowed)
+//   - .env / .env.* (real secrets; the placeholder-only .env.example and .env.production.example are allowed)
 //   - package-lock.json (any workspace; change it via npm)
 //   - any existing file in server/db/migrations/ (applied migrations are never re-run; add a new file instead)
 // Exit code 2 blocks the tool call and shows stderr to Claude.
@@ -20,7 +20,9 @@ function block(reason) {
   process.exit(2);
 }
 
-if ((base === '.env' || base.startsWith('.env.')) && base !== '.env.example') {
+// The committed example files (placeholders only) may be edited; every real .env file stays blocked.
+const ENV_EXAMPLES = new Set(['.env.example', '.env.production.example']);
+if ((base === '.env' || base.startsWith('.env.')) && !ENV_EXAMPLES.has(base)) {
   block('.env files hold real secrets (SESSION_SECRET, DATABASE_URL). Ask the user to change it.');
 }
 if (base === 'package-lock.json') {

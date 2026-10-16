@@ -7,8 +7,37 @@ interface Mail {
   text: string;
 }
 
-// Test runs collect mail here instead of sending it.
+// What kind of email it is, for logs (never the recipient, the password or the link).
+type MailPurpose = 'credentials' | 'password-reset' | 'test';
+
+// A send that failed. Routes let it propagate: the credentials email is sent inside the DB transaction,
+// so the account change is rolled back and the caller gets 502 MAIL_FAILED (errors.ts); the password reset
+// email is sent in the background and only logged, so the response never reveals anything.
+export class MailError extends Error {
+  constructor(
+    public purpose: MailPurpose,
+    public code: string,
+  ) {
+    super(`Could not send the ${purpose} email (${code})`);
+  }
+}
+
+// Test runs collect mail here instead of sending it. testMail.failNext makes the next send fail like an
+// SMTP authentication error would.
 export const testOutbox: Mail[] = [];
+export const testMail = { failNext: false };
+
+// The SMTP error code only: nodemailer errors can carry the server's response and the command sent.
+function smtpCode(err: unknown): string {
+  const e = err as { code?: string; responseCode?: number };
+  return [e.code, e.responseCode].filter(Boolean).join('/') || 'UNKNOWN';
+}
+
+const from = () => {
+  if (!config.SMTP_FROM) return undefined;
+  // A legacy "Name <address>" value is passed through; a plain address gets EMAIL_FROM_NAME.
+  return config.SMTP_FROM.includes('<') ? config.SMTP_FROM : { name: config.EMAIL_FROM_NAME, address: config.SMTP_FROM };
+};
 
 const transport = config.SMTP_HOST
   ? nodemailer.createTransport({
@@ -20,6 +49,7 @@ const transport = config.SMTP_HOST
   : null;
 
 // Called at startup: production must be able to send mail (new accounts and resets depend on it).
+// config.ts already refuses to start without SMTP_HOST/USER/PASS/FROM in production; this is a backstop.
 export function assertMailConfigured(): void {
   if (!config.isProduction) return;
   const missing = (['SMTP_HOST', 'SMTP_FROM'] as const).filter(key => !config[key]);
@@ -28,8 +58,13 @@ export function assertMailConfigured(): void {
   }
 }
 
-async function send(mail: Mail): Promise<void> {
+async function send(mail: Mail, purpose: MailPurpose): Promise<void> {
   if (config.isTest) {
+    if (testMail.failNext) {
+      testMail.failNext = false;
+      console.error(`Mail send failed: purpose=${purpose} code=EAUTH/535`);
+      throw new MailError(purpose, 'EAUTH/535');
+    }
     testOutbox.push(mail);
     return;
   }
@@ -50,7 +85,32 @@ async function send(mail: Mail): Promise<void> {
     );
     return;
   }
-  await transport.sendMail({ from: config.SMTP_FROM, ...mail });
+  try {
+    await transport.sendMail({ from: from(), ...mail });
+  } catch (err) {
+    const code = smtpCode(err);
+    console.error(`Mail send failed: purpose=${purpose} code=${code}`);
+    throw new MailError(purpose, code);
+  }
+}
+
+// npm run mail:test: one test message through the configured SMTP. Returns the message id or throws a
+// MailError carrying the SMTP code.
+export async function sendTestEmail(to: string): Promise<string> {
+  if (!transport) throw new MailError('test', 'SMTP_HOST_NOT_SET');
+  try {
+    const info = await transport.sendMail({
+      from: from(),
+      to,
+      subject: 'Monks Internal Management: test email',
+      text: `This is a test message from Monks Internal Management (${config.APP_URL}). If you received it, outgoing mail works.
+
+${SIGN_OFF}`,
+    });
+    return info.messageId;
+  } catch (err) {
+    throw new MailError('test', smtpCode(err));
+  }
 }
 
 const SIGN_OFF = 'Monks Internal Management\nHybrid Monks LLP';
@@ -77,7 +137,7 @@ export function sendCredentialsEmail(to: string, tempPassword: string, isResend 
       '',
       SIGN_OFF,
     ].join('\n'),
-  });
+  }, 'credentials');
 }
 
 export function sendPasswordResetEmail(to: string, token: string): Promise<void> {
@@ -98,5 +158,5 @@ export function sendPasswordResetEmail(to: string, token: string): Promise<void>
       '',
       SIGN_OFF,
     ].join('\n'),
-  });
+  }, 'password-reset');
 }
