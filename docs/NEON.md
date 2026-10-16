@@ -19,6 +19,7 @@ No secrets in this file. Connection strings live only in the Neon Console, in Re
 
 - `main`: default, production. Created empty. Migrations are applied to it by hand (steps below), never by a test or a script.
 - Child branches are for one-off checks only (a migration rehearsal, a restore test) and are deleted afterwards. The Free plan allows 10 branches per project.
+- `scratch-migration-test` (the 2026-10-16 rehearsal, with extra databases `migrate_test` and `pooled_test`) is still to be deleted in the Console: Branches > scratch-migration-test > Delete.
 
 ## Free plan limits (from Neon's docs, 2026-10-16)
 
@@ -42,8 +43,8 @@ Not verified:
 
 On a throwaway child branch `scratch-migration-test` of `main`:
 
-- All 8 files in `server/db/migrations/` applied without error, each in one transaction, and recorded in `schema_migrations` (001 to 008).
-  - Caveat: they were applied through the Neon MCP SQL tool, statement by statement, not through `npm run db:migrate`. The local run was not possible in the session. The SQL is identical; the runner itself was not exercised against Neon.
+- `npm run db:migrate` (direct endpoint, empty database): `Applied 8 migration(s).` A second run printed `No pending migrations.` The schema checks below were done on a copy applied through the Neon SQL tool; both copies came from the same files.
+- Connecting from the office machine took 3 to 5 s for TCP alone, so the default `DB_CONNECTION_TIMEOUT_MS` of 5000 failed with "Connection terminated due to connection timeout". With 30000, every run worked.
 - Extensions: `citext 1.8` (created by 001), `plpgsql 1.0` (built in). No other extension is needed.
 - Statements that need an extension or a privilege, and whether Neon allowed them:
   - `CREATE EXTENSION IF NOT EXISTS citext` (001): allowed for `hm_app`.
@@ -65,12 +66,26 @@ On a throwaway child branch `scratch-migration-test` of `main`:
 
 Recommendation: **use the direct (non-pooled) connection string for everything**, including the app on Render.
 
-Evidence:
-- The migration runner takes a session-level `pg_advisory_lock` and runs `SET statement_timeout = 0`. Neon's pooler is PgBouncer in transaction mode, and its docs list both "Session-level advisory locks" and `SET` as not supported. Neon also says schema migrations and `pg_dump` must use a direct connection.
-- The app pool (`server/src/db.ts`) sends `statement_timeout` as a startup parameter. Neon's docs say the pooler only accepts `client_encoding`, `datestyle`, `timezone`, `standard_conforming_strings` and `application_name` and otherwise fails with "unsupported startup parameter". So `DB_STATEMENT_TIMEOUT_MS` would break pooled connections (inferred from the docs, not tested live).
+Measured on the scratch branch (2026-10-16), with the app's own pool and connect-pg-simple store:
+
+| Check | Direct | Pooled |
+| --- | --- | --- |
+| `npm run db:migrate` on an empty database | Applied 8 | Applied 8 |
+| `SET` visible in the next statement | yes | yes |
+| Session `pg_advisory_lock` held by the same backend, then released, none left over | yes | yes |
+| connect-pg-simple `set` / `get` / `destroy` | yes | yes |
+| Named (protocol-level) prepared statement reused | yes | yes |
+| `statement_timeout` from `DB_STATEMENT_TIMEOUT_MS` (15000) | **0 (not applied)** | **0 (not applied)** |
+
+Why direct anyway:
+- The pooled successes ran with a single idle client. In that case PgBouncer happens to hand back the same server connection. Neon's docs state that session-level advisory locks and `SET` are not supported in transaction mode; under load, the migration lock could be taken and released on different backends. Neon also says migrations and `pg_dump` must use a direct connection.
 - The app needs no pooler. It is one Render instance with `DB_POOL_MAX` 10 against about 97 usable connections. Its other locks are transaction-scoped (`pg_advisory_xact_lock`, `FOR UPDATE`), and it uses no `LISTEN`, temp tables or SQL `PREPARE`.
 
-Not tested live (local commands with the connection string were blocked in the session): `npm run db:migrate`, the session store through the app, and anything through the `-pooler` host.
+Finding: `statement_timeout` is dropped on Neon. The app sends it as a startup parameter (`server/src/db.ts`). The same probe against local Docker Postgres showed `15s`, but on Neon both endpoints showed `0`, so runaway queries are not cancelled in production. Options, not yet applied:
+- Once, on `main`: `ALTER ROLE hm_app SET statement_timeout = '15s';`. Migrations still set it to 0 for their own connection.
+- Or change the code to run `SET statement_timeout` on each new pool connection.
+
+Not done: the server test suite against Neon, a load test through the pooler, and a measured wake-up latency after scale to zero.
 
 ## Driver notes
 
@@ -87,8 +102,9 @@ In a new PowerShell window at the repo root. The variables exist only in this wi
    $env:DATABASE_URL = "<paste>"
    $env:DATABASE_SSL = "require"
    ```
-3. Apply the migrations (expect `Applied 8 migration(s)`; a second run prints `No pending migrations`):
+3. Apply the migrations (expect `Applied 8 migration(s)`; a second run prints `No pending migrations`). The longer connect timeout is needed from the office line:
    ```powershell
+   $env:DB_CONNECTION_TIMEOUT_MS = "30000"
    npm run db:migrate
    ```
 4. Create the first admin (the password prompt is hidden):
@@ -104,7 +120,7 @@ The root `.env` is loaded as well, but it never overrides a variable that is alr
 - `DATABASE_URL`: the direct string from step 1
 - `DATABASE_SSL` = `require` (not read by the app today; kept for the record)
 - `DB_POOL_MAX` (suggest 5)
-- `DB_CONNECTION_TIMEOUT_MS` (suggest 10000, to cover a wake-up from scale to zero)
+- `DB_CONNECTION_TIMEOUT_MS` (suggest 15000, to cover a wake-up from scale to zero plus TLS)
 - `DB_IDLE_TIMEOUT_MS` (suggest 30000; below 5 min, so idle clients close before the compute suspends)
 - `DB_STATEMENT_TIMEOUT_MS` (default 15000)
 
