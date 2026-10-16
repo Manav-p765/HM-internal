@@ -1,5 +1,6 @@
 import type { Request } from 'express';
 import { query } from '../db.js';
+import { describeError } from './errorLog.js';
 
 export type AuditAction =
   | 'auth.login_success'
@@ -87,6 +88,6 @@ export async function audit(req: Request | null, entry: AuditEntry): Promise<voi
       ],
     );
   } catch (err) {
-    console.error(`Failed to write audit log (${entry.action})`, err);
+    console.error(`Failed to write audit log (${entry.action}): ${describeError(err)}`);
   }
 }

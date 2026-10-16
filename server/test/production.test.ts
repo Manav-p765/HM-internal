@@ -7,6 +7,7 @@ import { pool, query } from '../src/db.js';
 import { parseConfig } from '../src/config.js';
 import { createOriginCheck } from '../src/middleware/security.js';
 import { errorHandler } from '../src/middleware/errors.js';
+import { describeError } from '../src/services/errorLog.js';
 import { setRequestLogging } from '../src/middleware/requestLog.js';
 import { testMail, testOutbox } from '../src/services/mail.js';
 import { resetAll, signIn, user } from './fixtures.js';
@@ -214,4 +215,32 @@ describe('mail failures and logs', () => {
 
 afterAll(async () => {
   await pool.end();
+});
+
+describe('the 500 handler', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('logs only the error class, its code and the route pattern, never values, SQL or parameters', () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => void lines.push(args.map(String).join(' ')));
+    const err = Object.assign(new Error('duplicate key value violates unique constraint "x" secret-value@example.test'), {
+      code: '23505',
+      detail: 'Key (email)=(secret-value@example.test) already exists.',
+      parameters: ['secret-value@example.test', 'salary-99999.00'],
+      query: 'UPDATE users SET email = $1',
+    });
+    const req = { method: 'PATCH', baseUrl: '/api/users', route: { path: '/:id' }, originalUrl: '/api/users/abc?q=secret-query' };
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+    errorHandler(err, req as never, res as never, () => {});
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ error: 'Internal server error', code: 'INTERNAL' });
+    expect(lines).toEqual(['Unhandled error on PATCH /api/users/:id: Error code=23505']);
+  });
+
+  it('drops a code that is not a short token', () => {
+    expect(describeError(Object.assign(new TypeError('x'), { code: 'value with spaces and secret' }))).toBe('TypeError');
+    expect(describeError('a thrown string with a secret')).toBe('string');
+    expect(describeError(null)).toBe('object');
+  });
 });

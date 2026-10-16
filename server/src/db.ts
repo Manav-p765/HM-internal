@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { config } from './config.js';
+import { describeError } from './services/errorLog.js';
 
 // Return DATE columns as 'YYYY-MM-DD' strings instead of JS Dates shifted to local time.
 // NUMERIC already comes back as a string, which is what we want for money.
@@ -22,7 +23,7 @@ export const pool = new pg.Pool({
 
 pool.on('error', err => {
   // An idle client lost its connection (e.g. the database restarted); the pool replaces it.
-  console.error(`Postgres pool error: ${(err as { code?: string }).code ?? err.message}`);
+  console.error(`Postgres pool error: ${describeError(err)}`);
 });
 
 export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
