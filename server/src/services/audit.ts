@@ -13,7 +13,10 @@ export type AuditAction =
   | 'user.updated'
   | 'user.disabled'
   | 'user.enabled'
-  | 'user.credentials_resent'
+  | 'user.credentials_resent' // historical rows only (temporary passwords were replaced by invite links)
+  | 'user.invite_sent'
+  | 'user.reset_link_sent'
+  | 'auth.password_set'
   | 'employee.created'
   | 'employee.updated'
   | 'employee.deactivated'

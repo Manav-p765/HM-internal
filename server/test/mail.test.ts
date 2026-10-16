@@ -130,20 +130,23 @@ describe('creating a login with Resend as the transport', () => {
   function expectCleanLogs(...secrets: string[]) {
     const text = logs.join('\n');
     for (const secret of [FAKE_KEY, ...secrets]) expect(text).not.toContain(secret);
-    expect(text).not.toMatch(/Temporary password|Bearer/i);
+    expect(text).not.toMatch(/token=|set-password\?|Bearer/i);
   }
 
-  it('success: 201, the temporary password goes to Resend only, not to the logs or the response', async () => {
+  const tokenIn = (body: string) => decodeURIComponent(/token=(\S+)/.exec((JSON.parse(body) as { text: string }).text)![1]);
+
+  it('success: 201, the invite link goes to Resend only, not to the logs or the response', async () => {
     const fetchImpl = vi.fn(async (..._args: FetchArgs) => json(200, { id: 'msg_ok' }));
     useResend(fetchImpl as unknown as typeof fetch);
     const res = await admin.post('/api/users').send({ email: 'new.person@example.test', role: 'employee' }).expect(201);
 
-    const sent = JSON.parse(String(fetchImpl.mock.calls[0][1].body)) as { to: string[]; text: string };
+    const sent = JSON.parse(String(fetchImpl.mock.calls[0][1].body)) as { to: string[]; subject: string; text: string };
     expect(sent.to).toEqual(['new.person@example.test']);
-    const tempPassword = /Temporary password: (\S+)/.exec(sent.text)![1];
-    expect(res.text).not.toContain(tempPassword);
+    expect(sent.subject).toBe('Set your password for Monks Internal Management');
+    const token = tokenIn(String(fetchImpl.mock.calls[0][1].body));
+    expect(res.text).not.toContain(token);
     expect(testOutbox).toHaveLength(0);
-    expectCleanLogs(tempPassword);
+    expectCleanLogs(token);
   });
 
   it('4xx from Resend: 502 MAIL_FAILED, nothing saved, only purpose/transport/code logged', async () => {
@@ -157,8 +160,10 @@ describe('creating a login with Resend as the transport', () => {
     expect(await query(`SELECT 1 FROM users WHERE email = 'unlucky@example.test'`)).toHaveLength(0);
     expect(await query(`SELECT 1 FROM audit_logs WHERE action = 'user.created'`)).toHaveLength(0);
 
-    expect(logs.join('\n')).toContain('Mail send failed: purpose=credentials transport=resend code=RESEND_403/validation_error');
-    expectCleanLogs(/Temporary password: (\S+)/.exec(JSON.parse(body).text)![1], 'unlucky@example.test', 'not verified');
+    expect(await query('SELECT 1 FROM password_tokens')).toHaveLength(0);
+
+    expect(logs.join('\n')).toContain('Mail send failed: purpose=invite transport=resend code=RESEND_403/validation_error');
+    expectCleanLogs(tokenIn(body), 'unlucky@example.test', 'not verified');
   });
 
   it('timeout: 502 MAIL_FAILED quickly, nothing saved', async () => {
@@ -168,17 +173,19 @@ describe('creating a login with Resend as the transport', () => {
     expect(Date.now() - started).toBeLessThan(5000);
     expect(res.body.code).toBe('MAIL_FAILED');
     expect(await query(`SELECT 1 FROM users WHERE email = 'slow@example.test'`)).toHaveLength(0);
-    expect(logs.join('\n')).toContain('Mail send failed: purpose=credentials transport=resend code=TIMEOUT');
+    expect(await query('SELECT 1 FROM password_tokens')).toHaveLength(0);
+    expect(logs.join('\n')).toContain('Mail send failed: purpose=invite transport=resend code=TIMEOUT');
     expectCleanLogs('slow@example.test');
   });
 
-  it('resending credentials fails the same way and keeps the old password', async () => {
+  it('a resend-invite that cannot be sent: 502, the new link is dropped and the old one still works', async () => {
     const created = await admin.post('/api/users').send({ email: 'keep@example.test', role: 'employee' }).expect(201);
-    const [before] = await query<{ password_hash: string }>('SELECT password_hash FROM users WHERE email = $1', ['keep@example.test']);
+    const oldToken = /token=(\S+)/.exec(testOutbox[0].text)![1];
     useResend((async () => json(500, { name: 'internal_server_error' })) as unknown as typeof fetch);
-    await admin.post(`/api/users/${created.body.user.id}/resend-credentials`).send({}).expect(502);
-    const [after] = await query<{ password_hash: string }>('SELECT password_hash FROM users WHERE email = $1', ['keep@example.test']);
-    expect(after.password_hash).toBe(before.password_hash);
+    await admin.post(`/api/users/${created.body.user.id}/resend-invite`).send({}).expect(502);
+    expect(await query('SELECT 1 FROM password_tokens')).toHaveLength(1);
+    setMailTransportForTests(null);
+    await request(app).get('/api/auth/set-password/check').query({ token: decodeURIComponent(oldToken) }).expect(200);
   });
 
   it('mail:test goes through the same transport', async () => {

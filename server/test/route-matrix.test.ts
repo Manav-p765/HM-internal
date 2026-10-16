@@ -21,7 +21,8 @@ const CLIENT_ALLOWED = new Set([
   'GET /api/auth/me',
   'POST /api/auth/change-password',
   'POST /api/auth/forgot-password',
-  'POST /api/auth/reset-password',
+  'GET /api/auth/set-password/check',
+  'POST /api/auth/set-password',
   'GET /api/clients/me',
   // The client portal API (every route is ['client'] and scoped to req.user.clientId).
   'GET /api/portal/projects',
@@ -39,14 +40,17 @@ const PUBLIC = new Set([
   'POST /api/auth/login',
   'POST /api/auth/logout',
   'POST /api/auth/forgot-password',
-  'POST /api/auth/reset-password',
+  // The emailed set-password link (invite or reset): check it, then use it. Deliberately public.
+  'GET /api/auth/set-password/check',
+  'POST /api/auth/set-password',
 ]);
 
-// Routes that send email (credentials or reset links). Each must be rate limited like a public route.
+// Routes that send email (invite or reset links). Each must be rate limited like a public route.
 const SENDS_EMAIL = new Set([
   'POST /api/auth/forgot-password',
   'POST /api/users/',
-  'POST /api/users/:id/resend-credentials',
+  'POST /api/users/:id/resend-invite',
+  'POST /api/users/:id/send-reset-link',
 ]);
 
 interface FoundRoute {
@@ -107,7 +111,7 @@ let clientAgent: request.Agent;
 const staffAgents: Record<string, request.Agent> = {};
 
 beforeAll(async () => {
-  await query('TRUNCATE audit_logs, auth_tokens, sessions, users, employees, clients CASCADE');
+  await query('TRUNCATE audit_logs, password_tokens, sessions, users, employees, clients CASCADE');
   const [company] = await query<{ id: string }>(`INSERT INTO clients (company_name) VALUES ('Matrix Co (Fake)') RETURNING id`);
   await query(
     `INSERT INTO users (email, password_hash, role, client_id) VALUES ('matrix-client@example.test', $1, 'client', $2)`,
@@ -238,7 +242,10 @@ describe('route matrix (deny by default)', () => {
     }
     // Spot checks of the table itself.
     expect(routes.find(r => r.key === 'POST /api/auth/forgot-password')!.limits).toEqual(['forgot-password', 'forgot-password-per-email']);
-    expect(routes.find(r => r.key === 'POST /api/users/')!.limits).toEqual(['credentials-mail']);
+    expect(routes.find(r => r.key === 'POST /api/users/')!.limits).toEqual(['account-mail']);
+    // The set-password link is limited per IP and per token.
+    expect(routes.find(r => r.key === 'GET /api/auth/set-password/check')!.limits).toEqual(['set-password-check', 'set-password-check-per-token']);
+    expect(routes.find(r => r.key === 'POST /api/auth/set-password')!.limits).toEqual(['set-password', 'set-password-per-token']);
   });
 
   it('an anonymous caller gets 401 on every non-public route', async () => {

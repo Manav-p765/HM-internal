@@ -59,7 +59,7 @@ let ids: { adminEmp: string; managerEmp: string; staffEmp: string; otherEmp: str
 let agents: { admin: request.Agent; manager: request.Agent; employee: request.Agent; anonymous: request.Agent };
 
 beforeEach(async () => {
-  await query('TRUNCATE audit_logs, auth_tokens, sessions, users, employees CASCADE');
+  await query('TRUNCATE audit_logs, password_tokens, sessions, users, employees CASCADE');
   const adminEmp = await createEmployee({ code: 'EMP-001', fullName: 'Ada Admin', workEmail: 'ada@example.test' });
   const managerEmp = await createEmployee({ code: 'EMP-002', fullName: 'Max Manager', workEmail: 'max@example.test' });
   const staffEmp = await createEmployee({ code: 'EMP-003', fullName: 'Sam Staff', workEmail: 'sam@example.test' });

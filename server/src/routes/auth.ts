@@ -5,14 +5,8 @@ import { audit } from '../services/audit.js';
 import { autoPunchIn } from '../services/attendance.js';
 import { now } from '../services/clock.js';
 import { sendPasswordResetEmail } from '../services/mail.js';
-import {
-  DUMMY_HASH,
-  generateToken,
-  hashPassword,
-  hashToken,
-  newPasswordSchema,
-  verifyPassword,
-} from '../services/passwords.js';
+import { claimToken, checkToken, dropAllTokens, issueToken } from '../services/passwordTokens.js';
+import { DUMMY_HASH, hashPassword, newPasswordSchema, verifyPassword } from '../services/passwords.js';
 import { deleteUserSessions, destroySession, loadSessionUser } from '../middleware/auth.js';
 import { createRouter } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
@@ -21,12 +15,13 @@ import {
   forgotPasswordPerEmailLimiter,
   loginLimiter,
   logoutLimiter,
-  resetPasswordLimiter,
+  setPasswordCheckLimiter,
+  setPasswordCheckPerTokenLimiter,
+  setPasswordLimiter,
+  setPasswordPerTokenLimiter,
 } from '../middleware/security.js';
 
 export const authRouter = createRouter();
-
-const RESET_TOKEN_TTL_MINUTES = 60;
 
 function regenerateSession(req: Request): Promise<void> {
   return new Promise((resolve, reject) => req.session.regenerate(err => (err ? reject(err) : resolve())));
@@ -35,6 +30,8 @@ function regenerateSession(req: Request): Promise<void> {
 // ---------------------------------------------------------------------------
 // POST /api/auth/login
 // ---------------------------------------------------------------------------
+// The email is trimmed (and matched case-insensitively: citext); the password is compared exactly as typed,
+// spaces included. Never trim or normalise a password.
 const loginSchema = z.object({
   email: z.string().trim().min(1).max(254),
   password: z.string().min(1).max(200),
@@ -126,8 +123,8 @@ authRouter.post('/change-password', 'session', async (req, res) => {
   const passwordHash = await hashPassword(newPassword);
   await withTransaction(async client => {
     await client.query('UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2', [passwordHash, userId]);
-    // A reset link requested before the change must not be able to undo it.
-    await client.query(`DELETE FROM auth_tokens WHERE user_id = $1 AND purpose = 'reset' AND used_at IS NULL`, [userId]);
+    // No link sent before the change (reset or invite) may undo it.
+    await dropAllTokens(client, userId);
   });
 
   // Sign out every other device and give this one a fresh session id.
@@ -157,18 +154,13 @@ authRouter.post('/forgot-password', 'public', forgotPasswordLimiter, forgotPassw
   );
 
   if (user) {
-    const { token, tokenHash } = generateToken();
-    await withTransaction(async client => {
-      // Only the newest link works.
-      await client.query(`DELETE FROM auth_tokens WHERE user_id = $1 AND purpose = 'reset' AND used_at IS NULL`, [user.id]);
-      await client.query(
-        `INSERT INTO auth_tokens (user_id, token_hash, purpose, expires_at)
-         VALUES ($1, $2, 'reset', now() + make_interval(mins => $3))`,
-        [user.id, tokenHash, RESET_TOKEN_TTL_MINUTES],
-      );
+    const token = await withTransaction(async client => {
+      // Only the newest link works (this also replaces an unused invite: the reset link sets the password too).
+      await dropAllTokens(client, user.id);
+      return (await issueToken(client, user.id, 'reset')).token;
     });
     // Not awaited: the response must not reveal (by timing or by error) whether the account exists.
-    // A failure is logged by mail.ts (purpose and SMTP code only).
+    // A failure is logged by mail.ts (purpose, transport and code only).
     sendPasswordResetEmail(user.email, token).catch(() => {});
   }
 
@@ -185,45 +177,57 @@ authRouter.post('/forgot-password', 'public', forgotPasswordLimiter, forgotPassw
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/auth/reset-password
+// GET /api/auth/set-password/check?token=...   (the emailed invite or reset link)
+// POST /api/auth/set-password { token, password }
+// Every bad token (unknown, expired, used, replaced by a newer one, or its account disabled) gets the same
+// 400 LINK_INVALID, so the answer never says which. The token is never logged: the request log has the path
+// only, and nothing here writes it anywhere.
 // ---------------------------------------------------------------------------
-const resetPasswordSchema = z.object({
-  token: z.string().min(1).max(200),
-  newPassword: newPasswordSchema,
+const LINK_INVALID = () =>
+  new HttpError(400, 'This link is invalid or has expired. Ask your administrator to send a new one.', 'LINK_INVALID');
+
+// A token is 32 random bytes in base64url (43 characters); anything else can't be one.
+const tokenSchema = z.string().regex(/^[A-Za-z0-9_-]{20,128}$/);
+
+authRouter.get('/set-password/check', 'public', setPasswordCheckLimiter, setPasswordCheckPerTokenLimiter, async (req, res) => {
+  const parsed = tokenSchema.safeParse(req.query.token);
+  const found = parsed.success ? await checkToken(parsed.data) : null;
+  if (!found) throw LINK_INVALID();
+  res.json({ valid: true, email: found.email, purpose: found.purpose });
 });
 
-authRouter.post('/reset-password', 'public', resetPasswordLimiter, async (req, res) => {
-  const { token, newPassword } = parseBody(resetPasswordSchema, req.body);
-  const passwordHash = await hashPassword(newPassword);
+const setPasswordSchema = z.object({ token: z.string().max(200), password: newPasswordSchema });
 
-  const userId = await withTransaction(async client => {
-    // Claiming the token and checking it in one statement makes it single-use even under a race.
-    const claimed = await client.query<{ user_id: string }>(
-      `UPDATE auth_tokens t
-          SET used_at = now()
-         FROM users u
-        WHERE t.token_hash = $1 AND t.purpose = 'reset' AND t.used_at IS NULL AND t.expires_at > now()
-          AND u.id = t.user_id AND u.status = 'active'
-        RETURNING t.user_id`,
-      [hashToken(token)],
-    );
-    const id = claimed.rows[0]?.user_id;
-    if (!id) return null;
-    await client.query('UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2', [passwordHash, id]);
-    // Any other outstanding reset link for this user dies with the password it was meant to replace.
-    await client.query(`DELETE FROM auth_tokens WHERE user_id = $1 AND purpose = 'reset' AND used_at IS NULL`, [id]);
-    return id;
+authRouter.post('/set-password', 'public', setPasswordLimiter, setPasswordPerTokenLimiter, async (req, res) => {
+  const { token, password } = parseBody(setPasswordSchema, req.body);
+  if (!tokenSchema.safeParse(token).success) throw LINK_INVALID();
+  const passwordHash = await hashPassword(password);
+
+  const claimed = await withTransaction(async client => {
+    const found = await claimToken(client, token);
+    if (!found) return null;
+    await client.query('UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2', [passwordHash, found.userId]);
+    // Every other link of this user dies with it (an older invite, a reset link).
+    await dropAllTokens(client, found.userId);
+    return found;
+  });
+  if (!claimed) throw LINK_INVALID();
+
+  // Signed out everywhere else; this browser gets a fresh session as the user (session fixation: new id).
+  await deleteUserSessions(claimed.userId);
+  await regenerateSession(req);
+  req.session.userId = claimed.userId;
+  req.session.loginAt = now().getTime();
+  await query('UPDATE users SET last_login_at = now() WHERE id = $1', [claimed.userId]);
+  await audit(req, {
+    action: 'auth.password_set',
+    actorUserId: claimed.userId,
+    entityType: 'user',
+    entityId: claimed.userId,
+    metadata: { purpose: claimed.purpose },
   });
 
-  if (!userId) {
-    throw new HttpError(400, 'This reset link is invalid or has expired. Please request a new one.', 'INVALID_TOKEN');
-  }
-
-  // Sign the user out everywhere, including whoever is making this request.
-  await deleteUserSessions(userId);
-  await destroySession(req);
-  res.clearCookie('hm.sid');
-
-  await audit(req, { action: 'auth.password_reset_completed', actorUserId: userId, entityType: 'user', entityId: userId });
-  res.json({ ok: true, message: 'Your password has been reset. You can now sign in.' });
+  const sessionUser = await loadSessionUser(claimed.userId);
+  if (sessionUser) await autoPunchIn(req, sessionUser); // as on login; never fails the request
+  res.json({ user: sessionUser });
 });

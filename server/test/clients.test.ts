@@ -35,18 +35,21 @@ async function signIn(email: string) {
   return agent;
 }
 
-const tempPasswordFor = (email: string) =>
-  testOutbox
-    .filter(m => m.to === email)
-    .at(-1)!
-    .text.match(/Temporary password: (\S+)/)![1];
+// The token from the newest set-password link emailed to this address.
+const linkTokenFor = (email: string) =>
+  decodeURIComponent(
+    testOutbox
+      .filter(m => m.to === email)
+      .at(-1)!
+      .text.match(/\/set-password\?token=(\S+)/)![1],
+  );
 
 let companyA: string;
 let companyB: string;
 let agents: Record<'admin' | 'manager' | 'employee' | 'clientA' | 'clientB' | 'anonymous', request.Agent>;
 
 beforeEach(async () => {
-  await query('TRUNCATE audit_logs, auth_tokens, sessions, users, employees, clients CASCADE');
+  await query('TRUNCATE audit_logs, password_tokens, sessions, users, employees, clients CASCADE');
   testOutbox.length = 0;
   companyA = await createCompany('Alpha Fake Ltd');
   companyB = await createCompany('Beta Fake LLP');
@@ -187,8 +190,8 @@ describe('creating portal users', () => {
     }
 
     const created = await agents.admin.post('/api/users').send({ email: 'a2@example.test', role: 'client', clientId: companyA }).expect(201);
-    expect(created.body.user).toMatchObject({ role: 'client', clientId: companyA, client: { companyName: 'Alpha Fake Ltd' }, mustChangePassword: true });
-    expect(JSON.stringify(created.body)).not.toContain(tempPasswordFor('a2@example.test'));
+    expect(created.body.user).toMatchObject({ role: 'client', clientId: companyA, client: { companyName: 'Alpha Fake Ltd' }, mustChangePassword: false, passwordSet: false });
+    expect(JSON.stringify(created.body)).not.toContain(linkTokenFor('a2@example.test'));
 
     // DB constraint backs this up even if a route forgets.
     await expect(query(`INSERT INTO users (email, role) VALUES ('raw@example.test', 'client')`)).rejects.toThrow(/users_client_link_check/);
@@ -216,12 +219,12 @@ describe('creating portal users', () => {
     // Manager may disable/enable and resend for client users...
     await agents.manager.patch(`/api/users/${clientUserId}`).send({ status: 'disabled' }).expect(200);
     await agents.manager.patch(`/api/users/${clientUserId}`).send({ status: 'active' }).expect(200);
-    await agents.manager.post(`/api/users/${clientUserId}/resend-credentials`).send({}).expect(200);
+    await agents.manager.post(`/api/users/${clientUserId}/resend-invite`).send({}).expect(200);
     // ...but not change roles, and not touch staff accounts.
     await agents.manager.patch(`/api/users/${clientUserId}`).send({ role: 'admin' }).expect(403);
     const [emp] = await query<{ id: string }>(`SELECT id FROM users WHERE email = 'employee@example.test'`);
     await agents.manager.patch(`/api/users/${emp.id}`).send({ status: 'disabled' }).expect(403);
-    await agents.manager.post(`/api/users/${emp.id}/resend-credentials`).send({}).expect(403);
+    await agents.manager.post(`/api/users/${emp.id}/send-reset-link`).send({}).expect(403);
     await agents.manager.get('/api/users').expect(403);
 
     // Admins can't turn a client user into staff either.
@@ -229,15 +232,21 @@ describe('creating portal users', () => {
     expect(res.body.code).toBe('ROLE_CHANGE_NOT_ALLOWED');
   });
 
-  it('a new portal user must change the temporary password first', async () => {
+  it('a new portal user sets a password from the invite link and lands in the portal', async () => {
     await agents.admin.post('/api/users').send({ email: 'a4@example.test', role: 'client', clientId: companyA }).expect(201);
-    const temp = tempPasswordFor('a4@example.test');
     const agent = request.agent(app);
-    await agent.post('/api/auth/login').send({ email: 'a4@example.test', password: temp }).expect(200);
-    const blocked = await agent.get('/api/clients/me');
-    expect(blocked.body.code).toBe('PASSWORD_CHANGE_REQUIRED');
-    await agent.post('/api/auth/change-password').send({ currentPassword: temp, newPassword: 'portal-password-1' }).expect(200);
+    const res = await agent.post('/api/auth/set-password').send({ token: linkTokenFor('a4@example.test'), password: 'portal-password-1' }).expect(200);
+    expect(res.body.user).toMatchObject({ role: 'client', clientId: companyA, mustChangePassword: false });
     await agent.get('/api/clients/me').expect(200);
+  });
+
+  it('an invite for a company deactivated before it was used is a dead link', async () => {
+    await agents.admin.post('/api/users').send({ email: 'a5@example.test', role: 'client', clientId: companyA }).expect(201);
+    const token = linkTokenFor('a5@example.test');
+    await agents.admin.post(`/api/clients/${companyA}/deactivate`).send({}).expect(200);
+    const res = await request(app).get('/api/auth/set-password/check').query({ token });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('LINK_INVALID');
   });
 });
 
