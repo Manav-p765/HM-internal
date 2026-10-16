@@ -91,8 +91,10 @@ interface LockedSalary {
   status: 'pending' | 'paid';
 }
 
-// Locks the salary row for the rest of the transaction; missing -> 404.
-async function lockSalary(db: PoolClient, id: string): Promise<LockedSalary> {
+// Locks the salary row for the rest of the transaction; missing -> 404. Every change to a salary goes through
+// here, so this is also where nobody may change their own salary row (adjust, edit the base or notes, pay,
+// un-pay, publish or unpublish the slip): 400 CANNOT_MODIFY_OWN. Another admin can.
+async function lockSalary(db: PoolClient, id: string, req: Request): Promise<LockedSalary> {
   const { rows } = await db.query<LockedSalary>(
     `SELECT s.id, s.employee_id AS "employeeId", e.employee_code AS "employeeCode", to_char(s.salary_month, 'YYYY-MM') AS month,
             s.base_salary::text AS "baseSalary", s.net_payable::text AS "netPayable", s.status
@@ -101,6 +103,13 @@ async function lockSalary(db: PoolClient, id: string): Promise<LockedSalary> {
     [id],
   );
   if (!rows[0]) throw notFound();
+  if (req.user!.employeeId && rows[0].employeeId === req.user!.employeeId) {
+    throw new HttpError(
+      400,
+      'You cannot change your own salary. Ask another admin to make this change.',
+      'CANNOT_MODIFY_OWN',
+    );
+  }
   return rows[0];
 }
 
@@ -307,7 +316,7 @@ salaryRouter.patch('/:id', ['admin'], async (req, res) => {
   const body = parseBody(patchSchema, req.body);
   const fields = (['notes', 'baseSalary'] as const).filter(f => body[f] !== undefined);
   const current = await withTransaction(async db => {
-    const salary = await lockSalary(db, id);
+    const salary = await lockSalary(db, id, req);
     if (salary.status !== 'pending') throw locked();
     if (body.baseSalary !== undefined) {
       try {
@@ -356,7 +365,7 @@ salaryRouter.post('/:id/adjustments', ['admin'], async (req, res) => {
   const id = parseId(req.params.id);
   const body = parseBody(lineSchema, req.body);
   const { salary, lineId } = await withTransaction(async db => {
-    const salary = await lockSalary(db, id);
+    const salary = await lockSalary(db, id, req);
     if (salary.status !== 'pending') throw locked();
     const lines = await linesOf(db, id);
     if (lines.length >= MAX_LINES) throw new HttpError(409, `A salary can have at most ${MAX_LINES} adjustment lines`, 'TOO_MANY_LINES');
@@ -380,7 +389,7 @@ salaryRouter.delete('/:id/adjustments/:lineId', ['admin'], async (req, res) => {
   const id = parseId(req.params.id);
   const lineId = parseId(req.params.lineId, () => new HttpError(404, 'Adjustment not found', 'NOT_FOUND'));
   const { salary, kind } = await withTransaction(async db => {
-    const salary = await lockSalary(db, id);
+    const salary = await lockSalary(db, id, req);
     const { rows } = await db.query<{ kind: string }>('SELECT kind FROM salary_adjustment_lines WHERE id = $1 AND salary_id = $2', [lineId, id]);
     if (!rows[0]) throw new HttpError(404, 'Adjustment not found', 'NOT_FOUND');
     if (salary.status !== 'pending') throw locked();
@@ -419,7 +428,7 @@ salaryRouter.post('/:id/pay', ['admin'], async (req, res) => {
     ]);
   }
   const { salary, transactionId } = await withTransaction(async db => {
-    const salary = await lockSalary(db, id);
+    const salary = await lockSalary(db, id, req);
     if (salary.status === 'paid') throw new HttpError(409, 'This salary has already been paid', 'ALREADY_PAID');
     if (body.paidOn < monthStart(salary.month)) {
       throw new HttpError(400, 'The payment date cannot be before the salary month', 'VALIDATION_ERROR', [
@@ -472,7 +481,7 @@ salaryRouter.post('/:id/unpay', ['admin'], async (req, res) => {
   const id = parseId(req.params.id);
   const { reason } = parseBody(unpaySchema, req.body);
   const { salary, transactionId } = await withTransaction(async db => {
-    const salary = await lockSalary(db, id);
+    const salary = await lockSalary(db, id, req);
     if (salary.status !== 'paid') throw new HttpError(409, 'Only a paid salary can be un-paid', 'INVALID_STATUS');
     const { rows } = await db.query<{ id: string }>(
       `UPDATE transactions SET reversed_at = $2, reversed_by = $3, reverse_reason = $4
@@ -500,7 +509,7 @@ salaryRouter.post('/:id/unpay', ['admin'], async (req, res) => {
 salaryRouter.post('/:id/publish-slip', ['admin'], async (req, res) => {
   const id = parseId(req.params.id);
   const salary = await withTransaction(async db => {
-    const salary = await lockSalary(db, id);
+    const salary = await lockSalary(db, id, req);
     if (salary.status !== 'paid') throw new HttpError(409, 'Only a paid salary can have its slip published', 'NOT_PAID');
     await db.query('UPDATE salaries SET slip_published_at = coalesce(slip_published_at, $2) WHERE id = $1', [id, now()]);
     return salary;
@@ -512,7 +521,7 @@ salaryRouter.post('/:id/publish-slip', ['admin'], async (req, res) => {
 salaryRouter.post('/:id/unpublish-slip', ['admin'], async (req, res) => {
   const id = parseId(req.params.id);
   const salary = await withTransaction(async db => {
-    const salary = await lockSalary(db, id);
+    const salary = await lockSalary(db, id, req);
     await db.query('UPDATE salaries SET slip_published_at = NULL WHERE id = $1', [id]);
     return salary;
   });
