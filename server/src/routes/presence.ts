@@ -1,27 +1,15 @@
-import { rateLimit } from 'express-rate-limit';
-import { config } from '../config.js';
 import { query } from '../db.js';
 import { autoPunchIn } from '../services/attendance.js';
 import { now } from '../services/clock.js';
 import { availabilityFor } from '../services/availability.js';
 import { createRouter, STAFF } from '../middleware/access.js';
 import { HttpError } from '../middleware/errors.js';
+import { heartbeatLimiter } from '../middleware/security.js';
 
 // ---------------------------------------------------------------------------
 // /api/presence: the employee's browser says "still here" every 60 s while the tab is visible.
 // ---------------------------------------------------------------------------
 export const presenceRouter = createRouter();
-
-// The client sends one per minute; this only stops a runaway tab.
-const heartbeatLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  limit: 6,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  keyGenerator: req => req.user?.id ?? 'anonymous',
-  skip: () => config.isTest,
-  handler: (_req, _res, next) => next(new HttpError(429, 'Too many heartbeats', 'RATE_LIMITED')),
-});
 
 // Writes last_seen_at at most once per 30 s per employee (older values are overwritten, newer ones kept).
 // Not audited: it is presence, not a business change, and would flood the audit log.

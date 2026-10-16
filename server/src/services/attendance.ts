@@ -2,6 +2,7 @@ import type { Request } from 'express';
 import { query } from '../db.js';
 import type { SessionUser } from '../middleware/auth.js';
 import { audit } from './audit.js';
+import { describeError } from './errorLog.js';
 import { now, istDate, istMinutesOfDay } from './clock.js';
 
 // No automatic punch-in before this time of day (Asia/Kolkata), so a tab left open overnight or a
@@ -41,8 +42,7 @@ export async function autoPunchIn(req: Request, user: SessionUser): Promise<void
       });
     }
   } catch (err) {
-    // Only the error code and message: no request body, no session, no credentials.
-    const { code, message } = err as { code?: string; message?: string };
-    console.error(`Automatic punch-in failed for user ${user.id}: ${code ?? ''} ${message ?? ''}`.trim());
+    // Only the error class and code: no message (pg messages carry values), body, session or credentials.
+    console.error(`Automatic punch-in failed for user ${user.id}: ${describeError(err)}`);
   }
 }

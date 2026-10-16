@@ -5,8 +5,9 @@ import request from 'supertest';
 import { app } from '../src/app.js';
 import { pool, query } from '../src/db.js';
 import { parseConfig } from '../src/config.js';
-import { createOriginCheck } from '../src/middleware/security.js';
+import { createLimiter, createOriginCheck, RATE_LIMITS } from '../src/middleware/security.js';
 import { errorHandler } from '../src/middleware/errors.js';
+import { describeError } from '../src/services/errorLog.js';
 import { setRequestLogging } from '../src/middleware/requestLog.js';
 import { testMail, testOutbox } from '../src/services/mail.js';
 import { resetAll, signIn, user } from './fixtures.js';
@@ -214,4 +215,109 @@ describe('mail failures and logs', () => {
 
 afterAll(async () => {
   await pool.end();
+});
+
+describe('the 500 handler', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('logs only the error class, its code and the route pattern, never values, SQL or parameters', () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => void lines.push(args.map(String).join(' ')));
+    const err = Object.assign(new Error('duplicate key value violates unique constraint "x" secret-value@example.test'), {
+      code: '23505',
+      detail: 'Key (email)=(secret-value@example.test) already exists.',
+      parameters: ['secret-value@example.test', 'salary-99999.00'],
+      query: 'UPDATE users SET email = $1',
+    });
+    const req = { method: 'PATCH', baseUrl: '/api/users', route: { path: '/:id' }, originalUrl: '/api/users/abc?q=secret-query' };
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+    errorHandler(err, req as never, res as never, () => {});
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ error: 'Internal server error', code: 'INTERNAL' });
+    expect(lines).toEqual(['Unhandled error on PATCH /api/users/:id: Error code=23505']);
+  });
+
+  it('drops a code that is not a short token', () => {
+    expect(describeError(Object.assign(new TypeError('x'), { code: 'value with spaces and secret' }))).toBe('TypeError');
+    expect(describeError('a thrown string with a secret')).toBe('string');
+    expect(describeError(null)).toBe('object');
+  });
+});
+
+describe('rate limiters', () => {
+  function appWith(limiter: express.RequestHandler) {
+    const a = express();
+    a.use(express.json());
+    a.post('/x', (req, _res, next) => {
+      (req as unknown as { user?: { id: string } }).user = req.get('x-user') ? { id: req.get('x-user')! } : undefined;
+      next();
+    }, limiter, (_req, res) => void res.json({ ok: true }));
+    a.use(errorHandler);
+    return a;
+  }
+
+  it('answers 429 RATE_LIMITED once the limit is reached (per IP)', async () => {
+    const a = appWith(createLimiter({ ...RATE_LIMITS.logout, limit: 2 }, { skipInTests: false }));
+    await request(a).post('/x').expect(200);
+    await request(a).post('/x').expect(200);
+    const res = await request(a).post('/x').expect(429);
+    expect(res.body.code).toBe('RATE_LIMITED');
+  });
+
+  it('per-user and per-email limiters count each key separately', async () => {
+    const byUser = appWith(createLimiter({ ...RATE_LIMITS.credentialsMail, limit: 1 }, { skipInTests: false }));
+    await request(byUser).post('/x').set('x-user', 'u1').expect(200);
+    await request(byUser).post('/x').set('x-user', 'u1').expect(429);
+    await request(byUser).post('/x').set('x-user', 'u2').expect(200);
+
+    const byEmail = appWith(createLimiter({ ...RATE_LIMITS.forgotPasswordPerEmail, limit: 1 }, { skipInTests: false }));
+    await request(byEmail).post('/x').send({ email: 'Victim@Example.test' }).expect(200);
+    await request(byEmail).post('/x').send({ email: ' victim@example.test' }).expect(429);
+    await request(byEmail).post('/x').send({ email: 'other@example.test' }).expect(200);
+  });
+});
+
+describe('TRUST_PROXY hop counts', () => {
+  // Socket = the nearest proxy (supertest connects from loopback). X-Forwarded-For as Render would pass it
+  // behind Vercel: "<anything the client sent>, <real client>, <Vercel edge>".
+  async function clientIp(trustProxy: string) {
+    const parsed = parseConfig(prod({ TRUST_PROXY: trustProxy }));
+    if (!parsed.ok) throw new Error(parsed.errors.join('; '));
+    const a = express();
+    a.set('trust proxy', parsed.config.trustProxy);
+    a.get('/ip', (req, res) => void res.json({ ip: req.ip }));
+    const res = await request(a).get('/ip').set('X-Forwarded-For', '6.6.6.6, 203.0.113.7, 198.51.100.2').expect(200);
+    return res.body.ip as string;
+  }
+
+  it('2 (Vercel + Render) yields the real client; 1 yields the nearest proxy, never the spoofed entry', async () => {
+    expect(await clientIp('2')).toBe('203.0.113.7');
+    expect(await clientIp('1')).toBe('198.51.100.2');
+    expect([await clientIp('1'), await clientIp('2')]).not.toContain('6.6.6.6');
+  });
+
+  it('is documented in .env.production.example and CLAUDE.md', async () => {
+    const { readFileSync } = await import('node:fs');
+    const example = readFileSync(new URL('../../.env.production.example', import.meta.url), 'utf8');
+    const claude = readFileSync(new URL('../../CLAUDE.md', import.meta.url), 'utf8');
+    expect(example).toMatch(/2 = Vercel in front of Render/);
+    expect(example).toMatch(/1 = a single proxy/);
+    expect(claude).toMatch(/TRUST_PROXY[^\n]*2 behind Vercel \+ Render[^\n]*1 behind a single proxy/);
+  });
+});
+
+describe('docker-compose.prod.yml', () => {
+  it('gives the db service only POSTGRES_* variables, never the app env file', async () => {
+    const { readFileSync } = await import('node:fs');
+    const compose = readFileSync(new URL('../../docker-compose.prod.yml', import.meta.url), 'utf8');
+    const db = /\n {2}db:\n([\s\S]*?)\n {2}[a-z]+:\n/.exec(compose)?.[1];
+    expect(db).toBeDefined();
+    expect(db).not.toMatch(/env_file/);
+    const env = /\n {4}environment:\n((?: {6}.*\n?)+)/.exec(`\n${db}`)?.[1] ?? '';
+    const names = [...env.matchAll(/^ {6}([A-Z_]+):/gm)].map(m => m[1]);
+    expect(names.sort()).toEqual(['POSTGRES_DB', 'POSTGRES_PASSWORD', 'POSTGRES_USER']);
+    const withoutComments = db!.replace(/^\s*#.*$/gm, '');
+    expect(withoutComments).not.toMatch(/SESSION_SECRET|SMTP_|DATABASE_URL/);
+  });
 });

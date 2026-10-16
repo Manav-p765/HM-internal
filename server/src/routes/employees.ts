@@ -79,12 +79,26 @@ const isoDate = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the format YYYY-MM-DD')
   .refine(v => !Number.isNaN(Date.parse(`${v}T00:00:00Z`)), 'Enter a valid date');
 
-// Relative paths (e.g. /avatars/x.jpg) or http(s) URLs.
+// An https:// URL with a host, or an app-relative path starting with a single / (e.g. /avatars/x.jpg).
+// Refused: other schemes (http:, javascript:, data:...), protocol-relative //host and /\host (browsers read
+// both as another host), backslashes, whitespace and control characters anywhere.
+export function isSafeAvatarUrl(v: string): boolean {
+  if (/[\\\s\u0000-\u001f\u007f]/.test(v)) return false;
+  if (v.startsWith('/')) return !v.startsWith('//');
+  if (!/^https:\/\/[^/]/i.test(v)) return false; // the URL parser would read https:///x as host "x"
+  try {
+    const url = new URL(v);
+    return url.protocol === 'https:' && url.hostname !== '' && url.username === '' && url.password === '';
+  } catch {
+    return false;
+  }
+}
+
 const avatarUrl = z
   .string()
   .trim()
   .max(500)
-  .refine(v => v === '' || v.startsWith('/') || /^https?:\/\//i.test(v), 'Avatar must be a URL or a /path')
+  .refine(v => v === '' || isSafeAvatarUrl(v), 'Avatar must be an https:// URL or a path starting with /')
   .nullish()
   .transform(v => (v ? v : null));
 

@@ -626,3 +626,64 @@ describe('employee slips', () => {
     await pay(erins, {}, agents.manager).expect(403);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Nobody changes their own salary row (400 CANNOT_MODIFY_OWN); another admin can.
+// ---------------------------------------------------------------------------
+describe('own salary row', () => {
+  let selfAdmin: request.Agent;
+  let pending: string;
+  let paid: string;
+
+  beforeEach(async () => {
+    const ada = await employee('Ada Admin');
+    await user('ada@example.test', 'admin', { employeeId: ada });
+    selfAdmin = await signIn('ada@example.test');
+    pending = await salaryRow(ada);
+    paid = await salaryRow(ada, { status: 'paid' });
+  });
+
+  it('refuses every change by the linked admin with 400 CANNOT_MODIFY_OWN', async () => {
+    const lineId = await lineRow(pending);
+    const attempts: [string, () => request.Test][] = [
+      ['edit notes', () => selfAdmin.patch(`/api/salary/${pending}`).send({ notes: 'Me (fake)' })],
+      ['edit base', () => selfAdmin.patch(`/api/salary/${pending}`).send({ baseSalary: '90000', reason: 'Raise (fake)' })],
+      ['add line', () => selfAdmin.post(`/api/salary/${pending}/adjustments`).send({ label: 'Bonus', kind: 'earning', amount: '5000' })],
+      ['remove line', () => selfAdmin.delete(`/api/salary/${pending}/adjustments/${lineId}`)],
+      ['pay', () => pay(pending, {}, selfAdmin)],
+      ['unpay', () => selfAdmin.post(`/api/salary/${paid}/unpay`).send({ reason: 'Mistake (fake)' })],
+      ['publish slip', () => selfAdmin.post(`/api/salary/${paid}/publish-slip`).send({})],
+      ['unpublish slip', () => selfAdmin.post(`/api/salary/${paid}/unpublish-slip`).send({})],
+    ];
+    for (const [name, attempt] of attempts) {
+      const res = await attempt();
+      expect(res.status, name).toBe(400);
+      expect(res.body.code, name).toBe('CANNOT_MODIFY_OWN');
+      expect(res.body.error ?? res.body.message, name).toMatch(/own salary/);
+    }
+    const [row] = await query<{ status: string; notes: string | null; base: string; adjustments: string }>(
+      'SELECT status, notes, base_salary::text AS base, adjustments::text AS adjustments FROM salaries WHERE id = $1',
+      [pending],
+    );
+    expect(row).toEqual({ status: 'pending', notes: null, base: '50000.00', adjustments: '1000.00' });
+    expect(await auditRows('salary.paid')).toHaveLength(0);
+  });
+
+  it('a missing id is still 404 for the linked admin, and they can still read the list', async () => {
+    await selfAdmin.post('/api/salary/00000000-0000-4000-8000-000000000000/pay').send({ paidOn: TODAY, paymentMethod: 'Cash' }).expect(404);
+    await selfAdmin.get(`/api/salary/${pending}`).expect(200);
+  });
+
+  it('another admin can change the same row', async () => {
+    await agents.admin.patch(`/api/salary/${pending}`).send({ notes: 'By someone else (fake)' }).expect(200);
+    await addLine(pending, 'earning', '500').expect(201);
+    await pay(pending).expect(200);
+    await agents.admin.post(`/api/salary/${pending}/publish-slip`).send({}).expect(200);
+    await agents.admin.post(`/api/salary/${paid}/unpay`).send({ reason: 'Mistake (fake)' }).expect(200);
+  });
+
+  it('the linked admin can change other employees’ salaries', async () => {
+    const row = await salaryRow(ids.erin);
+    await selfAdmin.patch(`/api/salary/${row}`).send({ notes: 'Fine (fake)' }).expect(200);
+  });
+});

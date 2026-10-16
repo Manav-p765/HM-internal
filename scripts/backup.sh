@@ -3,7 +3,7 @@
 #
 #   DATABASE_URL=postgres://... scripts/backup.sh
 #   # or through the compose stack (no local pg_dump needed):
-#   PG_DUMP="docker compose -f docker-compose.prod.yml exec -T db pg_dump -U hm -d hm_internal" scripts/backup.sh
+#   PG_DUMP="docker compose -f docker-compose.prod.yml --env-file .env.production exec -T db pg_dump -U hm -d hm_internal" scripts/backup.sh
 #
 # Settings (environment):
 #   BACKUP_DIR   where to write (default ./backups; created with mode 700)

@@ -287,7 +287,7 @@ export const ClientsView: React.FC = () => {
               <input type="checkbox" checked={restoreLogins} onChange={e => setRestoreLogins(e.target.checked)} className="mt-0.5 accent-[#5038F5]" />
               <span>
                 <span className="font-semibold text-[#111827] block">Also restore its portal logins</span>
-                <span className="text-[#7185A5]">Re-enables the disabled logins with their existing passwords.</span>
+                <span className="text-[#7185A5]">Re-enables the logins this company's deactivation disabled, with their existing passwords. Logins disabled individually stay disabled.</span>
               </span>
             </label>
           )}

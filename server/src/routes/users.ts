@@ -8,6 +8,7 @@ import { generateTempPassword, hashPassword } from '../services/passwords.js';
 import { deleteUserSessions } from '../middleware/auth.js';
 import { createRouter } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
+import { credentialsMailLimiter } from '../middleware/security.js';
 
 // User management. Admins manage every account; managers may only create and manage client
 // (portal) users. Passwords never appear in any response: credentials go out by email.
@@ -59,6 +60,23 @@ async function assertClientActive(client: PoolClient, clientId: string): Promise
   }
 }
 
+// A login can only be created for an existing, not inactive employee who has none yet. The row is locked
+// (FOR SHARE) so a concurrent deactivation waits for this transaction.
+async function assertEmployeeLinkable(client: PoolClient, employeeId: string): Promise<void> {
+  const employee = (
+    await client.query<{ status: string; linked: boolean }>(
+      `SELECT e.status, EXISTS (SELECT 1 FROM users u WHERE u.employee_id = e.id) AS linked
+         FROM employees e WHERE e.id = $1 FOR SHARE OF e`,
+      [employeeId],
+    )
+  ).rows[0];
+  if (!employee) throw new HttpError(400, 'Employee not found', 'VALIDATION_ERROR');
+  if (employee.linked) throw new HttpError(409, 'That employee already has a user account', 'EMPLOYEE_LINKED');
+  if (employee.status === 'inactive') {
+    throw new HttpError(409, 'This employee is inactive. Reactivate them first.', 'EMPLOYEE_INACTIVE');
+  }
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/users  (admin)
 // ---------------------------------------------------------------------------
@@ -99,21 +117,12 @@ const createSchema = z
     }
   });
 
-usersRouter.post('/', ['admin', 'manager'], async (req, res) => {
+usersRouter.post('/', ['admin', 'manager'], credentialsMailLimiter, async (req, res) => {
   const { email, role, employeeId, clientId } = parseBody(createSchema, req.body);
   assertMayManage(req, role);
 
   const [emailTaken] = await query('SELECT 1 FROM users WHERE email = $1', [email]);
   if (emailTaken) throw new HttpError(409, 'A user with this email already exists', 'EMAIL_TAKEN');
-
-  if (employeeId) {
-    const [employee] = await query<{ linked: boolean }>(
-      `SELECT EXISTS (SELECT 1 FROM users u WHERE u.employee_id = e.id) AS linked FROM employees e WHERE e.id = $1`,
-      [employeeId],
-    );
-    if (!employee) throw new HttpError(400, 'Employee not found', 'VALIDATION_ERROR');
-    if (employee.linked) throw new HttpError(409, 'That employee already has a user account', 'EMPLOYEE_LINKED');
-  }
 
   const tempPassword = generateTempPassword();
   const passwordHash = await hashPassword(tempPassword);
@@ -121,6 +130,7 @@ usersRouter.post('/', ['admin', 'manager'], async (req, res) => {
   // The email is sent inside the transaction: if it can't be sent, the account is not created.
   const userId = await withTransaction(async client => {
     if (role === 'client') await assertClientActive(client, clientId!);
+    if (employeeId) await assertEmployeeLinkable(client, employeeId);
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO users (email, password_hash, role, employee_id, client_id, must_change_password)
        VALUES ($1, $2, $3, $4, $5, true) RETURNING id`,
@@ -187,7 +197,13 @@ usersRouter.patch('/:id', ['admin', 'manager'], async (req, res) => {
       await assertClientActive(client, target.client_id);
     }
 
-    await client.query('UPDATE users SET role = $1, status = $2 WHERE id = $3', [next.role, next.status, id]);
+    // Any explicit status change is an individual decision, so a company reactivation no longer restores it.
+    await client.query(
+      `UPDATE users SET role = $1, status = $2,
+              disabled_by_client_deactivation = disabled_by_client_deactivation AND $4::boolean
+        WHERE id = $3`,
+      [next.role, next.status, id, body.status === undefined],
+    );
     return { before: target, after: next };
   });
 
@@ -214,7 +230,7 @@ usersRouter.patch('/:id', ['admin', 'manager'], async (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/users/:id/resend-credentials  (admin; manager: client users only)
 // ---------------------------------------------------------------------------
-usersRouter.post('/:id/resend-credentials', ['admin', 'manager'], async (req, res) => {
+usersRouter.post('/:id/resend-credentials', ['admin', 'manager'], credentialsMailLimiter, async (req, res) => {
   const id = parseId(req.params.id);
   if (id === req.user!.id) {
     throw new HttpError(400, 'Use "Change password" for your own account', 'CANNOT_MODIFY_SELF');

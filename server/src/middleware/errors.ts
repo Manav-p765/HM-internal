@@ -1,5 +1,6 @@
 import type { ErrorRequestHandler, RequestHandler } from 'express';
 import { z } from 'zod';
+import { describeError } from '../services/errorLog.js';
 import { MailError } from '../services/mail.js';
 
 export class HttpError extends Error {
@@ -30,7 +31,7 @@ export const apiNotFound: RequestHandler = (req, _res, next) => {
 
 // Every error becomes a JSON body without internals: known HttpErrors keep their message and code;
 // anything else is logged on the server and answered with a generic 500 (no stack, no SQL, no values).
-export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
+export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   if (err instanceof HttpError) {
     res.status(err.status).json({ error: err.message, code: err.code, details: err.details });
     return;
@@ -55,6 +56,8 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     res.status(status).json({ error: status === 404 ? 'Not found' : 'Bad request', code: status === 404 ? 'NOT_FOUND' : 'BAD_REQUEST' });
     return;
   }
-  console.error(err);
+  // The route pattern (e.g. /api/salary/:id/pay), never the URL with its ids or query string.
+  const route = req.route?.path ? `${req.baseUrl}${req.route.path}` : req.baseUrl || '(no route)';
+  console.error(`Unhandled error on ${req.method} ${route}: ${describeError(err)}`);
   res.status(500).json({ error: 'Internal server error', code: 'INTERNAL' });
 };

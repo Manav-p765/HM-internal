@@ -4,9 +4,19 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkSeedHost } from './seedGuard.js';
 
 if (process.env.NODE_ENV === 'production') {
   console.error('Refusing to seed: NODE_ENV=production. The seed is dev-only fake data.');
+  process.exit(1);
+}
+
+// Before any connection: the seed wipes and rewrites data, so it only runs against a local database,
+// regardless of NODE_ENV or flags. config.ts loads .env, so this sees the same DATABASE_URL as db.ts.
+const { config } = await import('../config.js');
+const hostCheck = checkSeedHost(config.DATABASE_URL);
+if (!hostCheck.ok) {
+  console.error(`Refusing to seed: ${hostCheck.reason}.`);
   process.exit(1);
 }
 

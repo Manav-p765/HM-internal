@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { api, app } from '../src/app.js';
 import { mountedRouters, type DeclaredRoute } from '../src/middleware/access.js';
+import type { LimitSpec } from '../src/middleware/security.js';
 import { pool, query } from '../src/db.js';
 import { hashPassword } from '../src/services/passwords.js';
 
@@ -41,14 +42,26 @@ const PUBLIC = new Set([
   'POST /api/auth/reset-password',
 ]);
 
+// Routes that send email (credentials or reset links). Each must be rate limited like a public route.
+const SENDS_EMAIL = new Set([
+  'POST /api/auth/forgot-password',
+  'POST /api/users/',
+  'POST /api/users/:id/resend-credentials',
+]);
+
 interface FoundRoute {
   method: string;
   path: string;
   key: string;
   declared: DeclaredRoute | undefined;
+  /** Names of the rate limiters (createLimiter) in this route's handler chain. */
+  limits: string[];
 }
 
-type Layer = { route?: { path: string; methods: Record<string, boolean> }; handle: { stack?: Layer[] } };
+type Layer = {
+  route?: { path: string; methods: Record<string, boolean>; stack: { handle: { rateLimit?: LimitSpec } }[] };
+  handle: { stack?: Layer[] };
+};
 
 function joinPath(prefix: string, path: string): string {
   return `/api${prefix === '/' ? '' : prefix}${path}`;
@@ -79,7 +92,8 @@ function collectRoutes(): { routes: FoundRoute[]; problems: string[] } {
         const path = joinPath(prefix, inner.route.path);
         const key = `${method.toUpperCase()} ${path}`;
         if (!declared) problems.push(`${key} was added without createRouter (no declared access)`);
-        routes.push({ method, path, key, declared });
+        const limits = inner.route.stack.flatMap(l => (l.handle.rateLimit ? [l.handle.rateLimit.name] : []));
+        routes.push({ method, path, key, declared, limits });
       }
     }
   }
@@ -212,6 +226,19 @@ describe('route matrix (deny by default)', () => {
         expect({ role, route: route.key, status: res.status }).toEqual({ role, route: route.key, status: 403 });
       }
     }
+  });
+
+  it('every public route and every route that sends email is rate limited', () => {
+    const routes = collectRoutes().routes;
+    for (const key of SENDS_EMAIL) expect(routes.map(r => r.key)).toContain(key);
+    const needed = routes.filter(r => r.declared?.access === 'public' || SENDS_EMAIL.has(r.key));
+    expect(needed.map(r => r.key).sort()).toEqual([...new Set([...PUBLIC, ...SENDS_EMAIL])].sort());
+    for (const route of needed) {
+      expect({ route: route.key, limited: route.limits.length > 0 }).toEqual({ route: route.key, limited: true });
+    }
+    // Spot checks of the table itself.
+    expect(routes.find(r => r.key === 'POST /api/auth/forgot-password')!.limits).toEqual(['forgot-password', 'forgot-password-per-email']);
+    expect(routes.find(r => r.key === 'POST /api/users/')!.limits).toEqual(['credentials-mail']);
   });
 
   it('an anonymous caller gets 401 on every non-public route', async () => {

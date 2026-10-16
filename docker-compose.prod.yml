@@ -1,14 +1,15 @@
 # Production-mode stack for a LOCAL REHEARSAL (and a starting point for a single-VPS deploy).
 #
 #   cp .env.production.example .env.production      # fill in; never commit it
-#   docker compose -f docker-compose.prod.yml build
-#   docker compose -f docker-compose.prod.yml up -d db
-#   docker compose -f docker-compose.prod.yml run --rm app migrate          # release step, explicit
-#   docker compose -f docker-compose.prod.yml run --rm -it app create-admin --email you@example.com
-#   docker compose -f docker-compose.prod.yml up -d app
+#   (--env-file is required on every command: it fills in the db service's POSTGRES_* values below.)
+#   docker compose -f docker-compose.prod.yml --env-file .env.production build
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d db
+#   docker compose -f docker-compose.prod.yml --env-file .env.production run --rm app migrate          # release step, explicit
+#   docker compose -f docker-compose.prod.yml --env-file .env.production run --rm -it app create-admin --email you@example.com
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d app
 #
 # Rehearsal only (profile "rehearsal", never in a real deployment):
-#   docker compose -f docker-compose.prod.yml --profile rehearsal up -d
+#   docker compose -f docker-compose.prod.yml --env-file .env.production --profile rehearsal up -d
 #   - mailpit: catches every email (UI http://localhost:8025); point SMTP_HOST at "mailpit", port 1025.
 #   - proxy:   nginx on http://localhost:8088 that forwards to the app with X-Forwarded-Proto: https,
 #              standing in for the TLS-terminating reverse proxy of a real host. Use APP_URL=http://localhost:8088.
@@ -21,7 +22,12 @@ services:
   db:
     image: postgres:18
     restart: unless-stopped
-    env_file: .env.production   # POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+    # Only what Postgres needs, never the app's secrets (SESSION_SECRET, SMTP_PASS, DATABASE_URL...).
+    # Filled in from --env-file .env.production; a missing value stops compose with this message.
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env.production and pass --env-file .env.production}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production and pass --env-file .env.production}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env.production and pass --env-file .env.production}
     volumes:
       - hm_prod_pgdata:/var/lib/postgresql
     healthcheck:

@@ -29,19 +29,65 @@ export const checkOrigin = createOriginCheck({
   requireOrigin: config.isProduction,
 });
 
-function limiter(limit: number, message: string, skipSuccessfulRequests = false) {
-  return rateLimit({
-    windowMs: 15 * 60 * 1000,
-    limit,
-    skipSuccessfulRequests,
-    standardHeaders: 'draft-7',
-    legacyHeaders: false,
-    skip: () => config.isTest,
-    handler: (_req, _res, next) => next(new HttpError(429, message, 'RATE_LIMITED')),
-  });
+// Every rate limit in the app, in one table (route-matrix.test.ts checks that every public route and every
+// route that sends email carries one). Counted per client IP (the real one when TRUST_PROXY is right), per
+// signed-in user, or per target email address (so one mailbox can't be flooded from many IPs). In-memory
+// counters: per process, reset on restart. Skipped in tests unless a test builds its own with createLimiter.
+export interface LimitSpec {
+  name: string;
+  windowMs: number;
+  limit: number;
+  by: 'ip' | 'user' | 'email';
+  message: string;
+  skipSuccessfulRequests?: boolean;
 }
 
-// Per IP, per 15 minutes. Login only counts failed attempts.
-export const loginLimiter = limiter(10, 'Too many sign-in attempts. Please try again in a few minutes.', true);
-export const forgotPasswordLimiter = limiter(5, 'Too many requests. Please try again in a few minutes.');
-export const resetPasswordLimiter = limiter(10, 'Too many requests. Please try again in a few minutes.');
+export type TaggedLimiter = RequestHandler & { rateLimit: LimitSpec };
+
+const MINUTE = 60 * 1000;
+const RETRY = 'Too many requests. Please try again in a few minutes.';
+
+export const RATE_LIMITS = {
+  login: { name: 'login', windowMs: 15 * MINUTE, limit: 10, by: 'ip', skipSuccessfulRequests: true, message: 'Too many sign-in attempts. Please try again in a few minutes.' },
+  logout: { name: 'logout', windowMs: 15 * MINUTE, limit: 60, by: 'ip', message: RETRY },
+  forgotPassword: { name: 'forgot-password', windowMs: 15 * MINUTE, limit: 5, by: 'ip', message: RETRY },
+  forgotPasswordPerEmail: { name: 'forgot-password-per-email', windowMs: 60 * MINUTE, limit: 3, by: 'email', message: RETRY },
+  resetPassword: { name: 'reset-password', windowMs: 15 * MINUTE, limit: 10, by: 'ip', message: RETRY },
+  health: { name: 'health', windowMs: MINUTE, limit: 120, by: 'ip', message: RETRY },
+  credentialsMail: { name: 'credentials-mail', windowMs: 60 * MINUTE, limit: 30, by: 'user', message: 'Too many accounts created or reset. Please try again later.' },
+  portalFeedback: { name: 'portal-feedback', windowMs: 15 * MINUTE, limit: 30, by: 'user', message: 'Too many comments. Please try again later.' },
+  heartbeat: { name: 'heartbeat', windowMs: MINUTE, limit: 6, by: 'user', message: 'Too many heartbeats' },
+} as const satisfies Record<string, LimitSpec>;
+
+export function createLimiter(spec: LimitSpec, opts: { skipInTests?: boolean } = {}): TaggedLimiter {
+  const skipInTests = opts.skipInTests ?? true;
+  const handler = rateLimit({
+    windowMs: spec.windowMs,
+    limit: spec.limit,
+    skipSuccessfulRequests: spec.skipSuccessfulRequests ?? false,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    skip: () => skipInTests && config.isTest,
+    ...(spec.by === 'user' ? { keyGenerator: req => `user:${req.user?.id ?? 'anonymous'}` } : {}),
+    ...(spec.by === 'email'
+      ? {
+          keyGenerator: req => {
+            const email = (req.body as { email?: unknown } | undefined)?.email;
+            return `email:${typeof email === 'string' ? email.trim().toLowerCase() : ''}`;
+          },
+        }
+      : {}),
+    handler: (_req, _res, next) => next(new HttpError(429, spec.message, 'RATE_LIMITED')),
+  });
+  return Object.assign(handler, { rateLimit: spec });
+}
+
+export const loginLimiter = createLimiter(RATE_LIMITS.login);
+export const logoutLimiter = createLimiter(RATE_LIMITS.logout);
+export const forgotPasswordLimiter = createLimiter(RATE_LIMITS.forgotPassword);
+export const forgotPasswordPerEmailLimiter = createLimiter(RATE_LIMITS.forgotPasswordPerEmail);
+export const resetPasswordLimiter = createLimiter(RATE_LIMITS.resetPassword);
+export const healthLimiter = createLimiter(RATE_LIMITS.health);
+export const credentialsMailLimiter = createLimiter(RATE_LIMITS.credentialsMail);
+export const portalFeedbackLimiter = createLimiter(RATE_LIMITS.portalFeedback);
+export const heartbeatLimiter = createLimiter(RATE_LIMITS.heartbeat);

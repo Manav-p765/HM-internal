@@ -215,6 +215,55 @@ describe('forgot / reset password', () => {
     }
     await signIn('user@example.test'); // original password still works
   });
+
+  it('changing the password invalidates every unused reset link', async () => {
+    const id = await createUser('user@example.test', 'employee');
+    await request(app).post('/api/auth/forgot-password').send({ email: 'user@example.test' }).expect(200);
+    const token = resetTokenFrom(lastMailTo('user@example.test').text);
+
+    const agent = await signIn('user@example.test');
+    await agent.post('/api/auth/change-password').send({ currentPassword: PASSWORD, newPassword: 'changed-password-1' }).expect(200);
+    expect(await query(`SELECT 1 FROM auth_tokens WHERE user_id = $1 AND used_at IS NULL`, [id])).toHaveLength(0);
+
+    const res = await request(app).post('/api/auth/reset-password').send({ token, newPassword: 'attacker-password-1' });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_TOKEN');
+    await signIn('user@example.test', 'changed-password-1');
+  });
+});
+
+describe('creating a login for an employee', () => {
+  async function employeeRow(status: string) {
+    const [row] = await query<{ id: string }>(
+      `INSERT INTO employees (employee_code, full_name, work_email, phone, department, designation, joining_date, status)
+       VALUES ('EMP-' || floor(random() * 900000 + 100000)::text, 'Fake Person', 'fake.' || gen_random_uuid() || '@example.test', '+00 555 0101', 'Ops', 'Clerk', '2025-01-01', $1)
+       RETURNING id`,
+      [status],
+    );
+    return row.id;
+  }
+
+  it('is refused for an inactive employee (409 EMPLOYEE_INACTIVE, nothing saved, no email)', async () => {
+    await createUser('admin@example.test', 'admin');
+    const admin = await signIn('admin@example.test');
+    const inactive = await employeeRow('inactive');
+    testOutbox.length = 0;
+
+    const res = await admin.post('/api/users').send({ email: 'gone@example.test', role: 'employee', employeeId: inactive });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('EMPLOYEE_INACTIVE');
+    expect(await query(`SELECT 1 FROM users WHERE email = 'gone@example.test'`)).toHaveLength(0);
+    expect(testOutbox.filter(m => m.to === 'gone@example.test')).toHaveLength(0);
+  });
+
+  it('works for an active or on-leave employee', async () => {
+    await createUser('admin@example.test', 'admin');
+    const admin = await signIn('admin@example.test');
+    for (const [status, email] of [['active', 'here@example.test'], ['on_leave', 'away@example.test']]) {
+      const id = await employeeRow(status);
+      await admin.post('/api/users').send({ email, role: 'employee', employeeId: id }).expect(201);
+    }
+  });
 });
 
 describe('/api/users (admin only)', () => {

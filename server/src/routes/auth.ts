@@ -16,7 +16,13 @@ import {
 import { deleteUserSessions, destroySession, loadSessionUser } from '../middleware/auth.js';
 import { createRouter } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
-import { forgotPasswordLimiter, loginLimiter, resetPasswordLimiter } from '../middleware/security.js';
+import {
+  forgotPasswordLimiter,
+  forgotPasswordPerEmailLimiter,
+  loginLimiter,
+  logoutLimiter,
+  resetPasswordLimiter,
+} from '../middleware/security.js';
 
 export const authRouter = createRouter();
 
@@ -79,7 +85,7 @@ authRouter.post('/login', 'public', loginLimiter, async (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/auth/logout
 // ---------------------------------------------------------------------------
-authRouter.post('/logout', 'public', async (req, res) => {
+authRouter.post('/logout', 'public', logoutLimiter, async (req, res) => {
   const userId = req.session.userId;
   if (userId) {
     await audit(req, { action: 'auth.logout', actorUserId: userId, entityType: 'user', entityId: userId });
@@ -117,10 +123,12 @@ authRouter.post('/change-password', 'session', async (req, res) => {
     throw new HttpError(400, 'New password must be different from the current password', 'VALIDATION_ERROR');
   }
 
-  await query('UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2', [
-    await hashPassword(newPassword),
-    userId,
-  ]);
+  const passwordHash = await hashPassword(newPassword);
+  await withTransaction(async client => {
+    await client.query('UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2', [passwordHash, userId]);
+    // A reset link requested before the change must not be able to undo it.
+    await client.query(`DELETE FROM auth_tokens WHERE user_id = $1 AND purpose = 'reset' AND used_at IS NULL`, [userId]);
+  });
 
   // Sign out every other device and give this one a fresh session id.
   await deleteUserSessions(userId);
@@ -139,7 +147,7 @@ authRouter.post('/change-password', 'session', async (req, res) => {
 // ---------------------------------------------------------------------------
 const forgotPasswordSchema = z.object({ email: z.string().trim().min(1).max(254) });
 
-authRouter.post('/forgot-password', 'public', forgotPasswordLimiter, async (req, res) => {
+authRouter.post('/forgot-password', 'public', forgotPasswordLimiter, forgotPasswordPerEmailLimiter, async (req, res) => {
   const { email } = parseBody(forgotPasswordSchema, req.body);
 
   const [user] = await query<{ id: string; email: string }>(
@@ -202,6 +210,8 @@ authRouter.post('/reset-password', 'public', resetPasswordLimiter, async (req, r
     const id = claimed.rows[0]?.user_id;
     if (!id) return null;
     await client.query('UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2', [passwordHash, id]);
+    // Any other outstanding reset link for this user dies with the password it was meant to replace.
+    await client.query(`DELETE FROM auth_tokens WHERE user_id = $1 AND purpose = 'reset' AND used_at IS NULL`, [id]);
     return id;
   });
 
