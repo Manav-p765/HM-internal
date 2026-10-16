@@ -1,7 +1,7 @@
 import { config } from './config.js';
 import { pool, waitForDatabase } from './db.js';
 import { pendingMigrations } from './migrations.js';
-import { assertMailConfigured } from './services/mail.js';
+import { assertMailConfigured, mailTransportName } from './services/mail.js';
 import { app } from './app.js';
 
 // Fail loudly at startup rather than on the first invite or password reset.
@@ -20,8 +20,11 @@ if (pending.length > 0) {
 
 const server = app.listen(config.PORT, () => {
   console.log(`Server listening on port ${config.PORT} (${config.NODE_ENV})`);
-  if (!config.SMTP_HOST) {
-    console.log('SMTP_HOST is not set: emails will be printed to this console instead of being sent.');
+  const mail = mailTransportName();
+  if (mail === 'console') {
+    console.log('Neither RESEND_API_KEY nor SMTP_HOST is set: emails will be printed to this console instead of being sent.');
+  } else {
+    console.log(`Mail goes out through ${mail === 'resend' ? 'Resend (HTTPS API)' : 'SMTP'}.`);
   }
 });
 

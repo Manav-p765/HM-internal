@@ -43,7 +43,8 @@ npm run create-admin -w server -- --email you@example.com   # create an admin (h
   ```
 - `.env` lives at the repo root (loaded by `server/src/config.ts`, validated with zod; the server exits on invalid config). It holds the real `SESSION_SECRET` and `DATABASE_URL` — don't edit it.
 - Seed logins (password `devpass123`): `admin@example.test`, `manager@example.test`, `employee1@example.test`, `employee2@example.test`. EMP-004 is an employee without a login, for testing "Add user".
-- With `SMTP_HOST` empty (dev), every email — temporary passwords, reset links — is **printed to the server console** instead of sent. In tests, mail goes to `testOutbox` in `server/src/services/mail.ts`.
+- Mail transport (`server/src/services/mail.ts`): Resend's HTTPS API when `RESEND_API_KEY` is set (production on Render, whose free tier blocks SMTP), else SMTP when `SMTP_HOST` is set. Every send has a 10 s timeout; a failed credentials email is 502 `MAIL_FAILED` with nothing saved. Logs carry only purpose, transport and code. Tests use `setMailTransportForTests()` with a mocked fetch (`server/test/mail.test.ts`).
+- With neither `RESEND_API_KEY` nor `SMTP_HOST` set (dev), every email — temporary passwords, reset links — is **printed to the server console** instead of sent. In tests, mail goes to `testOutbox` in `server/src/services/mail.ts`.
 
 ## Architecture
 

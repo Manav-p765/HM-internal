@@ -28,11 +28,15 @@ const schema = z.object({
   DB_SCHEMA: z.preprocess(blankToUndefined, z.string().regex(/^[a-z_][a-z0-9_]*$/, 'must be a plain schema name').optional()),
   SESSION_SECRET: z.string().min(1, 'is required'),
   APP_URL: z.preprocess(blankToUndefined, z.url('must be a URL').optional()),
+  // Resend's HTTPS API (https://api.resend.com). When set, mail goes through it instead of SMTP; needed on
+  // hosts that block outbound SMTP (Render's free tier blocks ports 25, 465 and 587). Never logged.
+  RESEND_API_KEY: optionalString,
   SMTP_HOST: optionalString,
   SMTP_PORT: intVar(587, 1),
   SMTP_USER: optionalString,
   SMTP_PASS: optionalString,
-  // The sender address (e.g. no-reply@hybridmonks.com). EMAIL_FROM_NAME is the display name.
+  // The sender address (e.g. no-reply@hybridmonks.com), for Resend and SMTP alike. EMAIL_FROM_NAME is the
+  // display name.
   SMTP_FROM: optionalString,
   EMAIL_FROM_NAME: z.preprocess(blankToUndefined, z.string().max(100).default('Monks Internal Management')),
   // Express "trust proxy": a hop count, true/false, or a comma-separated list of addresses/subnets.
@@ -91,8 +95,16 @@ export function parseConfig(raw: Record<string, string | undefined>): { ok: true
         errors.push('APP_URL: must be just the origin, with no path and no trailing slash');
       }
     }
-    for (const key of ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM'] as const) {
-      if (!env[key]) errors.push(`${key}: is required in production`);
+    // Mail: Resend (RESEND_API_KEY) or SMTP (SMTP_HOST/USER/PASS), and a sender address either way.
+    if (!env.SMTP_FROM) errors.push('SMTP_FROM: is required in production (the sender address, also used by Resend)');
+    if (env.RESEND_API_KEY) {
+      if (!/^re_[A-Za-z0-9_-]{8,}$/.test(env.RESEND_API_KEY) || PLACEHOLDER.test(env.RESEND_API_KEY)) {
+        errors.push('RESEND_API_KEY: does not look like a Resend API key (they start with re_)');
+      }
+    } else {
+      for (const key of ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS'] as const) {
+        if (!env[key]) errors.push(`${key}: is required in production unless RESEND_API_KEY is set`);
+      }
     }
     if (env.SMTP_FROM && !z.email().safeParse(env.SMTP_FROM).success) {
       errors.push('SMTP_FROM: must be a plain email address (the display name goes in EMAIL_FROM_NAME)');
