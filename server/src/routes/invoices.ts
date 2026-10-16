@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
+import { amountInWords } from '../services/amountInWords.js';
 import { audit } from '../services/audit.js';
 import { istDate, now } from '../services/clock.js';
 import {
@@ -112,7 +113,8 @@ async function loadInvoice(id: string, db: Pick<PoolClient, 'query'> | null = nu
       ORDER BY t.txn_date, t.created_at`,
     [id],
   );
-  return { ...invoice, items, payments };
+  // Printed under the totals; derived from the stored total on every read, never stored.
+  return { ...invoice, totalInWords: amountInWords(invoice.total), items, payments };
 }
 
 // ---------------------------------------------------------------------------
