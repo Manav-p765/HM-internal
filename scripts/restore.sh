@@ -3,8 +3,8 @@
 #
 #   scripts/restore.sh backups/hm-internal-20261016T030000Z.dump.gz "postgres://hm:...@host/hm_restore_check"
 #   # or through the compose stack (target is a database name inside the db container):
-#   PG_RESTORE="docker compose -f docker-compose.prod.yml exec -T db pg_restore -U hm" \
-#   PSQL="docker compose -f docker-compose.prod.yml exec -T db psql -U hm" \
+#   PG_RESTORE="docker compose -f docker-compose.prod.yml --env-file .env.production exec -T db pg_restore -U hm" \
+#   PSQL="docker compose -f docker-compose.prod.yml --env-file .env.production exec -T db psql -U hm" \
 #     scripts/restore.sh backups/hm-internal-....dump.gz hm_restore_check
 #
 # The target database must already exist (createdb). Restoring is destructive for the target: objects that

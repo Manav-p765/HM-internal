@@ -306,3 +306,18 @@ describe('TRUST_PROXY hop counts', () => {
     expect(claude).toMatch(/TRUST_PROXY[^\n]*2 behind Vercel \+ Render[^\n]*1 behind a single proxy/);
   });
 });
+
+describe('docker-compose.prod.yml', () => {
+  it('gives the db service only POSTGRES_* variables, never the app env file', async () => {
+    const { readFileSync } = await import('node:fs');
+    const compose = readFileSync(new URL('../../docker-compose.prod.yml', import.meta.url), 'utf8');
+    const db = /\n {2}db:\n([\s\S]*?)\n {2}[a-z]+:\n/.exec(compose)?.[1];
+    expect(db).toBeDefined();
+    expect(db).not.toMatch(/env_file/);
+    const env = /\n {4}environment:\n((?: {6}.*\n?)+)/.exec(`\n${db}`)?.[1] ?? '';
+    const names = [...env.matchAll(/^ {6}([A-Z_]+):/gm)].map(m => m[1]);
+    expect(names.sort()).toEqual(['POSTGRES_DB', 'POSTGRES_PASSWORD', 'POSTGRES_USER']);
+    const withoutComments = db!.replace(/^\s*#.*$/gm, '');
+    expect(withoutComments).not.toMatch(/SESSION_SECRET|SMTP_|DATABASE_URL/);
+  });
+});
