@@ -8,7 +8,7 @@ import { query } from './db.js';
 import { pendingMigrations } from './migrations.js';
 import { sessionMiddleware } from './session.js';
 import { apiNotFound, errorHandler } from './middleware/errors.js';
-import { checkOrigin } from './middleware/security.js';
+import { checkOrigin, healthLimiter } from './middleware/security.js';
 import { requestLog } from './middleware/requestLog.js';
 import { authRouter } from './routes/auth.js';
 import { usersRouter } from './routes/users.js';
@@ -82,7 +82,7 @@ api.use(sessionMiddleware);
 const systemRouter = createRouter();
 
 // Liveness: the process is up and can reach the database. Nothing else (no versions, hosts or errors).
-systemRouter.get('/health', 'public', async (_req, res) => {
+systemRouter.get('/health', 'public', healthLimiter, async (_req, res) => {
   res.set('Cache-Control', 'no-store');
   try {
     await query('SELECT 1');
@@ -93,7 +93,7 @@ systemRouter.get('/health', 'public', async (_req, res) => {
 });
 
 // Readiness: the database is reachable and every migration file has been applied (the release step ran).
-systemRouter.get('/health/ready', 'public', async (_req, res) => {
+systemRouter.get('/health/ready', 'public', healthLimiter, async (_req, res) => {
   res.set('Cache-Control', 'no-store');
   try {
     const pending = await pendingMigrations();

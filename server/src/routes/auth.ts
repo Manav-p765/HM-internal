@@ -16,7 +16,13 @@ import {
 import { deleteUserSessions, destroySession, loadSessionUser } from '../middleware/auth.js';
 import { createRouter } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
-import { forgotPasswordLimiter, loginLimiter, resetPasswordLimiter } from '../middleware/security.js';
+import {
+  forgotPasswordLimiter,
+  forgotPasswordPerEmailLimiter,
+  loginLimiter,
+  logoutLimiter,
+  resetPasswordLimiter,
+} from '../middleware/security.js';
 
 export const authRouter = createRouter();
 
@@ -79,7 +85,7 @@ authRouter.post('/login', 'public', loginLimiter, async (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/auth/logout
 // ---------------------------------------------------------------------------
-authRouter.post('/logout', 'public', async (req, res) => {
+authRouter.post('/logout', 'public', logoutLimiter, async (req, res) => {
   const userId = req.session.userId;
   if (userId) {
     await audit(req, { action: 'auth.logout', actorUserId: userId, entityType: 'user', entityId: userId });
@@ -141,7 +147,7 @@ authRouter.post('/change-password', 'session', async (req, res) => {
 // ---------------------------------------------------------------------------
 const forgotPasswordSchema = z.object({ email: z.string().trim().min(1).max(254) });
 
-authRouter.post('/forgot-password', 'public', forgotPasswordLimiter, async (req, res) => {
+authRouter.post('/forgot-password', 'public', forgotPasswordLimiter, forgotPasswordPerEmailLimiter, async (req, res) => {
   const { email } = parseBody(forgotPasswordSchema, req.body);
 
   const [user] = await query<{ id: string; email: string }>(

@@ -1,11 +1,10 @@
 import { z } from 'zod';
-import { rateLimit } from 'express-rate-limit';
-import { config } from '../config.js';
 import { query } from '../db.js';
 import { audit } from '../services/audit.js';
 import { availabilityFor } from '../services/availability.js';
 import { clientScope, createRouter } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
+import { portalFeedbackLimiter } from '../middleware/security.js';
 import { OVERDUE_SQL, COMMENT_AUTHOR_SQL } from './tasks.js';
 
 // The client portal API. Every route is ['client'] only and scoped to clientScope(req) (= req.user.clientId).
@@ -136,21 +135,12 @@ portalRouter.get('/tasks/:id/comments', ['client'], async (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/portal/tasks/:id/comments  { body }  (type forced to client_feedback; rate limited)
 // ---------------------------------------------------------------------------
-const feedbackLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 30,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  keyGenerator: req => req.user?.id ?? 'anonymous',
-  skip: () => config.isTest,
-  handler: (_req, _res, next) => next(new HttpError(429, 'Too many comments. Please try again later.', 'RATE_LIMITED')),
-});
 
 const feedbackSchema = z.object({
   body: z.string().trim().min(1, 'Write a comment').max(2000, 'Comments are limited to 2000 characters'),
 });
 
-portalRouter.post('/tasks/:id/comments', ['client'], feedbackLimiter, async (req, res) => {
+portalRouter.post('/tasks/:id/comments', ['client'], portalFeedbackLimiter, async (req, res) => {
   const taskId = await visibleTaskId(req.params.id, clientScope(req));
   const { body } = parseBody(feedbackSchema, req.body); // any "type" in the body is ignored
   const [comment] = await query<{ id: string }>(

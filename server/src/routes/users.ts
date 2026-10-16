@@ -8,6 +8,7 @@ import { generateTempPassword, hashPassword } from '../services/passwords.js';
 import { deleteUserSessions } from '../middleware/auth.js';
 import { createRouter } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
+import { credentialsMailLimiter } from '../middleware/security.js';
 
 // User management. Admins manage every account; managers may only create and manage client
 // (portal) users. Passwords never appear in any response: credentials go out by email.
@@ -116,7 +117,7 @@ const createSchema = z
     }
   });
 
-usersRouter.post('/', ['admin', 'manager'], async (req, res) => {
+usersRouter.post('/', ['admin', 'manager'], credentialsMailLimiter, async (req, res) => {
   const { email, role, employeeId, clientId } = parseBody(createSchema, req.body);
   assertMayManage(req, role);
 
@@ -229,7 +230,7 @@ usersRouter.patch('/:id', ['admin', 'manager'], async (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/users/:id/resend-credentials  (admin; manager: client users only)
 // ---------------------------------------------------------------------------
-usersRouter.post('/:id/resend-credentials', ['admin', 'manager'], async (req, res) => {
+usersRouter.post('/:id/resend-credentials', ['admin', 'manager'], credentialsMailLimiter, async (req, res) => {
   const id = parseId(req.params.id);
   if (id === req.user!.id) {
     throw new HttpError(400, 'Use "Change password" for your own account', 'CANNOT_MODIFY_SELF');

@@ -5,7 +5,7 @@ import request from 'supertest';
 import { app } from '../src/app.js';
 import { pool, query } from '../src/db.js';
 import { parseConfig } from '../src/config.js';
-import { createOriginCheck } from '../src/middleware/security.js';
+import { createLimiter, createOriginCheck, RATE_LIMITS } from '../src/middleware/security.js';
 import { errorHandler } from '../src/middleware/errors.js';
 import { describeError } from '../src/services/errorLog.js';
 import { setRequestLogging } from '../src/middleware/requestLog.js';
@@ -242,5 +242,38 @@ describe('the 500 handler', () => {
     expect(describeError(Object.assign(new TypeError('x'), { code: 'value with spaces and secret' }))).toBe('TypeError');
     expect(describeError('a thrown string with a secret')).toBe('string');
     expect(describeError(null)).toBe('object');
+  });
+});
+
+describe('rate limiters', () => {
+  function appWith(limiter: express.RequestHandler) {
+    const a = express();
+    a.use(express.json());
+    a.post('/x', (req, _res, next) => {
+      (req as unknown as { user?: { id: string } }).user = req.get('x-user') ? { id: req.get('x-user')! } : undefined;
+      next();
+    }, limiter, (_req, res) => void res.json({ ok: true }));
+    a.use(errorHandler);
+    return a;
+  }
+
+  it('answers 429 RATE_LIMITED once the limit is reached (per IP)', async () => {
+    const a = appWith(createLimiter({ ...RATE_LIMITS.logout, limit: 2 }, { skipInTests: false }));
+    await request(a).post('/x').expect(200);
+    await request(a).post('/x').expect(200);
+    const res = await request(a).post('/x').expect(429);
+    expect(res.body.code).toBe('RATE_LIMITED');
+  });
+
+  it('per-user and per-email limiters count each key separately', async () => {
+    const byUser = appWith(createLimiter({ ...RATE_LIMITS.credentialsMail, limit: 1 }, { skipInTests: false }));
+    await request(byUser).post('/x').set('x-user', 'u1').expect(200);
+    await request(byUser).post('/x').set('x-user', 'u1').expect(429);
+    await request(byUser).post('/x').set('x-user', 'u2').expect(200);
+
+    const byEmail = appWith(createLimiter({ ...RATE_LIMITS.forgotPasswordPerEmail, limit: 1 }, { skipInTests: false }));
+    await request(byEmail).post('/x').send({ email: 'Victim@Example.test' }).expect(200);
+    await request(byEmail).post('/x').send({ email: ' victim@example.test' }).expect(429);
+    await request(byEmail).post('/x').send({ email: 'other@example.test' }).expect(200);
   });
 });
