@@ -59,6 +59,23 @@ async function assertClientActive(client: PoolClient, clientId: string): Promise
   }
 }
 
+// A login can only be created for an existing, not inactive employee who has none yet. The row is locked
+// (FOR SHARE) so a concurrent deactivation waits for this transaction.
+async function assertEmployeeLinkable(client: PoolClient, employeeId: string): Promise<void> {
+  const employee = (
+    await client.query<{ status: string; linked: boolean }>(
+      `SELECT e.status, EXISTS (SELECT 1 FROM users u WHERE u.employee_id = e.id) AS linked
+         FROM employees e WHERE e.id = $1 FOR SHARE OF e`,
+      [employeeId],
+    )
+  ).rows[0];
+  if (!employee) throw new HttpError(400, 'Employee not found', 'VALIDATION_ERROR');
+  if (employee.linked) throw new HttpError(409, 'That employee already has a user account', 'EMPLOYEE_LINKED');
+  if (employee.status === 'inactive') {
+    throw new HttpError(409, 'This employee is inactive. Reactivate them first.', 'EMPLOYEE_INACTIVE');
+  }
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/users  (admin)
 // ---------------------------------------------------------------------------
@@ -106,21 +123,13 @@ usersRouter.post('/', ['admin', 'manager'], async (req, res) => {
   const [emailTaken] = await query('SELECT 1 FROM users WHERE email = $1', [email]);
   if (emailTaken) throw new HttpError(409, 'A user with this email already exists', 'EMAIL_TAKEN');
 
-  if (employeeId) {
-    const [employee] = await query<{ linked: boolean }>(
-      `SELECT EXISTS (SELECT 1 FROM users u WHERE u.employee_id = e.id) AS linked FROM employees e WHERE e.id = $1`,
-      [employeeId],
-    );
-    if (!employee) throw new HttpError(400, 'Employee not found', 'VALIDATION_ERROR');
-    if (employee.linked) throw new HttpError(409, 'That employee already has a user account', 'EMPLOYEE_LINKED');
-  }
-
   const tempPassword = generateTempPassword();
   const passwordHash = await hashPassword(tempPassword);
 
   // The email is sent inside the transaction: if it can't be sent, the account is not created.
   const userId = await withTransaction(async client => {
     if (role === 'client') await assertClientActive(client, clientId!);
+    if (employeeId) await assertEmployeeLinkable(client, employeeId);
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO users (email, password_hash, role, employee_id, client_id, must_change_password)
        VALUES ($1, $2, $3, $4, $5, true) RETURNING id`,
