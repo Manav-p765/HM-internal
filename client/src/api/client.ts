@@ -31,20 +31,29 @@ interface RequestOptions {
   body?: unknown;
 }
 
+// Safety net so a form never spins forever: the server gives up well before this (mail after 10 s, SQL
+// statements after 15 s), so only a hung connection or proxy ever reaches it.
+const REQUEST_TIMEOUT_MS = 30_000;
+
 export async function api<T>(path: string, { method = 'GET', body }: RequestOptions = {}): Promise<T> {
+  const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   let response: Response;
+  let data: { error?: string; code?: string; details?: { path: string; message: string }[] } | null;
   try {
     response = await fetch(`/api${path}`, {
       method,
       credentials: 'include',
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
+    data = await response.json().catch(() => null);
   } catch {
+    if (signal.aborted) {
+      throw new ApiError(0, 'The server took too long to answer. Check whether the change was saved before trying again.', 'TIMEOUT');
+    }
     throw new ApiError(0, 'Could not reach the server. Check your connection and try again.', 'NETWORK_ERROR');
   }
-
-  const data = await response.json().catch(() => null);
 
   if (!response.ok) {
     const error = new ApiError(

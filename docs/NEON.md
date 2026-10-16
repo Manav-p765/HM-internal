@@ -123,6 +123,17 @@ The root `.env` is loaded as well, but it never overrides a variable that is alr
 - `DB_CONNECTION_TIMEOUT_MS` (suggest 15000, to cover a wake-up from scale to zero plus TLS)
 - `DB_IDLE_TIMEOUT_MS` (suggest 30000; below 5 min, so idle clients close before the compute suspends)
 - `DB_STATEMENT_TIMEOUT_MS` (default 15000)
+- `RESEND_API_KEY`, `SMTP_FROM`, `EMAIL_FROM_NAME`: mail, see below
+
+## Mail on Render (Resend, not SMTP)
+
+Render's free tier blocks outbound SMTP (ports 25, 465 and 587). An SMTP send there never connects, so creating a user would wait for the timeout and then fail. Production on Render therefore sends through **Resend's HTTPS API**:
+
+- Set `RESEND_API_KEY` (a Resend key, starting with `re_`, with sending access only) in Render's environment. When it is set the app uses Resend and ignores `SMTP_*`. Without it, production refuses to start unless `SMTP_HOST`, `SMTP_USER` and `SMTP_PASS` are set.
+- `SMTP_FROM` is still required: it is the sender address for Resend too (for example `no-reply@hybridmonks.com`). Its domain must be verified in Resend (the DNS records Resend lists for SPF and DKIM), or Resend refuses the message (logged as `code=RESEND_403/...`).
+- Every send gives up after 10 s. A failed credentials email answers 502 `MAIL_FAILED` and saves nothing; a failed reset email is only logged. Logs show `purpose`, `transport` and the code, never the key, the recipient or the message.
+- Check it after setting the key, from Render's Shell: `hm-entrypoint mail-test --to <your address>`. It prints `OK ... (message id ...)` or `FAILED ... (code ...)`.
+- SMTP stays as the fallback for local runs and hosts that allow it (leave `RESEND_API_KEY` empty).
 
 ## Backups and restore test
 
