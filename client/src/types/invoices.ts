@@ -82,6 +82,7 @@ export interface InvoiceSummaryRow {
 export const invoiceLabel = (invoice: Pick<InvoiceSummaryRow, 'invoiceNumber'>): string => invoice.invoiceNumber ?? 'Draft';
 
 export interface Invoice extends InvoiceSummaryRow {
+  totalInWords: string; // "One Lakh Eighteen Thousand Indian Rupees Only", from the server
   items: InvoiceItem[];
   payments: InvoicePayment[];
 }
@@ -106,6 +107,7 @@ export interface CompanySettings {
   bankDetails: string | null;
   terms: string | null;
   invoiceNextNumber: number;
+  logoDataUrl: string | null; // PNG/JPEG/WebP data URL checked by the server; printed on invoices
   nextInvoiceNumber: string;
   updatedAt: string;
 }

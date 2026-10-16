@@ -8,8 +8,80 @@ import { Card } from '../common/Card';
 import { Button } from '../common/Button';
 import { FormField } from '../common/FormField';
 import { LoadError } from '../common/LoadError';
-import { Building2 } from 'lucide-react';
+import { Building2, ImageUp, Trash2 } from 'lucide-react';
 import { trimRate } from '../../utils/money';
+
+// The server accepts PNG, JPEG or WebP up to 150 KB (and checks the file itself); these checks only give a
+// quicker message.
+const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+const LOGO_MAX_BYTES = 150 * 1024;
+
+const readAsDataUrl = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error('Could not read the file'));
+    reader.readAsDataURL(file);
+  });
+
+// The logo is saved on its own (upload or remove), separately from the text fields below, and keeps its own
+// state so saving it never resets unsaved edits in the form.
+const LogoField: React.FC<{ initial: string | null }> = ({ initial }) => {
+  const { showToast } = useApp();
+  const [logo, setLogo] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const save = async (logoDataUrl: string | null) => {
+    setBusy(true);
+    setError('');
+    try {
+      setLogo((await settingsApi.updateCompany({ logoDataUrl })).logoDataUrl);
+      showToast('success', logoDataUrl ? 'Logo saved' : 'Logo removed');
+    } catch (err) {
+      setError(err instanceof ApiError && err.details?.[0] ? err.details[0].message : errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!LOGO_TYPES.includes(file.type)) return setError('Logo must be a PNG, JPEG or WebP image');
+    if (file.size > LOGO_MAX_BYTES) return setError('Logo must be at most 150 KB');
+    try {
+      await save(await readAsDataUrl(file));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+
+  return (
+    <FormField label="Logo (printed on invoices)" error={error} hint="PNG, JPEG or WebP, up to 150 KB.">
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="w-40 h-16 rounded-lg border border-dashed border-[#DFE6F1] bg-[#F7F9FC] flex items-center justify-center overflow-hidden">
+          {logo ? (
+            <img src={logo} alt="Company logo" className="max-h-full max-w-full object-contain" />
+          ) : (
+            <span className="text-[11px] text-[#7185A5]">No logo</span>
+          )}
+        </div>
+        <label className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-[#DFE6F1] bg-white cursor-pointer hover:border-[#5038F5] ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
+          <ImageUp className="w-3.5 h-3.5" />
+          {logo ? 'Replace' : 'Upload'}
+          <input type="file" accept={LOGO_TYPES.join(',')} className="sr-only" onChange={onFile} disabled={busy} aria-label="Upload logo" />
+        </label>
+        {logo && (
+          <Button type="button" variant="ghost" size="sm" icon={<Trash2 className="w-3.5 h-3.5" />} onClick={() => save(null)} disabled={busy}>
+            Remove
+          </Button>
+        )}
+      </div>
+    </FormField>
+  );
+};
 
 type Form = {
   companyName: string;
@@ -88,6 +160,9 @@ export const CompanySettingsPanel: React.FC = () => {
         <Building2 className="w-4 h-4 text-[#5038F5]" />
         Company details for invoices
       </h3>
+      <div className="mb-4">
+        <LogoField initial={company.data.logoDataUrl} />
+      </div>
       <form onSubmit={handleSave} className="space-y-4" noValidate>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <FormField label="Company name" required error={errors.companyName}>

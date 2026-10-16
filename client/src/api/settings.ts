@@ -13,6 +13,7 @@ export type CompanySettingsInput = Partial<
     | 'invoicePrefix'
     | 'bankDetails'
     | 'terms'
+    | 'logoDataUrl'
   >
 >;
 
