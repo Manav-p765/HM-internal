@@ -38,11 +38,12 @@ The seed also has one employee without a login (EMP-004) for trying "Add user".
 
 ## Accounts and sign-in
 
-- Invite-only: there is no signup. An admin adds a user in **Settings > Users**; the server generates a
-  temporary password and emails it. The user must choose a new password at first sign-in.
-- In development, with `SMTP_HOST` empty, emails (including the temporary password and reset links)
+- Invite-only: there is no signup. An admin adds a user in **Settings > Users**; the server emails a
+  one-time link to set their own password (expires after 72 hours). No password is ever generated or sent.
+- In development, with neither `RESEND_API_KEY` nor `SMTP_HOST` set, emails (invite and reset links)
   are printed to the server console instead of being sent.
-- Forgot password sends a one-time link that expires after 1 hour.
+- Forgot password (or an admin's "Send reset link") sends a one-time link that expires after 1 hour.
+- Passwords are used exactly as typed: spaces are allowed anywhere and are never trimmed.
 - Roles (`admin`, `manager`, `employee`) are enforced by the server. `/api/users` is admin only.
 - The first admin in production is created from the terminal (the password is typed at a hidden prompt):
 
