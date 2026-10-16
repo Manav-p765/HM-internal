@@ -3,20 +3,25 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { audit } from '../services/audit.js';
-import { sendCredentialsEmail } from '../services/mail.js';
-import { generateTempPassword, hashPassword } from '../services/passwords.js';
+import { MailError, sendInviteEmail, sendPasswordResetEmail } from '../services/mail.js';
+import { dropOtherTokens, issueToken } from '../services/passwordTokens.js';
 import { deleteUserSessions } from '../middleware/auth.js';
 import { createRouter } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
-import { credentialsMailLimiter } from '../middleware/security.js';
+import { accountMailLimiter } from '../middleware/security.js';
 
 // User management. Admins manage every account; managers may only create and manage client
-// (portal) users. Passwords never appear in any response: credentials go out by email.
+// (portal) users. Nobody ever sees or sends a password: a new user gets an emailed one-time link to set their
+// own (invite), and an admin can send a reset link. Neither the link nor its token appears in any response.
 export const usersRouter = createRouter();
 
 const USER_SELECT = `
   SELECT u.id, u.email, u.role, u.status,
          u.must_change_password AS "mustChangePassword",
+         -- true while invited: the account has no password and cannot sign in until the link is used
+         (u.password_hash IS NULL) AS "invited",
+         (SELECT max(t.expires_at) FROM password_tokens t
+           WHERE t.user_id = u.id AND t.purpose = 'invite' AND t.used_at IS NULL) AS "inviteExpiresAt",
          u.last_login_at AS "lastLoginAt",
          u.created_at AS "createdAt",
          CASE WHEN e.id IS NULL THEN NULL
@@ -117,28 +122,35 @@ const createSchema = z
     }
   });
 
-usersRouter.post('/', ['admin', 'manager'], credentialsMailLimiter, async (req, res) => {
+usersRouter.post('/', ['admin', 'manager'], accountMailLimiter, async (req, res) => {
   const { email, role, employeeId, clientId } = parseBody(createSchema, req.body);
   assertMayManage(req, role);
 
   const [emailTaken] = await query('SELECT 1 FROM users WHERE email = $1', [email]);
   if (emailTaken) throw new HttpError(409, 'A user with this email already exists', 'EMAIL_TAKEN');
 
-  const tempPassword = generateTempPassword();
-  const passwordHash = await hashPassword(tempPassword);
-
-  // The email is sent inside the transaction: if it can't be sent, the account is not created.
-  const userId = await withTransaction(async client => {
+  // The user (no password: invited) and the invite token are committed first, so no DB transaction stays open
+  // while the mail provider is called (up to 10 s). If the email can't be sent, both are removed again and the
+  // caller gets 502 MAIL_FAILED: nothing usable is left behind and the admin can simply try again.
+  const { userId, token } = await withTransaction(async client => {
     if (role === 'client') await assertClientActive(client, clientId!);
     if (employeeId) await assertEmployeeLinkable(client, employeeId);
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO users (email, password_hash, role, employee_id, client_id, must_change_password)
-       VALUES ($1, $2, $3, $4, $5, true) RETURNING id`,
-      [email, passwordHash, role, employeeId ?? null, role === 'client' ? clientId : null],
+       VALUES ($1, NULL, $2, $3, $4, false) RETURNING id`,
+      [email, role, employeeId ?? null, role === 'client' ? clientId : null],
     );
-    await sendCredentialsEmail(email, tempPassword);
-    return inserted.rows[0].id;
+    const id = inserted.rows[0].id;
+    return { userId: id, token: (await issueToken(client, id, 'invite')).token };
   });
+
+  try {
+    await sendInviteEmail(email, token);
+  } catch (err) {
+    // ON DELETE CASCADE removes the token. Guarded: only a user that still has no password.
+    if (err instanceof MailError) await query('DELETE FROM users WHERE id = $1 AND password_hash IS NULL', [userId]);
+    throw err;
+  }
 
   await audit(req, {
     action: 'user.created',
@@ -228,37 +240,57 @@ usersRouter.patch('/:id', ['admin', 'manager'], async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/users/:id/resend-credentials  (admin; manager: client users only)
+// POST /api/users/:id/resend-invite     (admin; manager: client users only) for a user with no password yet
+// POST /api/users/:id/send-reset-link  (same) for a user who has one: a 1-hour link to choose a new password
+// The new token is committed, then emailed; only once the email has gone out are the user's older links
+// dropped. If the email fails the new token is deleted, older links keep working, and the caller gets 502.
 // ---------------------------------------------------------------------------
-usersRouter.post('/:id/resend-credentials', ['admin', 'manager'], credentialsMailLimiter, async (req, res) => {
-  const id = parseId(req.params.id);
+async function sendLink(req: Request, id: string, purpose: 'invite' | 'reset'): Promise<void> {
   if (id === req.user!.id) {
     throw new HttpError(400, 'Use "Change password" for your own account', 'CANNOT_MODIFY_SELF');
   }
-
-  const tempPassword = generateTempPassword();
-  const passwordHash = await hashPassword(tempPassword);
-
-  // As with create: if the email can't be sent, the old password keeps working.
-  await withTransaction(async client => {
+  const { email, tokenId, token } = await withTransaction(async client => {
     const target = (
-      await client.query<{ email: string; status: string; role: string; client_id: string | null }>(
-        'SELECT email, status, role, client_id FROM users WHERE id = $1 FOR UPDATE',
+      await client.query<{ email: string; status: string; role: string; client_id: string | null; password_set: boolean }>(
+        `SELECT email, status, role, client_id, password_hash IS NOT NULL AS password_set
+           FROM users WHERE id = $1 FOR UPDATE`,
         [id],
       )
     ).rows[0];
     if (!target) throw new HttpError(404, 'User not found', 'NOT_FOUND');
     assertMayManage(req, target.role);
     if (target.status !== 'active') {
-      throw new HttpError(400, 'Enable this user before sending new credentials', 'USER_DISABLED');
+      throw new HttpError(400, 'Enable this user before sending them a link', 'USER_DISABLED');
     }
     if (target.client_id) await assertClientActive(client, target.client_id);
-    await client.query('UPDATE users SET password_hash = $1, must_change_password = true WHERE id = $2', [passwordHash, id]);
-    await client.query(`DELETE FROM auth_tokens WHERE user_id = $1 AND used_at IS NULL`, [id]);
-    await sendCredentialsEmail(target.email, tempPassword, true);
+    if (purpose === 'invite' && target.password_set) {
+      throw new HttpError(409, 'This user has already set a password. Send a reset link instead.', 'PASSWORD_ALREADY_SET');
+    }
+    if (purpose === 'reset' && !target.password_set) {
+      throw new HttpError(409, 'This user has not set a password yet. Resend the invite instead.', 'PASSWORD_NOT_SET');
+    }
+    const issued = await issueToken(client, id, purpose);
+    return { email: target.email, ...issued };
   });
 
-  await deleteUserSessions(id);
-  await audit(req, { action: 'user.credentials_resent', entityType: 'user', entityId: id });
+  try {
+    await (purpose === 'invite' ? sendInviteEmail(email, token) : sendPasswordResetEmail(email, token));
+  } catch (err) {
+    await query('DELETE FROM password_tokens WHERE id = $1', [tokenId]);
+    throw err;
+  }
+  await dropOtherTokens(id, tokenId);
+  await audit(req, { action: purpose === 'invite' ? 'user.invite_sent' : 'user.reset_link_sent', entityType: 'user', entityId: id });
+}
+
+usersRouter.post('/:id/resend-invite', ['admin', 'manager'], accountMailLimiter, async (req, res) => {
+  const id = parseId(req.params.id);
+  await sendLink(req, id, 'invite');
+  res.json({ user: await getUser(id) });
+});
+
+usersRouter.post('/:id/send-reset-link', ['admin', 'manager'], accountMailLimiter, async (req, res) => {
+  const id = parseId(req.params.id);
+  await sendLink(req, id, 'reset');
   res.json({ user: await getUser(id) });
 });

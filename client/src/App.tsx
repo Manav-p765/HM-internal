@@ -11,7 +11,7 @@ import { Sidebar } from './components/layout/Sidebar';
 import { TopNav } from './components/layout/TopNav';
 import { ToastContainer } from './components/common/ToastContainer';
 import { AuthPage } from './components/auth/AuthPage';
-import { ResetPasswordPage } from './components/auth/ResetPasswordPage';
+import { SetPasswordPage } from './components/auth/SetPasswordPage';
 import { ChangePasswordPage } from './components/auth/ChangePasswordPage';
 import {
   PageLoading,
@@ -133,7 +133,9 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<RedirectIfSignedIn><AuthPage mode="login" /></RedirectIfSignedIn>} />
           <Route path="/forgot-password" element={<RedirectIfSignedIn><AuthPage mode="forgot" /></RedirectIfSignedIn>} />
-          <Route path="/reset-password" element={<ResetPasswordPage />} />
+          {/* Emailed invite/reset links. Public (works signed in or out); /reset-password is the old reset link. */}
+          <Route path="/set-password" element={<SetPasswordPage />} />
+          <Route path="/reset-password" element={<SetPasswordPage />} />
           <Route path="/change-password" element={<RequirePasswordChange><ChangePasswordPage /></RequirePasswordChange>} />
 
           <Route path="/portal" element={<ClientPortal />}>

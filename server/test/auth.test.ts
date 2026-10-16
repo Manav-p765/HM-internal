@@ -37,11 +37,10 @@ function lastMailTo(email: string) {
   return mail;
 }
 
-const resetTokenFrom = (text: string) => decodeURIComponent(text.match(/reset-password\?token=(\S+)/)![1]);
-const tempPasswordFrom = (text: string) => text.match(/Temporary password: (\S+)/)![1];
+const linkTokenFrom = (text: string) => decodeURIComponent(text.match(/\/set-password\?token=(\S+)/)![1]);
 
 beforeEach(async () => {
-  await query('TRUNCATE audit_logs, auth_tokens, sessions, users, employees CASCADE');
+  await query('TRUNCATE audit_logs, password_tokens, sessions, users, employees CASCADE');
   testOutbox.length = 0;
 });
 
@@ -169,49 +168,51 @@ describe('forgot / reset password', () => {
     expect(testOutbox.map(m => m.to)).toEqual(['user@example.test']);
   });
 
-  it('resets the password once, invalidates sessions, and refuses to reuse the token', async () => {
+  it('resets the password once through /set-password, signs the user in there, and refuses to reuse the token', async () => {
     const id = await createUser('user@example.test', 'employee', { mustChangePassword: true });
     const oldSession = await signIn('user@example.test');
 
     await request(app).post('/api/auth/forgot-password').send({ email: 'User@Example.test' }).expect(200);
-    const token = resetTokenFrom(lastMailTo('user@example.test').text);
+    const token = linkTokenFrom(lastMailTo('user@example.test').text);
 
     // Only a hash of the token is stored.
-    const [stored] = await query<{ token_hash: string }>('SELECT token_hash FROM auth_tokens WHERE user_id = $1', [id]);
+    const [stored] = await query<{ token_hash: string; purpose: string }>('SELECT token_hash, purpose FROM password_tokens WHERE user_id = $1', [id]);
     expect(stored.token_hash).not.toBe(token);
+    expect(stored.purpose).toBe('reset');
 
-    await request(app).post('/api/auth/reset-password').send({ token, newPassword: 'short' }).expect(400);
-    await request(app).post('/api/auth/reset-password').send({ token, newPassword: 'reset-password-123' }).expect(200);
+    await request(app).post('/api/auth/set-password').send({ token, password: 'short' }).expect(400);
+    const agent = request.agent(app);
+    const done = await agent.post('/api/auth/set-password').send({ token, password: 'reset-password-123' }).expect(200);
+    expect(done.body.user).toMatchObject({ email: 'user@example.test', mustChangePassword: false });
+    await agent.get('/api/auth/me').expect(200); // signed in by the link
 
-    await oldSession.get('/api/auth/me').expect(401);
+    await oldSession.get('/api/auth/me').expect(401); // every other session ended
 
-    const reuse = await request(app).post('/api/auth/reset-password').send({ token, newPassword: 'another-password-456' });
+    const reuse = await request(app).post('/api/auth/set-password').send({ token, password: 'another-password-456' });
     expect(reuse.status).toBe(400);
-    expect(reuse.body.code).toBe('INVALID_TOKEN');
+    expect(reuse.body.code).toBe('LINK_INVALID');
 
     await request(app).post('/api/auth/login').send({ email: 'user@example.test', password: PASSWORD }).expect(401);
-    const agent = await signIn('user@example.test', 'reset-password-123');
-    const me = await agent.get('/api/auth/me');
-    expect(me.body.user.mustChangePassword).toBe(false);
+    await signIn('user@example.test', 'reset-password-123');
   });
 
-  it('refuses an expired token and a made-up token', async () => {
+  it('refuses an expired token and a made-up token with the same LINK_INVALID', async () => {
     const id = await createUser('user@example.test', 'employee');
     await request(app).post('/api/auth/forgot-password').send({ email: 'user@example.test' }).expect(200);
-    const token = resetTokenFrom(lastMailTo('user@example.test').text);
+    const token = linkTokenFrom(lastMailTo('user@example.test').text);
 
     const [row] = await query<{ minutes: string }>(
-      `SELECT round(extract(epoch FROM expires_at - now()) / 60) AS minutes FROM auth_tokens WHERE user_id = $1`,
+      `SELECT round(extract(epoch FROM expires_at - now()) / 60) AS minutes FROM password_tokens WHERE user_id = $1`,
       [id],
     );
     expect(Number(row.minutes)).toBe(60);
 
-    await query(`UPDATE auth_tokens SET expires_at = now() - interval '1 second' WHERE user_id = $1`, [id]);
+    await query(`UPDATE password_tokens SET expires_at = now() - interval '1 second', created_at = now() - interval '2 hours' WHERE user_id = $1`, [id]);
 
-    for (const candidate of [token, 'not-a-real-token']) {
-      const res = await request(app).post('/api/auth/reset-password').send({ token: candidate, newPassword: 'reset-password-123' });
+    for (const candidate of [token, 'not-a-real-token-but-long-enough-xyz']) {
+      const res = await request(app).post('/api/auth/set-password').send({ token: candidate, password: 'reset-password-123' });
       expect(res.status).toBe(400);
-      expect(res.body.code).toBe('INVALID_TOKEN');
+      expect(res.body.code).toBe('LINK_INVALID');
     }
     await signIn('user@example.test'); // original password still works
   });
@@ -219,15 +220,15 @@ describe('forgot / reset password', () => {
   it('changing the password invalidates every unused reset link', async () => {
     const id = await createUser('user@example.test', 'employee');
     await request(app).post('/api/auth/forgot-password').send({ email: 'user@example.test' }).expect(200);
-    const token = resetTokenFrom(lastMailTo('user@example.test').text);
+    const token = linkTokenFrom(lastMailTo('user@example.test').text);
 
     const agent = await signIn('user@example.test');
     await agent.post('/api/auth/change-password').send({ currentPassword: PASSWORD, newPassword: 'changed-password-1' }).expect(200);
-    expect(await query(`SELECT 1 FROM auth_tokens WHERE user_id = $1 AND used_at IS NULL`, [id])).toHaveLength(0);
+    expect(await query(`SELECT 1 FROM password_tokens WHERE user_id = $1 AND used_at IS NULL`, [id])).toHaveLength(0);
 
-    const res = await request(app).post('/api/auth/reset-password').send({ token, newPassword: 'attacker-password-1' });
+    const res = await request(app).post('/api/auth/set-password').send({ token, password: 'attacker-password-1' });
     expect(res.status).toBe(400);
-    expect(res.body.code).toBe('INVALID_TOKEN');
+    expect(res.body.code).toBe('LINK_INVALID');
     await signIn('user@example.test', 'changed-password-1');
   });
 });
@@ -282,34 +283,46 @@ describe('/api/users (admin only)', () => {
     expect(await query(`SELECT 1 FROM users WHERE email = 'x@example.test'`)).toHaveLength(0);
   });
 
-  it('creates a user with an emailed temporary password that must be changed', async () => {
+  it('creates an invited user (no password, no forced change) and resends the invite, killing the old link', async () => {
     await createUser('admin@example.test', 'admin');
     const admin = await signIn('admin@example.test');
 
     const created = await admin.post('/api/users').send({ email: 'New.User@Example.test', role: 'manager' });
     expect(created.status).toBe(201);
-    expect(created.body.user).toMatchObject({ email: 'new.user@example.test', role: 'manager', status: 'active', mustChangePassword: true });
+    expect(created.body.user).toMatchObject({
+      email: 'new.user@example.test',
+      role: 'manager',
+      status: 'active',
+      mustChangePassword: false,
+      invited: true,
+    });
+    expect(created.body.user.inviteExpiresAt).toBeTruthy();
 
-    const mail = lastMailTo('new.user@example.test');
-    const tempPassword = tempPasswordFrom(mail.text);
-    expect(tempPassword).toHaveLength(16);
-    expect(JSON.stringify(created.body)).not.toContain(tempPassword);
+    const firstToken = linkTokenFrom(lastMailTo('new.user@example.test').text);
+    expect(JSON.stringify(created.body)).not.toContain(firstToken);
 
     await admin.post('/api/users').send({ email: 'new.user@example.test', role: 'employee' }).expect(409);
+    // No password yet: nothing can sign in, not even an empty or guessed password.
+    await request(app).post('/api/auth/login').send({ email: 'new.user@example.test', password: 'anything-at-all' }).expect(401);
 
-    const newUser = await signIn('new.user@example.test', tempPassword);
-    const me = await newUser.get('/api/auth/me');
-    expect(me.body.user.mustChangePassword).toBe(true);
-
-    // Resending credentials replaces the password and signs the user out.
     const id = created.body.user.id;
-    await admin.post(`/api/users/${id}/resend-credentials`).expect(200);
-    await newUser.get('/api/auth/me').expect(401);
-    await request(app).post('/api/auth/login').send({ email: 'new.user@example.test', password: tempPassword }).expect(401);
-    await signIn('new.user@example.test', tempPasswordFrom(lastMailTo('new.user@example.test').text));
+    await admin.post(`/api/users/${id}/send-reset-link`).expect(409); // no password to reset yet
+    await admin.post(`/api/users/${id}/resend-invite`).expect(200);
+    const secondToken = linkTokenFrom(lastMailTo('new.user@example.test').text);
+    expect(secondToken).not.toBe(firstToken);
 
-    const actions = (await query<{ action: string }>(`SELECT action FROM audit_logs WHERE entity_id = $1 AND action LIKE 'user.%' ORDER BY created_at`, [id])).map(a => a.action);
-    expect(actions).toEqual(['user.created', 'user.credentials_resent']);
+    const old = await request(app).post('/api/auth/set-password').send({ token: firstToken, password: 'manager-password-1' });
+    expect(old.body.code).toBe('LINK_INVALID');
+    await request(app).post('/api/auth/set-password').send({ token: secondToken, password: 'manager-password-1' }).expect(200);
+    await signIn('new.user@example.test', 'manager-password-1');
+
+    const listed = await admin.get('/api/users').expect(200);
+    expect(listed.body.users.find((u: { id: string }) => u.id === id)).toMatchObject({ invited: false, inviteExpiresAt: null });
+    await admin.post(`/api/users/${id}/resend-invite`).expect(409); // password already set
+    await admin.post(`/api/users/${id}/send-reset-link`).expect(200);
+
+    const actions = (await query<{ action: string }>(`SELECT action FROM audit_logs WHERE entity_id = $1 AND action NOT LIKE 'auth.login%' ORDER BY created_at`, [id])).map(a => a.action);
+    expect(actions).toEqual(['user.created', 'user.invite_sent', 'auth.password_set', 'user.reset_link_sent']);
   });
 
   it('protects the last active admin and stops admins disabling or demoting themselves', async () => {

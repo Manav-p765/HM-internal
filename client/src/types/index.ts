@@ -24,6 +24,7 @@ export interface PortalUser {
   email: string;
   status: 'active' | 'disabled';
   mustChangePassword: boolean;
+  invited: boolean; // true while the user has no password yet (invite link not used)
   lastLoginAt: string | null;
   createdAt: string;
 }
@@ -75,6 +76,7 @@ export interface EmployeeLogin {
   userId: string;
   status: 'active' | 'disabled';
   mustChangePassword: boolean;
+  invited: boolean; // true while the user has no password yet (invite link not used)
   lastLoginAt: string | null;
 }
 

@@ -26,10 +26,35 @@ pool.on('error', err => {
   console.error(`Postgres pool error: ${describeError(err)}`);
 });
 
+// Test-only safety net. Tests TRUNCATE and DELETE freely, and search_path falls through to public when the
+// test schema is missing (dropped by another run, never created), which would wipe the dev database. So in
+// tests a destructive statement first checks, on the same connection, that the current schema is the test
+// schema, and refuses otherwise. Never active outside NODE_ENV=test.
+const DESTRUCTIVE = /^\s*(TRUNCATE|DROP|DELETE)\b/i;
+
+export async function assertTestSchema(client: pg.ClientBase, schema: string | undefined): Promise<void> {
+  const { rows } = await client.query<{ schema: string | null }>('SELECT current_schema() AS schema');
+  const current = rows[0]?.schema ?? null;
+  if (!schema || current !== schema) {
+    throw new Error(
+      `Refusing a destructive statement in tests: the current schema is "${current}", not the test schema "${schema ?? '(DB_SCHEMA not set)'}".`,
+    );
+  }
+}
+
 export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
   text: string,
   params: unknown[] = [],
 ): Promise<T[]> {
+  if (config.isTest && DESTRUCTIVE.test(text)) {
+    const client = await pool.connect();
+    try {
+      await assertTestSchema(client, config.DB_SCHEMA);
+      return (await client.query<T>(text, params)).rows;
+    } finally {
+      client.release();
+    }
+  }
   const result = await pool.query<T>(text, params);
   return result.rows;
 }

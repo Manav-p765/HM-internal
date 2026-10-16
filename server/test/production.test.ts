@@ -169,37 +169,50 @@ describe('mail failures and logs', () => {
     vi.restoreAllMocks();
   });
 
-  it('no temporary password, reset token or submitted password ever reaches the logs', async () => {
+  it('no invite or reset token, link or submitted password ever reaches the logs', async () => {
     await admin.post('/api/users').send({ email: 'new.person@example.test', role: 'employee' }).expect(201);
-    const tempPassword = /Temporary password: (\S+)/.exec(testOutbox[0].text)![1];
+    const invite = /token=([^\s&]+)/.exec(testOutbox[0].text)![1];
     // The API response never contains it either.
     const list = await admin.get('/api/users').expect(200);
-    expect(list.text).not.toContain(tempPassword);
+    expect(list.text).not.toContain(invite);
+    expect(list.text).not.toContain(decodeURIComponent(invite));
+
+    await request(app).get('/api/auth/set-password/check').query({ token: decodeURIComponent(invite) }).expect(200);
+    await request(app).post('/api/auth/set-password').send({ token: decodeURIComponent(invite), password: ' first password 1 ' }).expect(200);
 
     await request(app).post('/api/auth/forgot-password').send({ email: 'new.person@example.test' }).expect(200);
     await new Promise(r => setTimeout(r, 50)); // the reset email is sent in the background
-    const token = /token=([^\s&]+)/.exec(testOutbox[1].text)![1];
+    const reset = /token=([^\s&]+)/.exec(testOutbox[1].text)![1];
 
     await request(app).post('/api/auth/login').send({ email: 'new.person@example.test', password: 'wrong-password-123' }).expect(401);
-    await request(app).post('/api/auth/reset-password').send({ token: decodeURIComponent(token), newPassword: 'a-brand-new-password-1' }).expect(200);
+    await request(app).post('/api/auth/set-password').send({ token: decodeURIComponent(reset), password: 'a-brand-new-password-1' }).expect(200);
 
     const logs = output.join('\n');
     expect(logs).toContain('POST /api/users 201'); // request logging was on
-    expect(logs).toContain('POST /api/auth/reset-password 200');
-    for (const secret of [tempPassword, token, decodeURIComponent(token), 'wrong-password-123', 'a-brand-new-password-1']) {
+    expect(logs).toContain('GET /api/auth/set-password/check 200'); // the path only, never ?token=
+    expect(logs).toContain('POST /api/auth/set-password 200');
+    for (const secret of [invite, decodeURIComponent(invite), reset, decodeURIComponent(reset), 'first password 1', 'wrong-password-123', 'a-brand-new-password-1']) {
       expect(logs).not.toContain(secret);
     }
-    expect(logs).not.toMatch(/hm\.sid|cookie|set-cookie/i);
+    expect(logs).not.toMatch(/token=|set-password\?|hm\.sid|cookie|set-cookie/i);
+    // Audit rows carry no token or password either.
+    const audit = JSON.stringify(await query('SELECT action, metadata FROM audit_logs'));
+    for (const secret of [decodeURIComponent(invite), decodeURIComponent(reset), 'first password 1', 'a-brand-new-password-1']) {
+      expect(audit).not.toContain(secret);
+    }
   });
 
-  it('a credentials email that cannot be sent: 502 MAIL_FAILED, nothing saved, only the SMTP code logged', async () => {
+  it('an invite email that cannot be sent: 502 MAIL_FAILED, no user or token left, only the code logged', async () => {
     testMail.failNext = true;
     const res = await admin.post('/api/users').send({ email: 'unlucky@example.test', role: 'employee' }).expect(502);
     expect(res.body).toEqual({ error: 'The email could not be sent, so nothing was changed. Try again later.', code: 'MAIL_FAILED' });
     expect(await query(`SELECT 1 FROM users WHERE email = 'unlucky@example.test'`)).toHaveLength(0);
+    expect(await query('SELECT 1 FROM password_tokens')).toHaveLength(0);
     const logs = output.join('\n');
-    expect(logs).toContain('Mail send failed: purpose=credentials code=EAUTH/535');
+    expect(logs).toContain('Mail send failed: purpose=invite code=EAUTH/535');
     expect(logs).not.toContain('unlucky@example.test');
+    // The admin can simply try again.
+    await admin.post('/api/users').send({ email: 'unlucky@example.test', role: 'employee' }).expect(201);
   });
 
   it('a password-reset email that cannot be sent still answers the same generic 200', async () => {
@@ -266,7 +279,7 @@ describe('rate limiters', () => {
   });
 
   it('per-user and per-email limiters count each key separately', async () => {
-    const byUser = appWith(createLimiter({ ...RATE_LIMITS.credentialsMail, limit: 1 }, { skipInTests: false }));
+    const byUser = appWith(createLimiter({ ...RATE_LIMITS.accountMail, limit: 1 }, { skipInTests: false }));
     await request(byUser).post('/x').set('x-user', 'u1').expect(200);
     await request(byUser).post('/x').set('x-user', 'u1').expect(429);
     await request(byUser).post('/x').set('x-user', 'u2').expect(200);
@@ -275,6 +288,21 @@ describe('rate limiters', () => {
     await request(byEmail).post('/x').send({ email: 'Victim@Example.test' }).expect(200);
     await request(byEmail).post('/x').send({ email: ' victim@example.test' }).expect(429);
     await request(byEmail).post('/x').send({ email: 'other@example.test' }).expect(200);
+  });
+
+  it('per-token limiters count one link from any IP, whether it comes in ?token= or the body', async () => {
+    const limiter = createLimiter({ ...RATE_LIMITS.setPasswordPerToken, limit: 2 }, { skipInTests: false });
+    const a = express();
+    a.use(express.json());
+    a.get('/check', limiter, (_req, res) => void res.json({ ok: true }));
+    a.post('/set', limiter, (_req, res) => void res.json({ ok: true }));
+    a.use(errorHandler);
+    const token = 'A'.repeat(43);
+    await request(a).get('/check').query({ token }).set('X-Forwarded-For', '203.0.113.1').expect(200);
+    await request(a).post('/set').send({ token }).set('X-Forwarded-For', '203.0.113.2').expect(200);
+    const res = await request(a).post('/set').send({ token }).expect(429);
+    expect(res.body.code).toBe('RATE_LIMITED');
+    await request(a).post('/set').send({ token: 'B'.repeat(43) }).expect(200);
   });
 });
 

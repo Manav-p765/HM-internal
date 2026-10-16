@@ -8,10 +8,10 @@ interface Mail {
 }
 
 // What kind of email it is, for logs (never the recipient, the password or the link).
-type MailPurpose = 'credentials' | 'password-reset' | 'test';
+type MailPurpose = 'invite' | 'password-reset' | 'test';
 
-// A send that failed. Routes let it propagate: the credentials email is sent inside the DB transaction,
-// so the account change is rolled back and the caller gets 502 MAIL_FAILED (errors.ts); the password reset
+// A send that failed. An invite or admin reset link is sent after its DB transaction has committed; the route
+// then removes what it created and lets the error propagate as 502 MAIL_FAILED (errors.ts). The forgot-password
 // email is sent in the background and only logged, so the response never reveals anything.
 export class MailError extends Error {
   constructor(
@@ -28,8 +28,8 @@ export class MailError extends Error {
 export const testOutbox: Mail[] = [];
 export const testMail = { failNext: false };
 
-// Every send gives up after this long. The credentials email is sent inside a DB transaction, so a blocked
-// port or a slow provider must become a quick 502, not a request that hangs.
+// Every send gives up after this long, so a blocked port or a slow provider becomes a quick 502, not a
+// request that hangs.
 export const MAIL_TIMEOUT_MS = 10_000;
 
 export interface MailTransport {
@@ -69,7 +69,7 @@ export function fromHeader(): string | undefined {
 
 // Resend's HTTPS API (POST /emails), for hosts that block outbound SMTP. Failures are reduced to a code:
 // RESEND_<status>[/<error name>], TIMEOUT or NETWORK. Never the response message (it can quote the
-// recipient), the request body (the temporary password or reset link) or the API key.
+// recipient), the request body (the set-password link) or the API key.
 export function createResendTransport(opts: {
   apiKey: string;
   from: string;
@@ -185,7 +185,7 @@ async function send(mail: Mail, purpose: MailPurpose): Promise<void> {
   }
   if (!transport) {
     if (config.isProduction) throw new MailError(purpose, 'NOT_CONFIGURED');
-    // Dev without a mail provider: print the whole email. This is the only place a temp password is ever logged.
+    // Dev without a mail provider: print the whole email. This is the only place a set-password link is ever logged.
     console.log(
       [
         '',
@@ -223,44 +223,41 @@ ${SIGN_OFF}`,
 
 const SIGN_OFF = 'Monks Internal Management\nHybrid Monks LLP';
 
-export function sendCredentialsEmail(to: string, tempPassword: string, isResend = false): Promise<void> {
-  const intro = isResend
-    ? 'Your sign-in details for Monks Internal Management have been reset by an administrator.'
-    : 'An account has been created for you on Monks Internal Management.';
+// The one link both emails carry. Only ever built here; the token is never logged.
+const setPasswordLink = (token: string) => `${config.APP_URL}/set-password?token=${encodeURIComponent(token)}`;
+
+export function sendInviteEmail(to: string, token: string): Promise<void> {
   return send({
     to,
-    subject: isResend ? 'Your new temporary password' : 'Your Monks Internal Management account',
+    subject: 'Set your password for Monks Internal Management',
     text: [
       'Hello,',
       '',
-      intro,
+      'An account has been created for you on Monks Internal Management. Open this link to choose your password:',
       '',
-      `Sign in at: ${config.APP_URL}`,
-      `Email: ${to}`,
-      `Temporary password: ${tempPassword}`,
+      setPasswordLink(token),
       '',
-      'You will be asked to choose a new password the first time you sign in. Any earlier temporary password no longer works.',
+      'The link works once and expires in 72 hours. If it has expired, ask your administrator to send a new invite.',
       '',
-      'If you were not expecting this email, please contact your administrator.',
+      'If you were not expecting this email, you can ignore it.',
       '',
       SIGN_OFF,
     ].join('\n'),
-  }, 'credentials');
+  }, 'invite');
 }
 
 export function sendPasswordResetEmail(to: string, token: string): Promise<void> {
-  const link = `${config.APP_URL}/reset-password?token=${encodeURIComponent(token)}`;
   return send({
     to,
     subject: 'Reset your Monks Internal Management password',
     text: [
       'Hello,',
       '',
-      'We received a request to reset the password for your Monks Internal Management account.',
+      'We received a request to reset the password for your Monks Internal Management account. Open this link to choose a new one:',
       '',
-      'Use the link below to choose a new password. It can be used once and expires in 1 hour.',
+      setPasswordLink(token),
       '',
-      link,
+      'The link works once and expires in 1 hour.',
       '',
       'If you did not request this, you can ignore this email; your password will not change.',
       '',
