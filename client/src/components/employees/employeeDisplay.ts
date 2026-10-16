@@ -7,6 +7,6 @@ export const statusBadgeVariant = (status: EmploymentStatus) =>
 export function loginStatus(employee: Employee): { label: string; variant: 'success' | 'warning' | 'danger' | 'neutral' } {
   if (!employee.login) return { label: 'No login', variant: 'neutral' };
   if (employee.login.status === 'disabled') return { label: 'Disabled', variant: 'danger' };
-  if (employee.login.mustChangePassword) return { label: 'Temporary password', variant: 'warning' };
+  if (employee.login.invited) return { label: 'Invited', variant: 'warning' };
   return { label: 'Active', variant: 'success' };
 }

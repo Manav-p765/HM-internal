@@ -14,7 +14,7 @@ export const PageLoading: React.FC<{ fullScreen?: boolean }> = ({ fullScreen }) 
 );
 
 // Signed-in users only. Unknown session -> /login (remembering where they were going);
-// a temporary password -> /change-password until it is replaced.
+// a temporary password (accounts from before invite links) -> /change-password until it is replaced.
 export const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { status, user } = useAuth();
   const location = useLocation();
@@ -81,7 +81,7 @@ export const RedirectIfSignedIn: React.FC<{ children: React.ReactNode }> = ({ ch
   return <>{children}</>;
 };
 
-// /change-password is only meaningful while a temporary password is in use.
+// /change-password is only meaningful while a temporary password (pre-invite-link account) is in use.
 export const RequirePasswordChange: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { status, user } = useAuth();
   if (status === 'loading') return <PageLoading fullScreen />;

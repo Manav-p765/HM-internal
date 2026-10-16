@@ -16,7 +16,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ mode }) => {
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  // e.g. "Your password has been reset" after /reset-password; "from" is where RequireAuth sent us from.
+  // "notice" is an optional message to show; "from" is where RequireAuth sent us from.
   const { notice, from } = (location.state as { notice?: string; from?: string } | null) ?? {};
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

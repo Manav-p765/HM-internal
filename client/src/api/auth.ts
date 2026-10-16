@@ -35,6 +35,11 @@ export const authApi = {
   forgotPassword: (email: string) =>
     api<{ message: string }>('/auth/forgot-password', { method: 'POST', body: { email } }),
 
-  resetPassword: (token: string, newPassword: string) =>
-    api<{ message: string }>('/auth/reset-password', { method: 'POST', body: { token, newPassword } }),
+  // The emailed invite or reset link (/set-password?token=...). Any bad link is the same 400 LINK_INVALID.
+  checkSetPasswordLink: (token: string) =>
+    api<{ valid: true; email: string; purpose: 'invite' | 'reset' }>(`/auth/set-password/check?token=${encodeURIComponent(token)}`),
+
+  // Sets the password (sent exactly as typed) and signs this browser in.
+  setPassword: (token: string, password: string) =>
+    api<{ user: SessionUser }>('/auth/set-password', { method: 'POST', body: { token, password } }).then(r => r.user),
 };

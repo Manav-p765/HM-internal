@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { Building2, Edit2, Mail, MapPin, Phone, Send, UserPlus, Users } from 'lucide-react';
+import { Building2, Edit2, KeyRound, Mail, MapPin, Phone, Send, UserPlus, Users } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { clientsApi } from '../../api/clients';
-import { usersApi } from '../../api/users';
+import { usersApi, accountState, ACCOUNT_STATE_LABEL } from '../../api/users';
 import { errorMessage } from '../../api/client';
 import { useApiData } from '../../api/useApiData';
 import { Client, PortalUser } from '../../types';
@@ -24,15 +24,17 @@ interface ClientDetailModalProps {
 const formatDateTime = (iso: string) =>
   new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
+const STATE_VARIANT = { invited: 'warning', active: 'success', disabled: 'danger' } as const;
+
 function portalStatus(user: PortalUser): { label: string; variant: 'success' | 'warning' | 'danger' } {
-  if (user.status === 'disabled') return { label: 'Disabled', variant: 'danger' };
-  if (user.mustChangePassword) return { label: 'Temporary password', variant: 'warning' };
-  return { label: 'Active', variant: 'success' };
+  const state = accountState(user);
+  return { label: ACCOUNT_STATE_LABEL[state], variant: STATE_VARIANT[state] };
 }
 
-type PendingAction = { kind: 'disable' | 'resend'; user: PortalUser };
+type PendingAction = { kind: 'disable' | 'invite' | 'reset'; user: PortalUser };
 
-// Company details plus its portal logins. Passwords are never shown; credentials go out by email.
+// Company details plus its portal logins. Passwords are never shown or sent: users set their own from an
+// emailed link.
 export const ClientDetailModal: React.FC<ClientDetailModalProps> = ({ clientId, onClose, onEdit, onChanged }) => {
   const { showToast } = useApp();
   const detail = useApiData(() => clientsApi.get(clientId), [clientId]);
@@ -66,8 +68,10 @@ export const ClientDetailModal: React.FC<ClientDetailModalProps> = ({ clientId, 
     setPending(null);
     if (kind === 'disable') {
       runUserAction(user, () => usersApi.update(user.id, { status: 'disabled' }), `${user.email} disabled and signed out`);
+    } else if (kind === 'invite') {
+      runUserAction(user, () => usersApi.resendInvite(user.id), `A new invite link was emailed to ${user.email}`);
     } else {
-      runUserAction(user, () => usersApi.resendCredentials(user.id), `Credentials emailed to ${user.email}`);
+      runUserAction(user, () => usersApi.sendResetLink(user.id), `A password reset link was emailed to ${user.email}`);
     }
   };
 
@@ -190,10 +194,10 @@ export const ClientDetailModal: React.FC<ClientDetailModalProps> = ({ clientId, 
                                   variant="outline"
                                   size="sm"
                                   disabled={busy || isInactive}
-                                  icon={<Send className="w-3.5 h-3.5" />}
-                                  onClick={() => setPending({ kind: 'resend', user })}
+                                  icon={!user.invited ? <KeyRound className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
+                                  onClick={() => setPending({ kind: !user.invited ? 'reset' : 'invite', user })}
                                 >
-                                  Resend credentials
+                                  {!user.invited ? 'Send reset link' : 'Resend invite'}
                                 </Button>
                                 <Button variant="ghost" size="sm" disabled={busy} onClick={() => setPending({ kind: 'disable', user })}>
                                   Disable
@@ -233,7 +237,7 @@ export const ClientDetailModal: React.FC<ClientDetailModalProps> = ({ clientId, 
           onClose={() => setIsAddOpen(false)}
           onCreated={user => {
             setIsAddOpen(false);
-            showToast('success', `Credentials emailed to ${user.email}`);
+            showToast('success', `Invite emailed to ${user.email}`);
             refresh();
           }}
         />
@@ -243,13 +247,15 @@ export const ClientDetailModal: React.FC<ClientDetailModalProps> = ({ clientId, 
         isOpen={pending !== null}
         onClose={() => setPending(null)}
         onConfirm={confirmPending}
-        title={pending?.kind === 'disable' ? 'Disable portal user' : 'Resend credentials'}
+        title={pending?.kind === 'disable' ? 'Disable portal user' : pending?.kind === 'invite' ? 'Resend invite' : 'Send reset link'}
         message={
           pending?.kind === 'disable'
             ? `${pending.user.email} will be signed out immediately and won't be able to sign in until re-enabled.`
-            : `${pending?.user.email} will be signed out and emailed a new temporary password.`
+            : pending?.kind === 'invite'
+              ? `${pending.user.email} will be emailed a new link to set their password (valid for 72 hours). Any earlier invite link stops working.`
+              : `${pending?.user.email} will be emailed a link to choose a new password (valid for 1 hour). Their current password keeps working until they use it.`
         }
-        confirmLabel={pending?.kind === 'disable' ? 'Disable' : 'Send new password'}
+        confirmLabel={pending?.kind === 'disable' ? 'Disable' : pending?.kind === 'invite' ? 'Resend invite' : 'Send reset link'}
         isDestructive={pending?.kind === 'disable'}
       />
     </>

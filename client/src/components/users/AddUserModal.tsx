@@ -26,7 +26,8 @@ interface AddUserModalProps {
 const fieldClass =
   'w-full text-xs px-3 py-2 bg-white rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5]';
 
-// Creates a login. The server generates a temporary password and emails it; it is never shown here.
+// Creates a login. The server emails the user a one-time link to set their own password (72 hours).
+// On any error the dialog stays open and usable and shows the server's message.
 // Admins may create any role; managers only client (portal) users.
 export const AddUserModal: React.FC<AddUserModalProps> = ({ onClose, onCreated, fixedClient }) => {
   const { currentUser } = useApp();
@@ -87,6 +88,8 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({ onClose, onCreated, 
         setFieldErrors(byField);
       }
       setError(errorMessage(err));
+    } finally {
+      // Always: the button must never stay on "Creating..." (a 502 MAIL_FAILED, a timeout, anything).
       setIsSaving(false);
     }
   };
@@ -96,7 +99,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({ onClose, onCreated, 
       isOpen
       onClose={onClose}
       title={fixedClient ? `Add portal user: ${fixedClient.companyName}` : 'Add user'}
-      description="A temporary password is generated and emailed to this address. They must change it at first sign-in."
+      description="They will receive an email with a link to set their password. The link works once and expires in 72 hours."
       size="sm"
     >
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
@@ -184,7 +187,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({ onClose, onCreated, 
             Cancel
           </Button>
           <Button type="submit" variant="primary" size="sm" disabled={isSaving}>
-            {isSaving ? 'Creating...' : 'Create user and email credentials'}
+            {isSaving ? 'Creating...' : 'Create user and send invite'}
           </Button>
         </div>
       </form>
