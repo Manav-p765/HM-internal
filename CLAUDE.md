@@ -15,7 +15,7 @@ npm test                     # server vitest + supertest suite (needs Postgres r
 npm test -w server -- test/auth.test.ts   # single file
 npm test -w server -- -t "login"          # tests whose name matches
 npm run db:migrate           # apply pending server/db/migrations/*.sql
-npm run db:seed              # load server/db/seed.dev.sql (refuses if users exist)
+npm run db:seed              # load server/db/seed.dev.sql (refuses if users exist, or if the DB host is not localhost, 127.0.0.1, ::1 or db)
 npm run db:seed -- --reset   # wipe app data and reseed
 npm run build                # client/dist + server/dist
 npm run create-admin -w server -- --email you@example.com   # create an admin (hidden password prompt; how the first production admin is made)
