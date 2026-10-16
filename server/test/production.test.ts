@@ -277,3 +277,32 @@ describe('rate limiters', () => {
     await request(byEmail).post('/x').send({ email: 'other@example.test' }).expect(200);
   });
 });
+
+describe('TRUST_PROXY hop counts', () => {
+  // Socket = the nearest proxy (supertest connects from loopback). X-Forwarded-For as Render would pass it
+  // behind Vercel: "<anything the client sent>, <real client>, <Vercel edge>".
+  async function clientIp(trustProxy: string) {
+    const parsed = parseConfig(prod({ TRUST_PROXY: trustProxy }));
+    if (!parsed.ok) throw new Error(parsed.errors.join('; '));
+    const a = express();
+    a.set('trust proxy', parsed.config.trustProxy);
+    a.get('/ip', (req, res) => void res.json({ ip: req.ip }));
+    const res = await request(a).get('/ip').set('X-Forwarded-For', '6.6.6.6, 203.0.113.7, 198.51.100.2').expect(200);
+    return res.body.ip as string;
+  }
+
+  it('2 (Vercel + Render) yields the real client; 1 yields the nearest proxy, never the spoofed entry', async () => {
+    expect(await clientIp('2')).toBe('203.0.113.7');
+    expect(await clientIp('1')).toBe('198.51.100.2');
+    expect([await clientIp('1'), await clientIp('2')]).not.toContain('6.6.6.6');
+  });
+
+  it('is documented in .env.production.example and CLAUDE.md', async () => {
+    const { readFileSync } = await import('node:fs');
+    const example = readFileSync(new URL('../../.env.production.example', import.meta.url), 'utf8');
+    const claude = readFileSync(new URL('../../CLAUDE.md', import.meta.url), 'utf8');
+    expect(example).toMatch(/2 = Vercel in front of Render/);
+    expect(example).toMatch(/1 = a single proxy/);
+    expect(claude).toMatch(/TRUST_PROXY[^\n]*2 behind Vercel \+ Render[^\n]*1 behind a single proxy/);
+  });
+});
