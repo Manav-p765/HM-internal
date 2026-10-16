@@ -117,10 +117,12 @@ authRouter.post('/change-password', 'session', async (req, res) => {
     throw new HttpError(400, 'New password must be different from the current password', 'VALIDATION_ERROR');
   }
 
-  await query('UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2', [
-    await hashPassword(newPassword),
-    userId,
-  ]);
+  const passwordHash = await hashPassword(newPassword);
+  await withTransaction(async client => {
+    await client.query('UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2', [passwordHash, userId]);
+    // A reset link requested before the change must not be able to undo it.
+    await client.query(`DELETE FROM auth_tokens WHERE user_id = $1 AND purpose = 'reset' AND used_at IS NULL`, [userId]);
+  });
 
   // Sign out every other device and give this one a fresh session id.
   await deleteUserSessions(userId);
@@ -202,6 +204,8 @@ authRouter.post('/reset-password', 'public', resetPasswordLimiter, async (req, r
     const id = claimed.rows[0]?.user_id;
     if (!id) return null;
     await client.query('UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2', [passwordHash, id]);
+    // Any other outstanding reset link for this user dies with the password it was meant to replace.
+    await client.query(`DELETE FROM auth_tokens WHERE user_id = $1 AND purpose = 'reset' AND used_at IS NULL`, [id]);
     return id;
   });
 

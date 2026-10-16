@@ -215,6 +215,21 @@ describe('forgot / reset password', () => {
     }
     await signIn('user@example.test'); // original password still works
   });
+
+  it('changing the password invalidates every unused reset link', async () => {
+    const id = await createUser('user@example.test', 'employee');
+    await request(app).post('/api/auth/forgot-password').send({ email: 'user@example.test' }).expect(200);
+    const token = resetTokenFrom(lastMailTo('user@example.test').text);
+
+    const agent = await signIn('user@example.test');
+    await agent.post('/api/auth/change-password').send({ currentPassword: PASSWORD, newPassword: 'changed-password-1' }).expect(200);
+    expect(await query(`SELECT 1 FROM auth_tokens WHERE user_id = $1 AND used_at IS NULL`, [id])).toHaveLength(0);
+
+    const res = await request(app).post('/api/auth/reset-password').send({ token, newPassword: 'attacker-password-1' });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_TOKEN');
+    await signIn('user@example.test', 'changed-password-1');
+  });
 });
 
 describe('/api/users (admin only)', () => {
