@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { audit } from '../services/audit.js';
 import { now, todayIst } from '../services/clock.js';
-import { CSV_ROW_CAP, sendCsv, toCsv } from '../services/csv.js';
+import { CSV_ROW_CAP, num, sendCsv, toCsv } from '../services/csv.js';
 import { moneyAmount, toHundredths } from '../services/money.js';
 import { PeriodError, PRESETS, resolvePeriod } from '../services/period.js';
 import { createRouter } from '../middleware/access.js';
@@ -194,7 +194,7 @@ transactionsRouter.get('/export.csv', ['admin'], async (req, res) => {
     r.voidReason,
   ]);
   const csv = toCsv(
-    ['Date', 'Type', 'Category', 'Description', 'Amount (INR)', 'Payment method', 'Reference', 'Source', 'Voided', 'Void reason'],
+    ['Date', 'Type', 'Category', 'Description', num('Amount (INR)'), 'Payment method', 'Reference', 'Source', 'Voided', 'Void reason'],
     data,
   );
   // Filters as given, except the free-text search, which is only recorded as used or not.

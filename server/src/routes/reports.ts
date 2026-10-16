@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { query } from '../db.js';
 import { audit } from '../services/audit.js';
 import { todayIst } from '../services/clock.js';
-import { CSV_ROW_CAP, sendCsv, toCsv } from '../services/csv.js';
+import { CSV_ROW_CAP, num, sendCsv, toCsv } from '../services/csv.js';
 import { lastMonths, PeriodError, PRESETS, resolvePeriod, type Period } from '../services/period.js';
 import { createRouter } from '../middleware/access.js';
 import { HttpError } from '../middleware/errors.js';
@@ -92,7 +92,7 @@ reportsRouter.get('/profit-loss.csv', ['admin'], async (req, res) => {
     ['Total', 'Expense', pl.totals.expense, ''],
     ['Total', 'Net', pl.totals.net, ''],
   ];
-  const csv = toCsv([`Profit & loss (cash basis) ${period.from} to ${period.to}`, 'Category', 'Amount (INR)', 'Transactions'], rows);
+  const csv = toCsv([`Profit & loss (cash basis) ${period.from} to ${period.to}`, 'Category', num('Amount (INR)'), num('Transactions')], rows);
   await auditExport(req, 'profit-loss', period, rows.length, false);
   sendCsv(res, 'profit-loss', csv);
 });
@@ -249,7 +249,7 @@ reportsRouter.get('/invoices.csv', ['admin', 'manager'], async (req, res) => {
     r.balance,
     r.daysOverdue,
   ]);
-  const csv = toCsv(['Invoice', 'Client', 'Invoice date', 'Due date', 'Status', 'Total (INR)', 'Paid (INR)', 'Balance (INR)', 'Days overdue'], data);
+  const csv = toCsv(['Invoice', 'Client', 'Invoice date', 'Due date', 'Status', num('Total (INR)'), num('Paid (INR)'), num('Balance (INR)'), num('Days overdue')], data);
   await auditExport(req, 'invoices', period, data.length, capped);
   sendCsv(res, 'invoices', csv, capped);
 });
@@ -308,7 +308,7 @@ reportsRouter.get('/salary.csv', ['admin'], async (req, res) => {
   );
   const capped = rows.length > CSV_ROW_CAP;
   const data = rows.slice(0, CSV_ROW_CAP).map(r => [r.month, r.code, r.name, r.department, r.net, r.paidOn, r.method]);
-  const csv = toCsv(['Month', 'Employee code', 'Employee', 'Department', 'Net paid (INR)', 'Paid on', 'Payment method'], data);
+  const csv = toCsv(['Month', 'Employee code', 'Employee', 'Department', num('Net paid (INR)'), 'Paid on', 'Payment method'], data);
   await auditExport(req, 'salary', period, data.length, capped);
   sendCsv(res, 'salary', csv, capped);
 });

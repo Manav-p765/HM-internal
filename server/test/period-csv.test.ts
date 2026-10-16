@@ -1,7 +1,7 @@
 // services/period.ts and services/csv.ts: pure functions, no database.
 import { describe, expect, it } from 'vitest';
 import { lastMonths, PeriodError, presetRange, resolvePeriod } from '../src/services/period.js';
-import { csvCell, toCsv } from '../src/services/csv.js';
+import { csvCell, num, toCsv } from '../src/services/csv.js';
 
 describe('period presets', () => {
   it('this_month / last_month follow the IST date, including year boundaries and short months', () => {
@@ -76,8 +76,20 @@ describe('csv', () => {
       expect(csvCell(value).replace(/^"/, '').startsWith(`'${value[0]}`)).toBe(true);
     }
     expect(csvCell('=HYPERLINK("http://x","y")')).toBe(`"'=HYPERLINK(""http://x"",""y"")"`);
-    expect(csvCell('-500.00')).toBe("'-500.00");
+    expect(csvCell('-500.00')).toBe("'-500.00"); // in a free-text column it is still text
     expect(csvCell('safe = later')).toBe('safe = later');
+  });
+
+  it('numeric columns are never prefixed (negatives included); a non-number in one is treated as text', () => {
+    expect(csvCell('-500.00', true)).toBe('-500.00');
+    expect(csvCell('1250.50', true)).toBe('1250.50');
+    expect(csvCell(-3, true)).toBe('-3');
+    expect(csvCell(0, true)).toBe('0');
+    expect(csvCell('-1+1', true)).toBe("'-1+1");
+    expect(csvCell('=1+1', true)).toBe("'=1+1");
+    expect(csvCell('+5', true)).toBe("'+5");
+    const csv = toCsv(['Description', num('Amount (INR)'), num('Count')], [['=HYPERLINK("http://x","y")', '-500.00', 2], ['-refund', '10.00', 1]]);
+    expect(csv).toBe(`﻿Description,Amount (INR),Count\r\n"'=HYPERLINK(""http://x"",""y"")",-500.00,2\r\n'-refund,10.00,1\r\n`);
   });
 
   it('a document has a UTF-8 BOM, a header row and CRLF line ends', () => {

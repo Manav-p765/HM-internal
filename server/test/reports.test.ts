@@ -389,6 +389,7 @@ describe('salary report', () => {
     expect(pl.charCodeAt(0)).toBe(0xfeff);
     expect(pl).toContain('Expense,Salary,50000.50,1');
     expect(pl).toContain('Total,Net,');
-    expect(pl).toContain(`'-50010.50`); // a negative net is prefixed like any cell starting with "-"
+    expect(pl).toContain('Total,Net,-50010.50,'); // numeric columns are never prefixed, negatives included
+    expect(pl).not.toContain("'-50010.50");
   });
 });
