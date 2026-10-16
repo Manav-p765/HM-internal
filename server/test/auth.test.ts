@@ -294,7 +294,7 @@ describe('/api/users (admin only)', () => {
       role: 'manager',
       status: 'active',
       mustChangePassword: false,
-      passwordSet: false,
+      invited: true,
     });
     expect(created.body.user.inviteExpiresAt).toBeTruthy();
 
@@ -317,7 +317,7 @@ describe('/api/users (admin only)', () => {
     await signIn('new.user@example.test', 'manager-password-1');
 
     const listed = await admin.get('/api/users').expect(200);
-    expect(listed.body.users.find((u: { id: string }) => u.id === id)).toMatchObject({ passwordSet: true, inviteExpiresAt: null });
+    expect(listed.body.users.find((u: { id: string }) => u.id === id)).toMatchObject({ invited: false, inviteExpiresAt: null });
     await admin.post(`/api/users/${id}/resend-invite`).expect(409); // password already set
     await admin.post(`/api/users/${id}/send-reset-link`).expect(200);
 

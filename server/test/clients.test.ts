@@ -190,7 +190,7 @@ describe('creating portal users', () => {
     }
 
     const created = await agents.admin.post('/api/users').send({ email: 'a2@example.test', role: 'client', clientId: companyA }).expect(201);
-    expect(created.body.user).toMatchObject({ role: 'client', clientId: companyA, client: { companyName: 'Alpha Fake Ltd' }, mustChangePassword: false, passwordSet: false });
+    expect(created.body.user).toMatchObject({ role: 'client', clientId: companyA, client: { companyName: 'Alpha Fake Ltd' }, mustChangePassword: false, invited: true });
     expect(JSON.stringify(created.body)).not.toContain(linkTokenFor('a2@example.test'));
 
     // DB constraint backs this up even if a route forgets.

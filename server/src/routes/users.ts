@@ -18,8 +18,8 @@ export const usersRouter = createRouter();
 const USER_SELECT = `
   SELECT u.id, u.email, u.role, u.status,
          u.must_change_password AS "mustChangePassword",
-         -- false while invited: the account has no password and cannot sign in until the link is used
-         (u.password_hash IS NOT NULL) AS "passwordSet",
+         -- true while invited: the account has no password and cannot sign in until the link is used
+         (u.password_hash IS NULL) AS "invited",
          (SELECT max(t.expires_at) FROM password_tokens t
            WHERE t.user_id = u.id AND t.purpose = 'invite' AND t.used_at IS NULL) AS "inviteExpiresAt",
          u.last_login_at AS "lastLoginAt",
