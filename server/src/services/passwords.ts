@@ -3,11 +3,15 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { config } from '../config.js';
 
-// Minimum policy for passwords users choose themselves (change + reset).
+// Policy for passwords users choose themselves (set-password link, change). A password is used exactly as
+// typed: never trimmed or normalised, here or in the browser. Spaces anywhere are valid characters and count
+// towards the length; only a password made of nothing but whitespace is refused.
 // bcrypt only looks at the first 72 bytes, so longer input is rejected rather than silently truncated.
+export const MIN_PASSWORD_LENGTH = 10;
 export const newPasswordSchema = z
   .string()
-  .min(10, 'Password must be at least 10 characters')
+  .min(MIN_PASSWORD_LENGTH, `Password must be at least ${MIN_PASSWORD_LENGTH} characters`)
+  .refine(p => p.trim() !== '', 'Password cannot be only spaces')
   .refine(p => Buffer.byteLength(p, 'utf8') <= 72, 'Password must be at most 72 bytes');
 
 export function hashPassword(password: string): Promise<string> {
@@ -21,27 +25,8 @@ export function verifyPassword(password: string, hash: string): Promise<boolean>
 // Compared against when the account doesn't exist, so login takes the same time either way.
 export const DUMMY_HASH = bcrypt.hashSync('dummy-password-never-matches', config.bcryptCost);
 
-// No look-alikes: I l 1 O o 0 are left out.
-const UPPER = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-const LOWER = 'abcdefghijkmnpqrstuvwxyz';
-const DIGITS = '23456789';
-const SYMBOLS = '!@#$%*?-';
-const ALL = UPPER + LOWER + DIGITS + SYMBOLS;
-
-const pick = (chars: string) => chars[crypto.randomInt(chars.length)];
-
-// 16 characters, at least one of each class, shuffled with a CSPRNG.
-export function generateTempPassword(): string {
-  const chars = [pick(UPPER), pick(LOWER), pick(DIGITS), pick(SYMBOLS)];
-  while (chars.length < 16) chars.push(pick(ALL));
-  for (let i = chars.length - 1; i > 0; i--) {
-    const j = crypto.randomInt(i + 1);
-    [chars[i], chars[j]] = [chars[j], chars[i]];
-  }
-  return chars.join('');
-}
-
-// One-time tokens (password reset): the raw token goes in the email, only its hash is stored.
+// One-time tokens (invite and reset links): 32 random bytes, base64url. The raw token goes in the email;
+// only its SHA-256 hash is stored.
 export function generateToken(): { token: string; tokenHash: string } {
   const token = crypto.randomBytes(32).toString('base64url');
   return { token, tokenHash: hashToken(token) };

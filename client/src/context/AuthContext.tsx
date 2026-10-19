@@ -9,6 +9,8 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  // Uses an emailed invite/reset link; on success the user is signed in.
+  setPasswordFromLink: (token: string, password: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -92,13 +94,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, []);
 
+  const setPasswordFromLink = useCallback(async (token: string, password: string) => {
+    setUser(await authApi.setPassword(token, password));
+  }, []);
+
   const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
     setUser(await authApi.changePassword(currentPassword, newPassword));
   }, []);
 
   const value = useMemo(
-    () => ({ status, user, login, logout, changePassword }),
-    [status, user, login, logout, changePassword],
+    () => ({ status, user, login, logout, changePassword, setPasswordFromLink }),
+    [status, user, login, logout, changePassword, setPasswordFromLink],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

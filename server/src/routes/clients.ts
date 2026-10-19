@@ -25,7 +25,8 @@ async function getClient(id: string) {
     `SELECT ${CLIENT_COLUMNS}, ${PORTAL_COUNTS},
             coalesce((SELECT json_agg(json_build_object(
                         'id', u.id, 'email', u.email, 'status', u.status,
-                        'mustChangePassword', u.must_change_password, 'lastLoginAt', u.last_login_at,
+                        'mustChangePassword', u.must_change_password, 'invited', u.password_hash IS NULL,
+                        'lastLoginAt', u.last_login_at,
                         'createdAt', u.created_at) ORDER BY u.created_at, u.email)
                       FROM users u WHERE u.client_id = c.id), '[]'::json) AS users
        FROM clients c WHERE c.id = $1`,

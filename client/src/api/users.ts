@@ -7,6 +7,10 @@ export interface ManagedUser {
   role: UserRole;
   status: 'active' | 'disabled';
   mustChangePassword: boolean;
+  // True while invited: the user has not used their set-password link yet and cannot sign in.
+  invited: boolean;
+  // When the newest unused invite link expires (null when there is none).
+  inviteExpiresAt: string | null;
   lastLoginAt: string | null;
   createdAt: string;
   employee: { id: string; code: string; name: string } | null;
@@ -22,7 +26,15 @@ export interface EmployeeOption {
   workEmail: string;
 }
 
-// Admin only. The server never returns passwords; credentials go to the user by email.
+// Invited (no password yet), Active or Disabled, for the users lists.
+export type AccountState = 'invited' | 'active' | 'disabled';
+export const ACCOUNT_STATE_LABEL: Record<AccountState, string> = { invited: 'Invited', active: 'Active', disabled: 'Disabled' };
+export function accountState(user: Pick<ManagedUser, 'status' | 'invited'>): AccountState {
+  if (user.status === 'disabled') return 'disabled';
+  return user.invited ? 'invited' : 'active';
+}
+
+// Admins (managers: client users). Nobody ever sees a password: users set their own from an emailed link.
 export const usersApi = {
   list: () => api<{ users: ManagedUser[] }>('/users').then(r => r.users),
 
@@ -35,6 +47,9 @@ export const usersApi = {
   update: (id: string, changes: { role?: UserRole; status?: 'active' | 'disabled' }) =>
     api<{ user: ManagedUser }>(`/users/${id}`, { method: 'PATCH', body: changes }).then(r => r.user),
 
-  resendCredentials: (id: string) =>
-    api<{ user: ManagedUser }>(`/users/${id}/resend-credentials`, { method: 'POST' }).then(r => r.user),
+  // A new 72-hour invite link for a user who has not set a password yet; older links stop working.
+  resendInvite: (id: string) => api<{ user: ManagedUser }>(`/users/${id}/resend-invite`, { method: 'POST' }).then(r => r.user),
+
+  // A 1-hour link to choose a new password; the current password keeps working until the link is used.
+  sendResetLink: (id: string) => api<{ user: ManagedUser }>(`/users/${id}/send-reset-link`, { method: 'POST' }).then(r => r.user),
 };

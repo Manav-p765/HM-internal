@@ -15,7 +15,7 @@ export class ApiError extends Error {
 interface SessionHandlers {
   // The server no longer recognises our session (expired, signed out elsewhere, account disabled).
   onUnauthenticated: () => void;
-  // The server refuses everything until the temporary password is changed.
+  // The server refuses everything until a (pre-invite-link) temporary password is changed.
   onPasswordChangeRequired: () => void;
 }
 

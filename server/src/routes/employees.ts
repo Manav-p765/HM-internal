@@ -29,7 +29,8 @@ const LOGIN_JOIN = `
   LEFT JOIN users u ON u.employee_id = e.id`;
 const LOGIN_COLUMNS = `
   CASE WHEN u.id IS NULL THEN NULL ELSE json_build_object(
-    'userId', u.id, 'status', u.status, 'mustChangePassword', u.must_change_password, 'lastLoginAt', u.last_login_at
+    'userId', u.id, 'status', u.status, 'mustChangePassword', u.must_change_password,
+    'invited', u.password_hash IS NULL, 'lastLoginAt', u.last_login_at
   ) END AS login`;
 
 type EmployeeRow = Record<string, unknown> & { monthlySalary?: unknown; paymentMethod?: unknown };

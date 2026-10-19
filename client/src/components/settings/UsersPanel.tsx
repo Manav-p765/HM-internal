@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Send, UserPlus, Users } from 'lucide-react';
+import { KeyRound, Send, UserPlus, Users } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { usersApi, ManagedUser } from '../../api/users';
+import { usersApi, ManagedUser, accountState, ACCOUNT_STATE_LABEL } from '../../api/users';
 import { AddUserModal } from '../users/AddUserModal';
 import { errorMessage } from '../../api/client';
 import { StaffRole, UserRole } from '../../types';
@@ -22,10 +22,12 @@ const STAFF_ROLES: { value: StaffRole; label: string }[] = [
 const formatDateTime = (iso: string) =>
   new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-type PendingAction = { kind: 'disable' | 'resend'; user: ManagedUser };
+type PendingAction = { kind: 'disable' | 'invite' | 'reset'; user: ManagedUser };
 
-// Admin-only user management (Settings > Users). Accounts are created here; the server emails a
-// temporary password to the user. Passwords are never shown in this UI.
+const STATE_BADGE = { invited: 'warning', active: 'success', disabled: 'error' } as const;
+
+// Admin-only user management (Settings > Users). Accounts are created here; the server emails the user a
+// one-time link to set their own password. Passwords are never shown or sent by this UI.
 export const UsersPanel: React.FC = () => {
   const { currentUser, showToast } = useApp();
 
@@ -77,8 +79,10 @@ export const UsersPanel: React.FC = () => {
     setPendingAction(null);
     if (kind === 'disable') {
       runAction(user, () => usersApi.update(user.id, { status: 'disabled' }), `${user.email} has been disabled and signed out`);
+    } else if (kind === 'invite') {
+      runAction(user, () => usersApi.resendInvite(user.id), `A new invite link was emailed to ${user.email}`);
     } else {
-      runAction(user, () => usersApi.resendCredentials(user.id), `Credentials emailed to ${user.email}`);
+      runAction(user, () => usersApi.sendResetLink(user.id), `A password reset link was emailed to ${user.email}`);
     }
   };
 
@@ -92,7 +96,7 @@ export const UsersPanel: React.FC = () => {
               Users
             </h3>
             <p className="text-xs text-[#7185A5] mt-0.5">
-              People who can sign in. New users receive a temporary password by email and must change it at first sign-in.
+              People who can sign in. New users get an email with a link to set their own password (valid for 72 hours).
             </p>
           </div>
           <Button variant="primary" size="sm" icon={<UserPlus className="w-3.5 h-3.5" />} onClick={() => setIsAddOpen(true)}>
@@ -170,13 +174,9 @@ export const UsersPanel: React.FC = () => {
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        {user.status === 'disabled' ? (
-                          <Badge variant="error" size="sm">Disabled</Badge>
-                        ) : user.mustChangePassword ? (
-                          <Badge variant="warning" size="sm">Temporary password</Badge>
-                        ) : (
-                          <Badge variant="success" size="sm">Active</Badge>
-                        )}
+                        <span title={accountState(user) === 'invited' && user.inviteExpiresAt ? `Invite link valid until ${formatDateTime(user.inviteExpiresAt)}` : undefined}>
+                          <Badge variant={STATE_BADGE[accountState(user)]} size="sm">{ACCOUNT_STATE_LABEL[accountState(user)]}</Badge>
+                        </span>
                       </td>
                       <td className="px-4 py-3 text-[#475569]">
                         {user.lastLoginAt ? formatDateTime(user.lastLoginAt) : <span className="text-[#7185A5]">Never</span>}
@@ -186,15 +186,27 @@ export const UsersPanel: React.FC = () => {
                           <div className="flex items-center justify-end gap-2">
                             {user.status === 'active' ? (
                               <>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={isBusy}
-                                  icon={<Send className="w-3.5 h-3.5" />}
-                                  onClick={() => setPendingAction({ kind: 'resend', user })}
-                                >
-                                  Resend credentials
-                                </Button>
+                                {!user.invited ? (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={isBusy}
+                                    icon={<KeyRound className="w-3.5 h-3.5" />}
+                                    onClick={() => setPendingAction({ kind: 'reset', user })}
+                                  >
+                                    Send reset link
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={isBusy}
+                                    icon={<Send className="w-3.5 h-3.5" />}
+                                    onClick={() => setPendingAction({ kind: 'invite', user })}
+                                  >
+                                    Resend invite
+                                  </Button>
+                                )}
                                 <Button variant="ghost" size="sm" disabled={isBusy} onClick={() => setPendingAction({ kind: 'disable', user })}>
                                   Disable
                                 </Button>
@@ -222,7 +234,7 @@ export const UsersPanel: React.FC = () => {
           onCreated={user => {
             setUsers(current => [...current, user]);
             setIsAddOpen(false);
-            showToast('success', `Credentials emailed to ${user.email}`);
+            showToast('success', `Invite emailed to ${user.email}`);
           }}
         />
       )}
@@ -231,13 +243,15 @@ export const UsersPanel: React.FC = () => {
         isOpen={pendingAction !== null}
         onClose={() => setPendingAction(null)}
         onConfirm={confirmPendingAction}
-        title={pendingAction?.kind === 'disable' ? 'Disable user' : 'Resend credentials'}
+        title={pendingAction?.kind === 'disable' ? 'Disable user' : pendingAction?.kind === 'invite' ? 'Resend invite' : 'Send reset link'}
         message={
           pendingAction?.kind === 'disable'
             ? `${pendingAction.user.email} will be signed out immediately and will not be able to sign in until re-enabled.`
-            : `${pendingAction?.user.email} will be signed out and emailed a new temporary password. Their current password will stop working.`
+            : pendingAction?.kind === 'invite'
+              ? `${pendingAction.user.email} will be emailed a new link to set their password (valid for 72 hours). Any earlier invite link stops working.`
+              : `${pendingAction?.user.email} will be emailed a link to choose a new password (valid for 1 hour). Their current password keeps working until they use it.`
         }
-        confirmLabel={pendingAction?.kind === 'disable' ? 'Disable user' : 'Send new password'}
+        confirmLabel={pendingAction?.kind === 'disable' ? 'Disable user' : pendingAction?.kind === 'invite' ? 'Resend invite' : 'Send reset link'}
         isDestructive={pendingAction?.kind === 'disable'}
       />
     </div>
