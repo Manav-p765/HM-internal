@@ -7,7 +7,7 @@ import { HttpError, parseBody } from '../middleware/errors.js';
 import { optionalEmail, optionalGstin, optionalText } from './shared.js';
 
 // Company settings: the single company_settings row (what invoices and their print page show).
-// Admins and managers read it (managers create invoices); only admins change it. Employees and clients
+// Admin only (managers see no money: no invoices, bank details or tax rates); only admins change it. Employees and clients
 // are refused. The currency is fixed to INR.
 export const settingsRouter = createRouter();
 
@@ -30,9 +30,9 @@ async function loadCompany() {
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/settings/company  (admin, manager)
+// GET /api/settings/company  (admin)
 // ---------------------------------------------------------------------------
-settingsRouter.get('/company', ['admin', 'manager'], async (_req, res) => {
+settingsRouter.get('/company', ['admin'], async (_req, res) => {
   res.json({ company: await loadCompany() });
 });
 

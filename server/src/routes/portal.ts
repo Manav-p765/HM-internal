@@ -5,11 +5,15 @@ import { availabilityFor } from '../services/availability.js';
 import { clientScope, createRouter } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
 import { portalFeedbackLimiter } from '../middleware/security.js';
+import { amountInWords } from '../services/amountInWords.js';
+import { istDate, now } from '../services/clock.js';
 import { OVERDUE_SQL, COMMENT_AUTHOR_SQL } from './tasks.js';
+import { BALANCE_SQL, derivedStatusSql, overdueSql, PAID_JOIN } from './invoices.js';
 
 // The client portal API. Every route is ['client'] only and scoped to clientScope(req) (= req.user.clientId).
-// Clients see only their company's non-archived projects and only tasks marked client_visible, with no
-// internal fields. Anything outside that scope is a 404, identical to a missing id.
+// Clients see only their company's non-archived projects, only tasks marked client_visible, and their own
+// company's issued invoices (read-only), with no internal fields. Anything outside that scope is a 404,
+// identical to a missing id.
 export const portalRouter = createRouter();
 
 const notFound = (what: string) => new HttpError(404, `${what} not found`, 'NOT_FOUND');
@@ -99,6 +103,75 @@ portalRouter.get('/team', ['client'], async (req, res) => {
     projects: r.projects,
   }));
   res.json({ team });
+});
+
+// ---------------------------------------------------------------------------
+// Invoices: the company's own issued invoices (sent, paid or cancelled; never drafts), read-only.
+// Explicit columns only: no cancel reason, no internal ids, no who-recorded-what, no payment notes or
+// references, no reversed payments. Amounts are server strings (services/money.ts did the arithmetic);
+// derived states use the same SQL as /api/invoices.
+// ---------------------------------------------------------------------------
+const PORTAL_INVOICE_COLUMNS = `
+  i.id, i.invoice_number AS "invoiceNumber", i.invoice_date AS "invoiceDate", i.due_date AS "dueDate",
+  i.total_amount::text AS total, p.paid::text AS "amountPaid", ${BALANCE_SQL}::text AS balance,
+  i.status, ${derivedStatusSql('$2')} AS "derivedStatus"`;
+// $1 = clientScope(req), $2 = today (IST).
+const ISSUED_TO_CLIENT = `i.client_id = $1 AND i.status <> 'draft' AND i.invoice_number IS NOT NULL`;
+
+// GET /api/portal/invoices: newest first, with a summary of what is still due.
+portalRouter.get('/invoices', ['client'], async (req, res) => {
+  const params = [clientScope(req), istDate(now())];
+  const [invoices, [summary]] = await Promise.all([
+    query(
+      `SELECT ${PORTAL_INVOICE_COLUMNS} FROM invoices i ${PAID_JOIN}
+        WHERE ${ISSUED_TO_CLIENT} ORDER BY i.invoice_date DESC, i.invoice_number DESC`,
+      params,
+    ),
+    query(
+      `SELECT count(*)::int AS count,
+              coalesce(sum(${BALANCE_SQL}) FILTER (WHERE i.status = 'sent'), 0)::numeric(14,2)::text AS "outstandingTotal",
+              coalesce(sum(${BALANCE_SQL}) FILTER (WHERE ${overdueSql('$2')}), 0)::numeric(14,2)::text AS "overdueTotal",
+              count(*) FILTER (WHERE ${overdueSql('$2')})::int AS "overdueCount"
+         FROM invoices i ${PAID_JOIN} WHERE ${ISSUED_TO_CLIENT}`,
+      params,
+    ),
+  ]);
+  res.json({ invoices, summary });
+});
+
+// GET /api/portal/invoices/:id: the invoice as printed (lines, totals, total in words, live payments) and the
+// issuing company's printed details. Another company's invoice, a draft or a missing id: the same 404.
+portalRouter.get('/invoices/:id', ['client'], async (req, res) => {
+  const id = parseId(req.params.id, 'Invoice');
+  const [invoice] = await query<{ total: string } & Record<string, unknown>>(
+    `SELECT ${PORTAL_INVOICE_COLUMNS},
+            i.client_name AS "clientName", i.client_email AS "clientEmail", i.client_address AS "clientAddress",
+            i.client_gstin AS "clientGstin", i.subtotal::text AS subtotal, i.tax_rate::text AS "taxRate",
+            i.tax_amount::text AS "taxAmount", i.notes
+       FROM invoices i ${PAID_JOIN}
+      WHERE i.id = $3 AND ${ISSUED_TO_CLIENT}`,
+    [clientScope(req), istDate(now()), id],
+  );
+  if (!invoice) throw notFound('Invoice');
+  const [items, payments, [company]] = await Promise.all([
+    query(
+      `SELECT id, position, description, quantity::text AS quantity, unit_price::text AS "unitPrice", line_total::text AS "lineTotal"
+         FROM invoice_items WHERE invoice_id = $1 ORDER BY position`,
+      [id],
+    ),
+    query(
+      `SELECT t.id, t.txn_date AS "txnDate", t.amount::text AS amount, t.payment_method AS "paymentMethod"
+         FROM transactions t WHERE t.invoice_id = $1 AND t.reversed_at IS NULL ORDER BY t.txn_date, t.created_at`,
+      [id],
+    ),
+    query(
+      `SELECT company_name AS "companyName", company_address AS "companyAddress", company_phone AS "companyPhone",
+              company_email AS "companyEmail", company_gstin AS "companyGstin", bank_details AS "bankDetails", terms,
+              logo_data_url AS "logoDataUrl"
+         FROM company_settings LIMIT 1`,
+    ),
+  ]);
+  res.json({ invoice: { ...invoice, totalInWords: amountInWords(invoice.total), items, payments }, company });
 });
 
 // A task the client may see: visible, in a non-archived project of their company.

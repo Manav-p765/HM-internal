@@ -19,7 +19,8 @@ import { HttpError, parseBody } from '../middleware/errors.js';
 import { isoDate, likePattern, optionalEmail, optionalGstin, optionalText, pageQuery } from './shared.js';
 import { formatInvoiceNumber } from './settings.js';
 
-// Invoices. Admins and managers manage them; only admins record or reverse payments and cancel.
+// Invoices: admin only (managers see no money at all). Clients read their own company's issued invoices
+// through /api/portal/invoices, never through these routes.
 // Employees and clients are refused everywhere (clients never see finance).
 //
 // Lifecycle: draft (no number; everything editable, may be deleted) -> sent (the number is assigned now;
@@ -118,7 +119,7 @@ async function loadInvoice(id: string, db: Pick<PoolClient, 'query'> | null = nu
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/invoices  (admin, manager)
+// GET /api/invoices  (admin)
 //   ?status=draft|sent|paid|cancelled|overdue|partially_paid|outstanding &clientId= &from= &to= &search= &limit &offset
 // ---------------------------------------------------------------------------
 const listQuery = pageQuery.extend({
@@ -129,7 +130,7 @@ const listQuery = pageQuery.extend({
   search: z.string().trim().max(100).optional(),
 });
 
-invoicesRouter.get('/', ['admin', 'manager'], async (req, res) => {
+invoicesRouter.get('/', ['admin'], async (req, res) => {
   const parsed = listQuery.safeParse(req.query);
   if (!parsed.success) throw new HttpError(400, parsed.error.issues[0].message, 'VALIDATION_ERROR');
   const { status, clientId, from, to, search, limit, offset } = parsed.data;
@@ -181,9 +182,9 @@ invoicesRouter.get('/', ['admin', 'manager'], async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/invoices/:id  (admin, manager)
+// GET /api/invoices/:id  (admin)
 // ---------------------------------------------------------------------------
-invoicesRouter.get('/:id', ['admin', 'manager'], async (req, res) => {
+invoicesRouter.get('/:id', ['admin'], async (req, res) => {
   res.json({ today: todayIst(), invoice: await loadInvoice(parseId(req.params.id)) });
 });
 
@@ -274,10 +275,10 @@ async function insertItems(db: PoolClient, invoiceId: string, items: { descripti
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/invoices  (admin, manager): a draft, without a number (it gets one at send). The server
+// POST /api/invoices  (admin): a draft, without a number (it gets one at send). The server
 // computes the totals.
 // ---------------------------------------------------------------------------
-invoicesRouter.post('/', ['admin', 'manager'], async (req, res) => {
+invoicesRouter.post('/', ['admin'], async (req, res) => {
   const body = parseBody(createSchema, req.body);
   const invoiceDate = body.invoiceDate ?? todayIst();
   checkDates(invoiceDate, body.dueDate);
@@ -359,13 +360,13 @@ async function paidSoFar(db: PoolClient, id: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// PATCH /api/invoices/:id  (admin, manager)
+// PATCH /api/invoices/:id  (admin)
 //   draft: everything (items replaced as a set, totals recomputed); sent: only dueDate and notes;
 //   paid / cancelled: 409 INVOICE_LOCKED.
 // ---------------------------------------------------------------------------
 const SENT_EDITABLE = new Set(['dueDate', 'notes']);
 
-invoicesRouter.patch('/:id', ['admin', 'manager'], async (req, res) => {
+invoicesRouter.patch('/:id', ['admin'], async (req, res) => {
   const id = parseId(req.params.id);
   const body = parseBody(patchSchema, req.body) as Body;
   const sent = sentKeys(req.body);
@@ -449,10 +450,10 @@ async function takeInvoiceNumber(db: PoolClient): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/invoices/:id/send  (admin, manager): draft -> sent; the invoice gets its number. No email is
+// POST /api/invoices/:id/send  (admin): draft -> sent; the invoice gets its number. No email is
 // sent (v2).
 // ---------------------------------------------------------------------------
-invoicesRouter.post('/:id/send', ['admin', 'manager'], async (req, res) => {
+invoicesRouter.post('/:id/send', ['admin'], async (req, res) => {
   const id = parseId(req.params.id);
   await withTransaction(async db => {
     const current = await lockInvoice(db, id);
@@ -600,9 +601,9 @@ invoicesRouter.delete('/:id/payments/:txnId', ['admin'], async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// DELETE /api/invoices/:id  (admin, manager): drafts only. Sent, paid and cancelled invoices are kept.
+// DELETE /api/invoices/:id  (admin): drafts only. Sent, paid and cancelled invoices are kept.
 // ---------------------------------------------------------------------------
-invoicesRouter.delete('/:id', ['admin', 'manager'], async (req, res) => {
+invoicesRouter.delete('/:id', ['admin'], async (req, res) => {
   const id = parseId(req.params.id);
   const invoiceNumber = await withTransaction(async db => {
     const current = await lockInvoice(db, id);

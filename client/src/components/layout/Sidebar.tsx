@@ -36,7 +36,7 @@ interface NavItem {
 }
 
 // linkedToEmployee: the login has an employee record, so it has payslips of its own (/salary/slips).
-function getNavItems(role: UserRole, linkedToEmployee: boolean): NavItem[] {
+export function getNavItems(role: UserRole, linkedToEmployee: boolean): NavItem[] {
   const myPayslips: NavItem[] = linkedToEmployee
     ? [{ to: '/salary/slips', label: 'My Payslips', icon: <Receipt className="w-4 h-4" /> }]
     : [];
@@ -61,10 +61,8 @@ function getNavItems(role: UserRole, linkedToEmployee: boolean): NavItem[] {
       { to: '/attendance', label: 'Attendance', icon: <Clock className="w-4 h-4" /> },
       { to: '/leaves', label: 'Leaves', icon: <CalendarDays className="w-4 h-4" /> },
       { to: '/team', label: 'Team Directory', icon: <Contact className="w-4 h-4" /> },
-      { to: '/invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
       { to: '/clients', label: 'Clients', icon: <Building2 className="w-4 h-4" /> },
-      { to: '/reports', label: 'Reports', icon: <BarChart3 className="w-4 h-4" /> },
-      // No Salary item for managers; only their own payslips when linked to an employee.
+      // No money for managers: no Invoices, Reports, Accounting or Salary; only their own payslips when linked.
       ...myPayslips,
     ];
   }

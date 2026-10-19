@@ -109,8 +109,8 @@ describe('role matrix', () => {
     { path: '/trend', allowed: ['admin'] },
     { path: '/salary', allowed: ['admin'] },
     { path: '/salary.csv', allowed: ['admin'] },
-    { path: '/invoices', allowed: ['admin', 'manager'] },
-    { path: '/invoices.csv', allowed: ['admin', 'manager'] },
+    { path: '/invoices', allowed: ['admin'] },
+    { path: '/invoices.csv', allowed: ['admin'] },
   ];
   for (const route of routes) {
     it(`GET /reports${route.path}`, async () => {
@@ -123,9 +123,9 @@ describe('role matrix', () => {
     });
   }
 
-  it('the manager invoice report has no ledger or payment-method data', async () => {
+  it('the invoice report has no ledger or payment-method data', async () => {
     await invoiceRow({ total: '1000.00', due: '2026-10-20', paid: '400.00' });
-    const res = await get('/invoices', agents.manager).expect(200);
+    const res = await get('/invoices', agents.admin).expect(200);
     const text = res.text;
     for (const leak of ['paymentMethod', 'payment_method', 'category', 'transaction', 'Invoice Payment', 'createdBy', 'reference']) {
       expect(text).not.toContain(leak);
@@ -320,10 +320,10 @@ describe('invoice report', () => {
     ]);
   });
 
-  it('invoices.csv for a manager: BOM, header, drafts labelled, no ledger columns', async () => {
+  it('invoices.csv: BOM, header, drafts labelled, no ledger columns', async () => {
     await invoiceRow({ total: '100.00', due: '2026-10-30', invoiceDate: '2026-10-01', status: 'draft' });
     await invoiceRow({ total: '200.00', due: '2026-10-10', invoiceDate: '2026-10-02', paid: '50.00' });
-    const res = await get('/invoices.csv?preset=this_month', agents.manager).buffer(true).parse((r, cb) => {
+    const res = await get('/invoices.csv?preset=this_month', agents.admin).buffer(true).parse((r, cb) => {
       let t = '';
       r.setEncoding('utf8');
       r.on('data', (c: string) => (t += c));

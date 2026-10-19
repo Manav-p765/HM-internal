@@ -87,6 +87,45 @@ export interface Invoice extends InvoiceSummaryRow {
   payments: InvoicePayment[];
 }
 
+// What the printed invoice (InvoiceDocument) reads. Both the staff invoice and the client portal invoice
+// satisfy it, so the portal can print the same document from a response without internal fields.
+export type PrintableInvoice = Pick<
+  Invoice,
+  | 'invoiceNumber' | 'status' | 'derivedStatus' | 'clientName' | 'clientEmail' | 'clientAddress' | 'clientGstin'
+  | 'invoiceDate' | 'dueDate' | 'subtotal' | 'taxRate' | 'taxAmount' | 'total' | 'balance' | 'notes' | 'totalInWords' | 'items'
+> & { payments: (Pick<InvoicePayment, 'id' | 'txnDate' | 'amount' | 'paymentMethod'> & { reversedAt?: string | null })[] };
+
+export type PrintableCompany = Pick<
+  CompanySettings,
+  'companyName' | 'companyAddress' | 'companyPhone' | 'companyEmail' | 'companyGstin' | 'bankDetails' | 'terms' | 'logoDataUrl'
+>;
+
+// GET /api/portal/invoices: the client's own company's issued invoices (never drafts). No internal fields:
+// no notes on payments, no cancel reason, no who-recorded-what, no reversed payments.
+export interface PortalInvoiceRow {
+  id: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate: string;
+  total: string;
+  amountPaid: string;
+  balance: string;
+  status: Exclude<InvoiceStatus, 'draft'>;
+  derivedStatus: Exclude<InvoiceDerivedStatus, 'draft'>;
+}
+
+export interface PortalInvoicesResponse {
+  invoices: PortalInvoiceRow[];
+  summary: { count: number; outstandingTotal: string; overdueTotal: string; overdueCount: number };
+}
+
+// GET /api/portal/invoices/:id: the invoice as printed, live payments only, and the issuing company's
+// printed details (no invoice numbering, GST defaults or other settings).
+export interface PortalInvoiceResponse {
+  invoice: PrintableInvoice & PortalInvoiceRow;
+  company: PrintableCompany;
+}
+
 export interface InvoicesSummary {
   outstandingTotal: string;
   overdueTotal: string;

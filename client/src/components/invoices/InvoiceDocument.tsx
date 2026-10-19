@@ -1,5 +1,5 @@
 import React from 'react';
-import { CompanySettings, Invoice, INVOICE_STATUS_LABEL, invoiceLabel } from '../../types/invoices';
+import { INVOICE_STATUS_LABEL, invoiceLabel, PrintableCompany, PrintableInvoice } from '../../types/invoices';
 import { formatDate } from '../../utils/formatters';
 import { formatMoney, trimRate } from '../../utils/money';
 
@@ -15,7 +15,7 @@ import { formatMoney, trimRate } from '../../utils/money';
 const NAVY = '#2c3e50';
 const MIN_ROWS = 5;
 
-export const InvoiceDocument: React.FC<{ invoice: Invoice; company: CompanySettings }> = ({ invoice, company }) => {
+export const InvoiceDocument: React.FC<{ invoice: PrintableInvoice; company: PrintableCompany }> = ({ invoice, company }) => {
   const isDraft = invoice.status === 'draft';
   const title = isDraft ? 'Draft Invoice' : invoice.status === 'cancelled' ? 'Invoice (Cancelled)' : 'Tax Invoice';
   const livePayments = invoice.payments.filter(p => !p.reversedAt);

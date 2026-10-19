@@ -36,7 +36,7 @@ type PendingAction = { kind: 'disable' | 'invite' | 'reset'; user: PortalUser };
 // Company details plus its portal logins. Passwords are never shown or sent: users set their own from an
 // emailed link.
 export const ClientDetailModal: React.FC<ClientDetailModalProps> = ({ clientId, onClose, onEdit, onChanged }) => {
-  const { showToast } = useApp();
+  const { showToast, currentUser } = useApp();
   const detail = useApiData(() => clientsApi.get(clientId), [clientId]);
   const client = detail.data?.id === clientId ? detail.data : undefined;
 
@@ -227,7 +227,8 @@ export const ClientDetailModal: React.FC<ClientDetailModalProps> = ({ clientId, 
             )}
           </div>
 
-          <ClientInvoicesSection clientId={clientId} />
+          {/* Billing is admin only: managers see no invoices or amounts (the API refuses them too). */}
+          {currentUser.role === 'admin' && <ClientInvoicesSection clientId={clientId} />}
         </div>
       </Modal>
 

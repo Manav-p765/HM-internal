@@ -10,9 +10,8 @@ import { HttpError } from '../middleware/errors.js';
 import { isoDate } from './shared.js';
 import { BALANCE_SQL, derivedStatusSql, PAID_JOIN } from './invoices.js';
 
-// Reports (/api/reports): read-only. Admin only, except the invoice report (and its CSV), which managers
-// may read too; it contains no ledger or payment-method data. Every sum is done in SQL on NUMERIC and sent
-// as a 2-decimal string; voided/reversed transactions are always excluded. Dates are IST: periods come from
+// Reports (/api/reports): read-only and admin only (managers see no money). Every sum is done in SQL on
+// NUMERIC and sent as a 2-decimal string; voided/reversed transactions are always excluded. Dates are IST: periods come from
 // services/period.ts (presets this_month, last_month, this_fy, last_fy, or from/to), "today" from the clock.
 export const reportsRouter = createRouter();
 
@@ -125,7 +124,7 @@ reportsRouter.get('/trend', ['admin'], async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Invoices (admin, manager): status summary for invoices dated in the period; aging and top outstanding as of
+// Invoices (admin): status summary for invoices dated in the period; aging and top outstanding as of
 // today over every open invoice. No ledger or payment-method fields.
 // ---------------------------------------------------------------------------
 const INVOICE_STATUSES = ['draft', 'sent', 'partially_paid', 'overdue', 'paid', 'cancelled'] as const;
@@ -220,11 +219,11 @@ async function invoiceReport(period: Period) {
   };
 }
 
-reportsRouter.get('/invoices', ['admin', 'manager'], async (req, res) => {
+reportsRouter.get('/invoices', ['admin'], async (req, res) => {
   res.json(await invoiceReport(await periodFor(req)));
 });
 
-reportsRouter.get('/invoices.csv', ['admin', 'manager'], async (req, res) => {
+reportsRouter.get('/invoices.csv', ['admin'], async (req, res) => {
   const period = await periodFor(req);
   const today = todayIst();
   const rows = await query<Record<string, string | number | null>>(

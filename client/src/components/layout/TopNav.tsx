@@ -39,9 +39,9 @@ export const TopNav: React.FC<TopNavProps> = ({
   const [notificationsOpen, setNotificationsOpen] = useState(false);
 
   // Derive real notifications from active system state
-  // Overdue invoices come from the API, and only for the roles that may read invoices (an employee's
-  // browser never calls /api/invoices). Best effort: the bell still works without them.
-  const canSeeInvoices = currentUser.role === 'admin' || currentUser.role === 'manager';
+  // Overdue invoices come from the API, and only for admins (the only role that may read invoices: a
+  // manager's or employee's browser never calls /api/invoices). Best effort: the bell still works without them.
+  const canSeeInvoices = currentUser.role === 'admin';
   const overdue = useApiData(
     () => (canSeeInvoices ? invoicesApi.list({ status: 'overdue', limit: 5 }) : Promise.resolve(null)),
     [canSeeInvoices],
@@ -67,7 +67,7 @@ export const TopNav: React.FC<TopNavProps> = ({
       );
     }
 
-    if (pathname.startsWith('/invoices')) {
+    if (pathname.startsWith('/invoices') && currentUser.role === 'admin') {
       return (
         <Button
           variant="primary"
@@ -130,7 +130,7 @@ export const TopNav: React.FC<TopNavProps> = ({
           <Search className="w-4 h-4 text-[#7185A5] absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder="Search transactions, invoices, team members..."
+            placeholder={currentUser.role === 'admin' ? 'Search transactions, invoices, team members...' : 'Search projects, tasks, team members...'}
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             className="w-full bg-[#F7F9FC] text-sm text-[#111827] placeholder:text-[#7185A5] pl-9 pr-4 py-2 rounded-lg border border-[#DFE6F1] focus:outline-none focus:border-[#5038F5] focus:bg-white transition-colors"
