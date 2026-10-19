@@ -14,7 +14,9 @@
     "db:seed": "npm run db:seed -w server --",
     "test": "npm run test -w server && npm run test -w client",
     "create-admin": "npm run create-admin -w server --",
-    "mail:test": "npm run mail:test -w server --"
+    "mail:test": "npm run mail:test -w server --",
+    "link-by-email": "npm run link-by-email -w server --",
+    "check-accounts": "npm run check-accounts -w server --"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

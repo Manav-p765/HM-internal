@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { audit } from '../services/audit.js';
 import { now, workDate } from '../services/clock.js';
+import { linkLoginByEmail } from '../services/accountLinks.js';
 import { deleteUserSessions } from '../middleware/auth.js';
 import { createRouter, STAFF } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
@@ -49,6 +50,11 @@ async function getEmployee(id: string, client?: PoolClient): Promise<EmployeeRow
   const sql = `SELECT ${EMPLOYEE_COLUMNS}, ${LOGIN_COLUMNS} FROM employees e ${LOGIN_JOIN} WHERE e.id = $1`;
   const rows = client ? (await client.query<EmployeeRow>(sql, [id])).rows : await query<EmployeeRow>(sql, [id]);
   return rows[0];
+}
+
+async function auditAutoLink(req: Request, employeeId: string, userId: string | null): Promise<void> {
+  if (!userId) return;
+  await audit(req, { action: 'user.employee_linked', entityType: 'user', entityId: userId, metadata: { employeeId, how: 'email' } });
 }
 
 function parseId(raw: unknown): string {
@@ -279,12 +285,13 @@ employeesRouter.get('/:id', ['admin', 'manager'], async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/employees  (admin)  — employee_code is assigned here, never by the client
+// POST /api/employees  (admin)  — employee_code is assigned here, never by the client. A staff login with
+// the same email that isn't linked yet is linked to the new record (services/accountLinks.ts).
 // ---------------------------------------------------------------------------
 employeesRouter.post('/', ['admin'], async (req, res) => {
   const body = parseBody(createSchema, req.body);
 
-  const id = await withTransaction(async client => {
+  const { id, linkedUserId } = await withTransaction(async client => {
     // Serialise code allocation: EMP-001, EMP-002, ... (max + 1 under a transaction-scoped lock).
     await client.query(`SELECT pg_advisory_xact_lock(hashtext('employees.employee_code'))`);
     const next = await client.query<{ code: string }>(
@@ -312,7 +319,8 @@ employeesRouter.post('/', ['admin'], async (req, res) => {
         ],
       )
       .catch(rethrowEmailTaken);
-    return inserted.rows[0].id;
+    const newId = inserted.rows[0].id;
+    return { id: newId, linkedUserId: await linkLoginByEmail(client, newId) };
   });
 
   const employee = (await getEmployee(id))!;
@@ -322,17 +330,18 @@ employeesRouter.post('/', ['admin'], async (req, res) => {
     entityId: id,
     metadata: { code: employee.code, fields: Object.keys(body) },
   });
+  await auditAutoLink(req, id, linkedUserId);
   res.status(201).json({ employee: forViewer(employee, req) });
 });
 
 // ---------------------------------------------------------------------------
-// PATCH /api/employees/:id  (admin)
+// PATCH /api/employees/:id  (admin). A changed work email links a free staff login with that email.
 // ---------------------------------------------------------------------------
 employeesRouter.patch('/:id', ['admin'], async (req, res) => {
   const id = parseId(req.params.id);
   const body = parseBody(updateSchema, req.body);
 
-  const changed = await withTransaction(async client => {
+  const { changed, linkedUserId } = await withTransaction(async client => {
     const current = (await client.query<{ status: string }>('SELECT status FROM employees WHERE id = $1 FOR UPDATE', [id]))
       .rows[0];
     if (!current) throw new HttpError(404, 'Employee not found', 'NOT_FOUND');
@@ -345,11 +354,12 @@ employeesRouter.patch('/:id', ['admin'], async (req, res) => {
     await client
       .query(`UPDATE employees SET ${sets.join(', ')} WHERE id = $1`, [id, ...fields.map(field => body[field])])
       .catch(rethrowEmailTaken);
-    return fields;
+    return { changed: fields, linkedUserId: fields.includes('workEmail') ? await linkLoginByEmail(client, id) : null };
   });
 
   // Field names only: salary values never go into the audit log.
   await audit(req, { action: 'employee.updated', entityType: 'employee', entityId: id, metadata: { fields: changed } });
+  await auditAutoLink(req, id, linkedUserId);
   res.json({ employee: forViewer((await getEmployee(id))!, req) });
 });
 

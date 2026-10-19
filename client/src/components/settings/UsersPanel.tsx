@@ -3,6 +3,7 @@ import { KeyRound, Send, UserPlus, Users } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { usersApi, ManagedUser, accountState, ACCOUNT_STATE_LABEL } from '../../api/users';
 import { AddUserModal } from '../users/AddUserModal';
+import { LinkAccountModal } from '../users/LinkAccountModal';
 import { errorMessage } from '../../api/client';
 import { StaffRole, UserRole } from '../../types';
 import { Card } from '../common/Card';
@@ -22,7 +23,7 @@ const STAFF_ROLES: { value: StaffRole; label: string }[] = [
 const formatDateTime = (iso: string) =>
   new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-type PendingAction = { kind: 'disable' | 'invite' | 'reset'; user: ManagedUser };
+type PendingAction = { kind: 'disable' | 'invite' | 'reset' | 'unlink'; user: ManagedUser };
 
 const STATE_BADGE = { invited: 'warning', active: 'success', disabled: 'error' } as const;
 
@@ -37,6 +38,7 @@ export const UsersPanel: React.FC = () => {
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [linkFor, setLinkFor] = useState<ManagedUser | null>(null);
 
   const loadUsers = useCallback(async () => {
     try {
@@ -79,6 +81,8 @@ export const UsersPanel: React.FC = () => {
     setPendingAction(null);
     if (kind === 'disable') {
       runAction(user, () => usersApi.update(user.id, { status: 'disabled' }), `${user.email} has been disabled and signed out`);
+    } else if (kind === 'unlink') {
+      runAction(user, () => usersApi.unlinkEmployee(user.id), `${user.email} is no longer linked to ${user.employee?.name ?? 'an employee'}`);
     } else if (kind === 'invite') {
       runAction(user, () => usersApi.resendInvite(user.id), `A new invite link was emailed to ${user.email}`);
     } else {
@@ -148,9 +152,29 @@ export const UsersPanel: React.FC = () => {
                           <>
                             {user.employee.name}
                             <span className="ml-1.5 font-mono text-[10px] text-[#7185A5]">{user.employee.code}</span>
+                            {!isSelf && (
+                              <button
+                                onClick={() => setPendingAction({ kind: 'unlink', user })}
+                                disabled={isBusy}
+                                className="ml-2 text-[10px] font-semibold text-[#7185A5] hover:text-[#E11D48] cursor-pointer disabled:opacity-50"
+                              >
+                                Unlink
+                              </button>
+                            )}
                           </>
                         ) : (
-                          <span className="text-[#7185A5]">Not linked</span>
+                          <>
+                            <span className="text-[#7185A5]">Not linked</span>
+                            {!isSelf && (
+                              <button
+                                onClick={() => setLinkFor(user)}
+                                disabled={isBusy}
+                                className="ml-2 text-[10px] font-semibold text-[#5038F5] hover:underline cursor-pointer disabled:opacity-50"
+                              >
+                                Link employee
+                              </button>
+                            )}
+                          </>
                         )}
                       </td>
                       <td className="px-4 py-3">
@@ -239,20 +263,50 @@ export const UsersPanel: React.FC = () => {
         />
       )}
 
+      {linkFor && (
+        <LinkAccountModal
+          user={linkFor}
+          onClose={() => setLinkFor(null)}
+          onLinked={updated => {
+            setUsers(current => current.map(u => (u.id === updated.id ? updated : u)));
+            setLinkFor(null);
+            showToast('success', `${updated.email} is now linked to ${updated.employee?.name ?? 'the employee'}`);
+          }}
+        />
+      )}
+
       <ConfirmDialog
         isOpen={pendingAction !== null}
         onClose={() => setPendingAction(null)}
         onConfirm={confirmPendingAction}
-        title={pendingAction?.kind === 'disable' ? 'Disable user' : pendingAction?.kind === 'invite' ? 'Resend invite' : 'Send reset link'}
-        message={
+        title={
           pendingAction?.kind === 'disable'
+            ? 'Disable user'
+            : pendingAction?.kind === 'unlink'
+              ? 'Unlink employee'
+              : pendingAction?.kind === 'invite'
+                ? 'Resend invite'
+                : 'Send reset link'
+        }
+        message={
+          pendingAction?.kind === 'unlink'
+            ? `${pendingAction.user.email} will no longer be linked to ${pendingAction.user.employee?.name}: no automatic attendance or payslips for this login until it is linked again.`
+            : pendingAction?.kind === 'disable'
             ? `${pendingAction.user.email} will be signed out immediately and will not be able to sign in until re-enabled.`
             : pendingAction?.kind === 'invite'
               ? `${pendingAction.user.email} will be emailed a new link to set their password (valid for 72 hours). Any earlier invite link stops working.`
               : `${pendingAction?.user.email} will be emailed a link to choose a new password (valid for 1 hour). Their current password keeps working until they use it.`
         }
-        confirmLabel={pendingAction?.kind === 'disable' ? 'Disable user' : pendingAction?.kind === 'invite' ? 'Resend invite' : 'Send reset link'}
-        isDestructive={pendingAction?.kind === 'disable'}
+        confirmLabel={
+          pendingAction?.kind === 'disable'
+            ? 'Disable user'
+            : pendingAction?.kind === 'unlink'
+              ? 'Unlink'
+              : pendingAction?.kind === 'invite'
+                ? 'Resend invite'
+                : 'Send reset link'
+        }
+        isDestructive={pendingAction?.kind === 'disable' || pendingAction?.kind === 'unlink'}
       />
     </div>
   );

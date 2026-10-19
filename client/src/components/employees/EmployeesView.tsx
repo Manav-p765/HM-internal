@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { useApp } from '../../context/AppContext';
 import { employeesApi } from '../../api/employees';
+import { usersApi } from '../../api/users';
+import { LinkAccountModal } from '../users/LinkAccountModal';
 import { errorMessage } from '../../api/client';
 import { useApiData } from '../../api/useApiData';
 import { DEPARTMENTS, EMPLOYMENT_STATUS_LABEL, Employee, EmploymentStatus } from '../../types';
@@ -16,7 +18,7 @@ import { Modal } from '../common/Modal';
 import { EmployeeModal } from './EmployeeModal';
 import { EmployeeDetailModal } from './EmployeeDetailModal';
 import { loginStatus, statusBadgeVariant } from './employeeDisplay';
-import { Users, Plus, Search, Eye, Edit2, UserX, UserCheck, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Users, Plus, Search, Eye, Edit2, UserX, UserCheck, ChevronLeft, ChevronRight, Link2, Unlink2 } from 'lucide-react';
 import { formatDate, formatDateIst } from '../../utils/formatters';
 import { formatMoney } from '../../utils/money';
 
@@ -64,6 +66,9 @@ export const EmployeesView: React.FC = () => {
   const [employeeToDeactivate, setEmployeeToDeactivate] = useState<Employee | null>(null);
   const [employeeToReactivate, setEmployeeToReactivate] = useState<Employee | null>(null);
   const [restoreLogin, setRestoreLogin] = useState(false);
+  // Admin: link a login to an employee without one, or unlink it (never their own: the server refuses).
+  const [employeeToLink, setEmployeeToLink] = useState<Employee | null>(null);
+  const [employeeToUnlink, setEmployeeToUnlink] = useState<Employee | null>(null);
   const [busy, setBusy] = useState(false);
 
   const openAdd = () => {
@@ -110,6 +115,22 @@ export const EmployeesView: React.FC = () => {
         updated,
         restoreLogin && target.login ? `${target.fullName} reactivated; their login works again` : `${target.fullName} reactivated`,
       );
+    } catch (err) {
+      showToast('error', errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleUnlink = async () => {
+    const target = employeeToUnlink;
+    if (!target?.login) return;
+    setEmployeeToUnlink(null);
+    setBusy(true);
+    try {
+      await usersApi.unlinkEmployee(target.login.userId);
+      showToast('success', `${target.fullName} no longer has a linked login`);
+      list.reload();
     } catch (err) {
       showToast('error', errorMessage(err));
     } finally {
@@ -293,7 +314,7 @@ export const EmployeesView: React.FC = () => {
                         </Badge>
                       </td>
                       <td className="py-3 px-4 text-[#7185A5] whitespace-nowrap">
-                        {emp.login?.lastLoginAt ? formatDateIst(emp.login.lastLoginAt) : 'Never'}
+                        {!emp.login ? '—' : emp.login.lastLoginAt ? formatDateIst(emp.login.lastLoginAt) : 'Never'}
                       </td>
                       {isAdmin && (
                         <td className="py-3 px-4 text-right font-mono font-bold text-[#111827] whitespace-nowrap">
@@ -325,6 +346,31 @@ export const EmployeesView: React.FC = () => {
                               >
                                 <Edit2 className="w-3.5 h-3.5" />
                               </button>
+                              {emp.login ? (
+                                currentUser.employeeId !== emp.id && (
+                                  <button
+                                    onClick={() => setEmployeeToUnlink(emp)}
+                                    disabled={busy}
+                                    className="p-1.5 text-[#7185A5] hover:text-[#E11D48] hover:bg-[#F1F5F9] rounded cursor-pointer disabled:opacity-50"
+                                    title="Unlink login"
+                                    aria-label={`Unlink the login of ${emp.fullName}`}
+                                  >
+                                    <Unlink2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )
+                              ) : (
+                                emp.status !== 'inactive' && (
+                                  <button
+                                    onClick={() => setEmployeeToLink(emp)}
+                                    disabled={busy}
+                                    className="p-1.5 text-[#7185A5] hover:text-[#5038F5] hover:bg-[#F1F5F9] rounded cursor-pointer disabled:opacity-50"
+                                    title="Link a login"
+                                    aria-label={`Link a login to ${emp.fullName}`}
+                                  >
+                                    <Link2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )
+                              )}
                               {emp.status !== 'inactive' ? (
                                 <button
                                   onClick={() => setEmployeeToDeactivate(emp)}
@@ -427,6 +473,28 @@ export const EmployeesView: React.FC = () => {
         }
         confirmLabel="Deactivate"
         isDestructive={true}
+      />
+
+      {employeeToLink && (
+        <LinkAccountModal
+          employee={employeeToLink}
+          onClose={() => setEmployeeToLink(null)}
+          onLinked={user => {
+            setEmployeeToLink(null);
+            showToast('success', `${user.email} is now linked to ${employeeToLink.fullName}`);
+            list.reload();
+          }}
+        />
+      )}
+
+      <ConfirmDialog
+        isOpen={!!employeeToUnlink}
+        onClose={() => setEmployeeToUnlink(null)}
+        onConfirm={handleUnlink}
+        title="Unlink login"
+        message={`${employeeToUnlink?.fullName} will no longer be linked to their login: no automatic attendance or payslips for it until it is linked again. The login itself keeps working.`}
+        confirmLabel="Unlink"
+        isDestructive
       />
 
       {/* Reactivate (with the option to restore the login) */}
