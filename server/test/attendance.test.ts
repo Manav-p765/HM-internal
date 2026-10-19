@@ -155,36 +155,55 @@ describe('automatic punch-in', () => {
     expect((await records(ids.empB)).map(r => r.work_date)).toEqual([DAY, '2026-10-15']);
   });
 
-  it('IST midnight and the 06:00 cutoff: 23:59:59 is the old day; nothing before 06:00; 06:00:00 creates it', async () => {
+  it('working days run 06:00-05:59 IST: a night shift is one record across midnight and across 06:00', async () => {
     await query('DELETE FROM attendance_records');
-    setClock(new Date('2026-10-14T18:29:59Z')); // 23:59:59 IST on the 14th
+    setClock(new Date('2026-10-14T15:30:00Z')); // 21:00 IST on the 14th
     const agent = await signIn('b@example.test');
     expect((await records(ids.empB)).map(r => r.work_date)).toEqual([DAY]);
 
-    setClock(new Date('2026-10-14T18:30:00Z')); // 00:00 IST on the 15th
-    await agent.post('/api/presence/heartbeat').expect(200);
-    setClock(new Date('2026-10-15T00:29:59Z')); // 05:59:59 IST
+    for (const t of ['2026-10-14T18:30:00Z', '2026-10-15T00:29:59Z', '2026-10-15T00:30:00Z', '2026-10-15T02:00:00Z']) {
+      setClock(new Date(t)); // 00:00, 05:59:59, 06:00 and 07:30 IST on the 15th: still the same open shift
+      await agent.post('/api/presence/heartbeat').expect(200);
+    }
+    const rows = await records(ids.empB);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ work_date: DAY, punch_out: null });
+
+    // Punched out at 07:30, the tab stays open: no second shift that working day (this session).
+    await agent.post('/api/attendance/me/punch-out').expect(200);
+    setClock(new Date('2026-10-15T02:30:00Z'));
     await agent.post('/api/presence/heartbeat').expect(200);
     expect((await records(ids.empB)).map(r => r.work_date)).toEqual([DAY]);
 
-    setClock(new Date('2026-10-15T00:30:00Z')); // 06:00:00 IST
-    await agent.post('/api/presence/heartbeat').expect(200);
-    const rows = await records(ids.empB);
-    expect(rows.map(r => r.work_date)).toEqual([DAY, '2026-10-15']);
-    expect(rows[1].punch_in.toISOString()).toBe('2026-10-15T00:30:00.000Z'); // actual creation time
+    // The next evening's sign-in starts the 15th's shift.
+    setClock(new Date('2026-10-15T15:30:00Z')); // 21:00 IST on the 15th
+    await signIn('b@example.test');
+    expect((await records(ids.empB)).map(r => r.work_date)).toEqual([DAY, '2026-10-15']);
   });
 
-  it('login at 05:59 IST succeeds without a record; login at 06:00 IST creates it', async () => {
+  it('a sign-in between midnight and 06:00 IST belongs to the previous working day; 06:00 starts a new one', async () => {
     await query('DELETE FROM attendance_records');
-    setClock(new Date('2026-10-15T00:29:00Z')); // 05:59 IST
-    const early = await request(app).post('/api/auth/login').send({ email: 'a@example.test', password: PASSWORD });
-    expect(early.status).toBe(200);
-    expect(await records(ids.empA)).toHaveLength(0);
-    setClock(new Date('2026-10-15T00:30:00Z')); // 06:00 IST
+    setClock(new Date('2026-10-14T20:00:00Z')); // 01:30 IST on the 15th
     await signIn('a@example.test');
-    const rows = await records(ids.empA);
+    let rows = await records(ids.empA);
+    expect(rows.map(r => r.work_date)).toEqual([DAY]);
+    expect(rows[0].punch_in.toISOString()).toBe('2026-10-14T20:00:00.000Z'); // actual creation time
+
+    await query('DELETE FROM attendance_records');
+    setClock(new Date('2026-10-15T00:30:00Z')); // 06:00 IST on the 15th
+    await signIn('a@example.test');
+    rows = await records(ids.empA);
     expect(rows.map(r => r.work_date)).toEqual(['2026-10-15']);
-    expect(rows[0].punch_in.toISOString()).toBe('2026-10-15T00:30:00.000Z');
+  });
+
+  it('a record left open longer than a shift (forgot to punch out) does not block the next working day', async () => {
+    // Avery was punched in at 09:30 IST on the 14th and never punched out.
+    setClock(new Date('2026-10-15T04:00:00Z')); // 09:30 IST on the 15th: 24 h later
+    await signIn('a@example.test');
+    expect((await records(ids.empA)).map(r => [r.work_date, r.punch_out])).toEqual([
+      [DAY, null],
+      ['2026-10-15', null],
+    ]);
   });
 
   it('a failing insert is logged without secrets and never fails the login', async () => {
@@ -241,6 +260,62 @@ describe('employee attendance', () => {
     // Yesterday's open record doesn't count either.
     await query(`INSERT INTO attendance_records (employee_id, work_date, punch_in) VALUES ($1, '2026-10-13', '2026-10-13T04:00:00Z')`, [ids.empA]);
     expect((await agents.employee.post('/api/attendance/me/punch-out').expect(409)).body.code).toBe('NOT_PUNCHED_IN');
+  });
+
+  it('a working session keeps one open punch-in: heartbeats, page loads, other logins and sign-out never set punch_out', async () => {
+    // Heartbeats every minute for 8 hours (the browser sends one per minute while the tab is visible).
+    for (let minute = 1; minute <= 8 * 60; minute += 1) {
+      setClock(at(minute));
+      if (minute % 30 === 0) await agents.employee.get('/api/attendance/me/today').expect(200);
+      if (minute % 5 === 0) await agents.employee.post('/api/presence/heartbeat').expect(200);
+    }
+    // A second device signs in and out; the first one signs out.
+    const phone = await signIn('a@example.test');
+    await phone.post('/api/auth/logout').expect(200);
+    await agents.employee.post('/api/auth/logout').expect(200);
+
+    const rows = await records(ids.empA);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ work_date: DAY, source: 'login', punch_out: null });
+    expect(rows[0].punch_in.toISOString()).toBe(T0.toISOString());
+    expect(await query(`SELECT 1 FROM audit_logs WHERE action = 'attendance.punched_out'`)).toHaveLength(0);
+  });
+
+  it('a night shift can still be seen and closed after midnight IST (it used to be a 409 NOT_PUNCHED_IN)', async () => {
+    await query('DELETE FROM attendance_records');
+    setClock(new Date('2026-10-14T15:30:00Z')); // 21:00 IST on the 14th
+    const agent = await signIn('b@example.test');
+    setClock(new Date('2026-10-14T19:00:00Z')); // 00:30 IST on the 15th
+    await agent.post('/api/presence/heartbeat').expect(200); // before the cutoff: no new record
+
+    const today = await agent.get('/api/attendance/me/today').expect(200);
+    expect(today.body.date).toBe(DAY); // 00:30 IST on the 15th is still the 14th's working day
+    expect(today.body.record).toMatchObject({ workDate: DAY, punchOut: null, workedMinutes: 210 });
+
+    const res = await agent.post('/api/attendance/me/punch-out').expect(200);
+    expect(res.body.record).toMatchObject({ workDate: DAY, punchOut: '2026-10-14T19:00:00.000Z', workedMinutes: 210 });
+    const [audit] = await query(`SELECT metadata FROM audit_logs WHERE action = 'attendance.punched_out'`);
+    expect(audit.metadata).toMatchObject({ workDate: DAY });
+
+    // A new sign-in the next evening starts the next working day's shift.
+    setClock(new Date('2026-10-15T15:30:00Z')); // 21:00 IST on the 15th
+    await signIn('b@example.test');
+    expect((await records(ids.empB)).map(r => r.work_date)).toEqual([DAY, '2026-10-15']);
+  });
+
+  it('a night shift still open after 06:00 is the current shift; one open longer than 16 h is incomplete', async () => {
+    await query('DELETE FROM attendance_records');
+    await query(`INSERT INTO attendance_records (employee_id, work_date, punch_in) VALUES ($1, '2026-10-13', '2026-10-13T15:30:00Z')`, [ids.empA]);
+    setClock(new Date('2026-10-14T02:00:00Z')); // 07:30 IST on the 14th, 10.5 h in
+    const today = await agents.employee.get('/api/attendance/me/today').expect(200);
+    expect(today.body.date).toBe(DAY);
+    expect(today.body.record).toMatchObject({ workDate: '2026-10-13', workedMinutes: 630 });
+
+    setClock(new Date('2026-10-14T08:00:00Z')); // 13:30 IST, 16.5 h in: forgot to punch out
+    expect((await agents.employee.get('/api/attendance/me/today').expect(200)).body.record).toBeNull();
+    expect((await agents.employee.post('/api/attendance/me/punch-out').expect(409)).body.code).toBe('NOT_PUNCHED_IN');
+    const month = await agents.employee.get('/api/attendance/me?month=2026-10').expect(200);
+    expect(month.body.records[0]).toMatchObject({ workDate: '2026-10-13', workedMinutes: null });
   });
 
   it('GET /me?month lists only the caller\'s records for that month', async () => {

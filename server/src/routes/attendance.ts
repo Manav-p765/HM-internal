@@ -2,14 +2,16 @@ import type { Request } from 'express';
 import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { audit } from '../services/audit.js';
-import { istDate, isWeekend, now } from '../services/clock.js';
+import { isWeekend, now, workDate } from '../services/clock.js';
 import { createRouter, STAFF } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
 import { isoDate } from './shared.js';
 import { dayStatus } from '../services/availability.js';
+import { isOpenShift, openShiftSql } from '../services/attendance.js';
 
-// Attendance: one row per employee per IST work date. Rows are created by the automatic punch-in at
-// login (services/attendance.ts) or by an admin/manager correction; employees can only punch out.
+// Attendance: one row per employee per working day (06:00-05:59 IST, clock.workDate: shifts are mostly at
+// night). Rows are created by the automatic punch-in at login (services/attendance.ts) or by an
+// admin/manager correction; employees can only punch out.
 // "Today" and every timestamp come from the server clock (services/clock.ts), never from the browser.
 // Clients are refused everywhere.
 export const attendanceRouter = createRouter();
@@ -32,13 +34,20 @@ interface RecordRow {
   corrected: boolean;
 }
 
-// Minutes worked: closed records from punch in to out; today's open record up to now; an open record from
-// an earlier day is incomplete (null).
-function workedMinutes(record: Pick<RecordRow, 'workDate' | 'punchIn' | 'punchOut'>, at: Date): number | null {
+// Minutes worked: closed records from punch in to out; an open shift up to now; a record left open longer
+// than a shift can last (MAX_SHIFT_HOURS: forgot to punch out) is incomplete (null).
+function workedMinutes(record: Pick<RecordRow, 'punchIn' | 'punchOut'>, at: Date): number | null {
   if (record.punchOut) return Math.floor((record.punchOut.getTime() - record.punchIn.getTime()) / 60000);
-  if (record.workDate === istDate(at)) return Math.max(0, Math.floor((at.getTime() - record.punchIn.getTime()) / 60000));
+  if (isOpenShift(record, at)) return Math.max(0, Math.floor((at.getTime() - record.punchIn.getTime()) / 60000));
   return null;
 }
+
+// The employee's current shift ($1 employee, $2 working day, $3 now): the open shift if there is one (it may
+// have started on the previous working day, e.g. a night shift still running after 06:00), otherwise this
+// working day's record, open or closed.
+const CURRENT_SHIFT_SQL = `
+  WHERE a.employee_id = $1 AND (a.work_date = $2 OR ${openShiftSql('a', '$3')})
+  ORDER BY ${openShiftSql('a', '$3')} DESC, a.punch_in DESC LIMIT 1`;
 
 function shape(record: RecordRow, at: Date) {
   return { ...record, workedMinutes: workedMinutes(record, at) };
@@ -53,17 +62,15 @@ function ownEmployeeId(req: Request): string {
 const notFound = () => new HttpError(404, 'Attendance record not found', 'NOT_FOUND');
 
 // ---------------------------------------------------------------------------
-// GET /api/attendance/me/today  (employee): today's record, and any approved leave covering today
+// GET /api/attendance/me/today  (employee): the current shift's record, and any approved leave covering
+// the current working day (`date`)
 // ---------------------------------------------------------------------------
 attendanceRouter.get('/me/today', ['employee'], async (req, res) => {
   const employeeId = ownEmployeeId(req);
   const at = now();
-  const today = istDate(at);
+  const today = workDate(at);
   const [[record], [leave]] = await Promise.all([
-    query<RecordRow>(`SELECT ${RECORD_COLUMNS} FROM attendance_records a WHERE a.employee_id = $1 AND a.work_date = $2`, [
-      employeeId,
-      today,
-    ]),
+    query<RecordRow>(`SELECT ${RECORD_COLUMNS} FROM attendance_records a ${CURRENT_SHIFT_SQL}`, [employeeId, today, at]),
     query(
       `SELECT l.id, l.leave_type AS "leaveType", l.day_type AS "dayType", l.half_day_period AS "halfDayPeriod"
          FROM leave_requests l
@@ -90,7 +97,7 @@ attendanceRouter.get('/me', ['employee'], async (req, res) => {
   const parsed = monthQuery.safeParse(req.query);
   if (!parsed.success) throw new HttpError(400, parsed.error.issues[0].message, 'VALIDATION_ERROR');
   const at = now();
-  const month = parsed.data.month ?? istDate(at).slice(0, 7);
+  const month = parsed.data.month ?? workDate(at).slice(0, 7);
 
   const rows = await query<RecordRow>(
     `SELECT ${RECORD_COLUMNS} FROM attendance_records a
@@ -101,7 +108,7 @@ attendanceRouter.get('/me', ['employee'], async (req, res) => {
   const records = rows.map(r => shape(r, at));
   res.json({
     month,
-    today: istDate(at),
+    today: workDate(at),
     records,
     summary: {
       daysPresent: records.length,
@@ -112,19 +119,21 @@ attendanceRouter.get('/me', ['employee'], async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/attendance/me/punch-out  (employee): closes today's record
+// POST /api/attendance/me/punch-out  (employee): closes the current shift (CURRENT_SHIFT_SQL: a night shift
+// is closed after midnight or after 06:00 too). Only this explicit call (and an admin/manager correction)
+// ever sets punch_out: sign-out, heartbeats, closing the tab or a session ending never do.
 // ---------------------------------------------------------------------------
 attendanceRouter.post('/me/punch-out', ['employee'], async (req, res) => {
   const employeeId = ownEmployeeId(req);
   const at = now();
-  const today = istDate(at);
 
   const record = await withTransaction(async client => {
     const current = (
-      await client.query<RecordRow>(
-        `SELECT ${RECORD_COLUMNS} FROM attendance_records a WHERE a.employee_id = $1 AND a.work_date = $2 FOR UPDATE`,
-        [employeeId, today],
-      )
+      await client.query<RecordRow>(`SELECT ${RECORD_COLUMNS} FROM attendance_records a ${CURRENT_SHIFT_SQL} FOR UPDATE`, [
+        employeeId,
+        workDate(at),
+        at,
+      ])
     ).rows[0];
     if (!current) throw new HttpError(409, 'You have not punched in today', 'NOT_PUNCHED_IN');
     if (current.punchOut) throw new HttpError(409, 'You have already punched out today', 'ALREADY_PUNCHED_OUT');
@@ -140,7 +149,7 @@ attendanceRouter.post('/me/punch-out', ['employee'], async (req, res) => {
     action: 'attendance.punched_out',
     entityType: 'attendance',
     entityId: record.id,
-    metadata: { employeeId, workDate: today },
+    metadata: { employeeId, workDate: record.workDate },
   });
   res.json({ record: shape(record, at) });
 });
@@ -166,7 +175,7 @@ attendanceRouter.get('/', ['admin', 'manager'], async (req, res) => {
   const parsed = rosterQuery.safeParse(req.query);
   if (!parsed.success) throw new HttpError(400, parsed.error.issues[0].message, 'VALIDATION_ERROR');
   const at = now();
-  const today = istDate(at);
+  const today = workDate(at);
   const date = parsed.data.date ?? today;
 
   // Active employees, plus anyone (even inactive now) who has a record on that date. Employees whose
@@ -214,7 +223,8 @@ attendanceRouter.get('/', ['admin', 'manager'], async (req, res) => {
       // Approved full-day leave: not counted as absent.
       onApprovedLeave: employees.filter(e => e.status === 'on_leave').length,
       halfDayLeave: employees.filter(e => e.leave?.dayType === 'half').length,
-      currentlyWorking: employees.filter(e => e.record && !e.record.punchOut && date === today).length,
+      // Open shifts recorded on that working day (a night shift still running after 06:00 counts on its own day).
+      currentlyWorking: employees.filter(e => e.record && !e.record.punchOut && e.record.workedMinutes !== null).length,
       incomplete: employees.filter(e => e.record && e.record.workedMinutes === null).length,
     },
   });
@@ -275,8 +285,11 @@ attendanceRouter.put('/:employeeId/:date', ['admin', 'manager'], async (req, res
   const at = now();
 
   const invalid = (path: string, message: string) => new HttpError(400, message, 'VALIDATION_ERROR', [{ path, message }]);
-  if (date > istDate(at)) throw invalid('punchIn', 'You cannot record attendance for a future date');
-  if (istDate(body.punchIn) !== date) throw invalid('punchIn', 'Punch in must be on the selected date (IST)');
+  if (date > workDate(at)) throw invalid('punchIn', 'You cannot record attendance for a future date');
+  // Working days run 06:00-05:59 IST: a 01:30 punch-in on the 15th belongs to the 14th.
+  if (workDate(body.punchIn) !== date) {
+    throw invalid('punchIn', 'Punch in must fall in the selected working day (06:00 to 05:59 IST)');
+  }
   if (body.punchIn > at) throw invalid('punchIn', 'Punch in cannot be in the future');
   if (body.punchOut) {
     if (body.punchOut <= body.punchIn) throw invalid('punchOut', 'Punch out must be after punch in');

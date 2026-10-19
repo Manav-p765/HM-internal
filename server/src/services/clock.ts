@@ -39,6 +39,18 @@ export function todayIst(): string {
   return istDate(now());
 }
 
+// Attendance runs on working days, not calendar days: most shifts are at night (clients in the US and
+// elsewhere), so a working day starts at 06:00 IST and ends at 05:59 the next morning. A punch-in at
+// 01:30 IST on the 15th belongs to the working day of the 14th. Attendance, presence and "on leave
+// today" use this; invoices, salary and the ledger keep the calendar date (istDate).
+export const WORKDAY_START_IST = { hour: 6, minute: 0 };
+const WORKDAY_START_MS = (WORKDAY_START_IST.hour * 60 + WORKDAY_START_IST.minute) * 60 * 1000;
+
+// 'YYYY-MM-DD' of the working day the given instant falls in.
+export function workDate(at: Date): string {
+  return istDate(new Date(at.getTime() - WORKDAY_START_MS));
+}
+
 // Saturday and Sunday are not working days. `date` is 'YYYY-MM-DD'.
 export function isWeekend(date: string): boolean {
   const day = new Date(`${date}T00:00:00Z`).getUTCDay();

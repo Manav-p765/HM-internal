@@ -3,7 +3,7 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { audit } from '../services/audit.js';
-import { istDate, now } from '../services/clock.js';
+import { now, workDate } from '../services/clock.js';
 import { deleteUserSessions } from '../middleware/auth.js';
 import { createRouter, STAFF } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
@@ -203,7 +203,7 @@ employeesRouter.get('/', ['admin', 'manager'], async (req, res) => {
                    AND $1::date BETWEEN l.start_date AND l.end_date))::int AS "onLeaveToday",
               coalesce(sum(monthly_salary) FILTER (WHERE status = 'active'), 0)::numeric(14,2)::text AS "monthlyPayroll"
          FROM employees`,
-      [istDate(now())],
+      [workDate(now())],
     ),
   ]);
 

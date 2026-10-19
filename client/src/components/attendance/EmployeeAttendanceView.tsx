@@ -1,14 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import { useApp } from '../../context/AppContext';
 import { attendanceApi } from '../../api/attendance';
 import { useApiData } from '../../api/useApiData';
-import { errorMessage } from '../../api/client';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
 import { EmptyState } from '../common/EmptyState';
 import { LoadError } from '../common/LoadError';
-import { Calendar, CheckCircle2, Clock, Download, Square } from 'lucide-react';
+import { Calendar, CheckCircle2, Clock, Download } from 'lucide-react';
+import { PunchOutButton } from './PunchOutButton';
 import { exportToCSV, formatDate, formatMinutes, formatMonthYear, formatTimeIst } from '../../utils/formatters';
 import { AttendanceRecord } from '../../types/attendance';
 
@@ -34,29 +33,14 @@ function recordStatus(r: AttendanceRecord): { label: string; variant: 'success' 
 }
 
 export const EmployeeAttendanceView: React.FC = () => {
-  const { showToast } = useApp();
   // undefined = the current month as the server sees it (IST).
   const [selectedMonth, setSelectedMonth] = useState<string | undefined>(undefined);
   const { data, error, isLoading, reload } = useApiData(() => attendanceApi.myMonth(selectedMonth), [selectedMonth]);
   const today = useApiData(() => attendanceApi.today(), []);
-  const [isPunchingOut, setIsPunchingOut] = useState(false);
 
   const month = data?.month ?? selectedMonth ?? '';
   const months = useMemo(() => (data ? previousMonths(data.today.slice(0, 7)) : []), [data?.today]);
   const todayRecord = today.data?.record ?? null;
-
-  const handlePunchOut = async () => {
-    setIsPunchingOut(true);
-    try {
-      const record = await attendanceApi.punchOut();
-      showToast('success', `Punched out at ${formatTimeIst(record.punchOut)}. Worked ${formatMinutes(record.workedMinutes)} today.`);
-      await Promise.all([today.reload(), reload()]);
-    } catch (err) {
-      showToast('error', errorMessage(err));
-    } finally {
-      setIsPunchingOut(false);
-    }
-  };
 
   const handleExportCSV = () => {
     if (!data) return;
@@ -88,9 +72,11 @@ export const EmployeeAttendanceView: React.FC = () => {
             Export CSV
           </Button>
           {todayRecord && !todayRecord.punchOut && (
-            <Button variant="danger" size="sm" icon={<Square className="w-3.5 h-3.5 fill-current" />} onClick={handlePunchOut} disabled={isPunchingOut}>
-              Punch Out
-            </Button>
+            <PunchOutButton
+              onPunchedOut={async () => {
+                await Promise.all([today.reload(), reload()]);
+              }}
+            />
           )}
           {todayRecord?.punchOut && (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#047857]/10 text-[#047857] text-xs font-semibold">

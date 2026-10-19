@@ -3,7 +3,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { pool, query } from '../src/db.js';
 import { availabilityFor, dayStatus, deriveAvailability, ONLINE_WINDOW_MS, type AvailabilityFacts } from '../src/services/availability.js';
-import { countWeekdays, istDate, isWeekend } from '../src/services/clock.js';
+import { countWeekdays, istDate, isWeekend, workDate } from '../src/services/clock.js';
 import { employee, resetAll, user } from './fixtures.js';
 
 // Wednesday 2026-10-14, 11:00 IST.
@@ -55,6 +55,12 @@ describe('IST date helpers', () => {
   it('istDate switches at 18:30 UTC (IST midnight)', () => {
     expect(istDate(new Date('2026-10-14T18:29:59.999Z'))).toBe('2026-10-14');
     expect(istDate(new Date('2026-10-14T18:30:00.000Z'))).toBe('2026-10-15');
+  });
+
+  it('workDate (attendance) switches at 06:00 IST, not at midnight', () => {
+    expect(workDate(new Date('2026-10-14T18:30:00.000Z'))).toBe('2026-10-14'); // 00:00 IST on the 15th
+    expect(workDate(new Date('2026-10-15T00:29:59.999Z'))).toBe('2026-10-14'); // 05:59:59 IST
+    expect(workDate(new Date('2026-10-15T00:30:00.000Z'))).toBe('2026-10-15'); // 06:00 IST
   });
 
   it('counts weekdays only', () => {
@@ -118,10 +124,12 @@ describe('availabilityFor (database, injected clock)', () => {
     });
   });
 
-  it('follows the clock: 5 minutes later the online employee is available; the next IST day nobody is in', async () => {
+  it('follows the clock: 5 minutes later the online employee is available; the next working day nobody is in', async () => {
     const later = new Date(NOW.getTime() + 5 * 60_000);
     expect((await availabilityFor([ids.Online], later)).get(ids.Online)).toBe('available');
-    const tomorrow = new Date('2026-10-14T18:30:00Z'); // 00:00 IST on the 15th
+    // 00:00 IST on the 15th is still the 14th's working day (Online's shift is open and counts); 06:00 is not.
+    expect((await availabilityFor([ids.Online], new Date('2026-10-14T18:30:00Z'))).get(ids.Online)).toBe('available');
+    const tomorrow = new Date('2026-10-15T00:30:00Z'); // 06:00 IST on the 15th
     const statuses = await availabilityFor([ids.Online, ids['Leave Full']], tomorrow);
     expect(statuses.get(ids.Online)).toBe('not_in_today');
     expect(statuses.get(ids['Leave Full'])).toBe('on_leave'); // leave runs to the 15th

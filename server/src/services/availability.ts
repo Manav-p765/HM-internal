@@ -1,5 +1,6 @@
 import { query } from '../db.js';
-import { istDate, now as clockNow } from './clock.js';
+import { now as clockNow, workDate } from './clock.js';
+import { openShiftSql } from './attendance.js';
 
 // Today's availability of an employee. The ONLY place these rules live; every screen that shows a
 // status (staff directory, client portal team) asks this module.
@@ -51,7 +52,9 @@ export function deriveAvailability(facts: AvailabilityFacts, at: Date): Availabi
 export async function availabilityFor(employeeIds: string[], at: Date = clockNow()): Promise<Map<string, Availability | null>> {
   const result = new Map<string, Availability | null>();
   if (employeeIds.length === 0) return result;
-  const today = istDate(at);
+  // The working day (06:00-05:59 IST) and the employee's shift: an open shift wins (a night shift still
+  // running after 06:00 is still "punched in"), otherwise this working day's record.
+  const today = workDate(at);
   const rows = await query<{
     id: string;
     untracked: boolean;
@@ -69,9 +72,13 @@ export async function availabilityFor(employeeIds: string[], at: Date = clockNow
             (a.id IS NOT NULL) AS "punchedIn",
             (a.punch_out IS NOT NULL) AS "punchedOut"
        FROM employees e
-       LEFT JOIN attendance_records a ON a.employee_id = e.id AND a.work_date = $2::date
+       LEFT JOIN LATERAL (
+         SELECT a.id, a.punch_out FROM attendance_records a
+          WHERE a.employee_id = e.id AND (a.work_date = $2::date OR ${openShiftSql('a', '$3')})
+          ORDER BY ${openShiftSql('a', '$3')} DESC, a.punch_in DESC LIMIT 1
+       ) a ON true
       WHERE e.id = ANY($1::uuid[])`,
-    [employeeIds, today],
+    [employeeIds, today, at],
   );
   for (const row of rows) result.set(row.id, row.untracked ? null : deriveAvailability(row, at));
   return result;
