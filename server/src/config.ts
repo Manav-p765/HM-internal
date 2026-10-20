@@ -39,6 +39,8 @@ const schema = z.object({
   // display name.
   SMTP_FROM: optionalString,
   EMAIL_FROM_NAME: z.preprocess(blankToUndefined, z.string().max(100).default('Monks Internal Management')),
+  // Optional Reply-To for every email (e.g. a monitored admin inbox), since SMTP_FROM is usually no-reply.
+  SMTP_REPLY_TO: z.preprocess(blankToUndefined, z.email('must be a plain email address').optional()),
   // Express "trust proxy": a hop count, true/false, or a comma-separated list of addresses/subnets.
   TRUST_PROXY: z.preprocess(blankToUndefined, z.string().default('1')),
   DB_POOL_MAX: intVar(10, 1),
