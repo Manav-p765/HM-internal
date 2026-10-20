@@ -71,13 +71,15 @@ describe('automatic link by email', () => {
   });
 
   it('never links a client user, and never moves a login already linked to someone else', async () => {
+    // Fixture employees first: the API numbers new codes after them (max + 1).
+    const first = await employee('First Person');
+    await user('taken@example.test', 'employee', { employeeId: first });
+
     const acme = await company('Acme (Fake)');
     await user('client@example.test', 'client', { clientId: acme });
     await admin.post('/api/employees').send(newEmployee('client@example.test', 'Client Namesake')).expect(201);
     expect(await linkOf('client@example.test')).toBeNull();
 
-    const first = await employee('First Person');
-    await user('taken@example.test', 'employee', { employeeId: first });
     await admin.post('/api/employees').send(newEmployee('taken@example.test', 'Second Person')).expect(201);
     expect(await linkOf('taken@example.test')).toBe(first);
     expect(await linkAudits()).toHaveLength(0);
