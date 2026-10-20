@@ -1,6 +1,6 @@
 import { query } from '../db.js';
-import { now as clockNow, workDate } from './clock.js';
-import { openShiftSql } from './attendance.js';
+import { now as clockNow } from './clock.js';
+import { employeeWorkDateSql, openShiftSql } from './attendance.js';
 
 // Today's availability of an employee. The ONLY place these rules live; every screen that shows a
 // status (staff directory, client portal team) asks this module.
@@ -52,9 +52,9 @@ export function deriveAvailability(facts: AvailabilityFacts, at: Date): Availabi
 export async function availabilityFor(employeeIds: string[], at: Date = clockNow()): Promise<Map<string, Availability | null>> {
   const result = new Map<string, Availability | null>();
   if (employeeIds.length === 0) return result;
-  // The working day (06:00-05:59 IST) and the employee's shift: an open shift wins (a night shift still
-  // running after 06:00 is still "punched in"), otherwise this working day's record.
-  const today = workDate(at);
+  // Each employee's own working day (it follows their working hours, services/attendance.ts) and shift: an
+  // open shift wins (a night shift running past midnight is still "punched in"), otherwise that working
+  // day's record. Leave is checked against the same working day.
   const rows = await query<{
     id: string;
     untracked: boolean;
@@ -68,17 +68,18 @@ export async function availabilityFor(employeeIds: string[], at: Date = clockNow
                      WHERE u.employee_id = e.id AND u.role IN ('admin', 'manager')) AS untracked,
             EXISTS (SELECT 1 FROM leave_requests l
                      WHERE l.employee_id = e.id AND l.status = 'approved' AND l.day_type = 'full'
-                       AND $2::date BETWEEN l.start_date AND l.end_date) AS "onFullDayLeave",
+                       AND ${employeeWorkDateSql('e', '$2')} BETWEEN l.start_date AND l.end_date) AS "onFullDayLeave",
             (a.id IS NOT NULL) AS "punchedIn",
-            (a.punch_out IS NOT NULL) AS "punchedOut"
+            -- Punched out, or still open past the shift and its late buffer (forgot to punch out): not working.
+            (a.id IS NOT NULL AND NOT a.open_shift) AS "punchedOut"
        FROM employees e
        LEFT JOIN LATERAL (
-         SELECT a.id, a.punch_out FROM attendance_records a
-          WHERE a.employee_id = e.id AND (a.work_date = $2::date OR ${openShiftSql('a', '$3')})
-          ORDER BY ${openShiftSql('a', '$3')} DESC, a.punch_in DESC LIMIT 1
+         SELECT a.id, ${openShiftSql('a', 'e', '$2')} AS open_shift FROM attendance_records a
+          WHERE a.employee_id = e.id AND (a.work_date = ${employeeWorkDateSql('e', '$2')} OR ${openShiftSql('a', 'e', '$2')})
+          ORDER BY ${openShiftSql('a', 'e', '$2')} DESC, a.punch_in DESC LIMIT 1
        ) a ON true
       WHERE e.id = ANY($1::uuid[])`,
-    [employeeIds, today, at],
+    [employeeIds, at],
   );
   for (const row of rows) result.set(row.id, row.untracked ? null : deriveAvailability(row, at));
   return result;

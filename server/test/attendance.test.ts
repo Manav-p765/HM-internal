@@ -234,6 +234,68 @@ describe('automatic punch-in', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Working hours: the working day starts 2 h before the shift; an open shift stays current until 3 h after it
+// ---------------------------------------------------------------------------
+describe('working hours', () => {
+  const setShift = (employeeId: string, start: string, end: string) =>
+    query('UPDATE employees SET shift_start = $2, shift_end = $3 WHERE id = $1', [employeeId, start, end]);
+
+  it('night shift 21:00-06:00: early sign-in counts, one record through the night, late punch-out closes it', async () => {
+    await query('DELETE FROM attendance_records');
+    await setShift(ids.empB, '21:00', '06:00');
+    setClock(new Date('2026-10-14T13:45:00Z')); // 19:15 IST on the 14th: inside the 2 h early buffer
+    const agent = await signIn('b@example.test');
+    expect((await records(ids.empB)).map(r => r.work_date)).toEqual([DAY]);
+
+    for (const t of ['2026-10-14T19:00:00Z', '2026-10-14T23:30:00Z', '2026-10-15T01:30:00Z']) {
+      setClock(new Date(t)); // 00:30, 05:00 and 07:00 IST on the 15th (sessions last 12 h)
+      await agent.post('/api/presence/heartbeat').expect(200);
+    }
+    const today = await agent.get('/api/attendance/me/today').expect(200);
+    expect(today.body).toMatchObject({ date: DAY, shift: { start: '21:00', end: '06:00' } });
+    expect(today.body.record).toMatchObject({ workDate: DAY, punchOut: null, workedMinutes: 705 });
+
+    const res = await agent.post('/api/attendance/me/punch-out').expect(200); // 07:00 IST: an hour after the shift
+    expect(res.body.record).toMatchObject({ workDate: DAY, workedMinutes: 705 });
+    expect(await records(ids.empB)).toHaveLength(1);
+  });
+
+  it('day shift 10:00-19:00: the working day starts at 08:00 IST', async () => {
+    await query('DELETE FROM attendance_records');
+    await setShift(ids.empA, '10:00', '19:00');
+    setClock(new Date('2026-10-14T02:29:00Z')); // 07:59 IST: still the 13th's working day
+    await signIn('a@example.test');
+    expect((await records(ids.empA)).map(r => r.work_date)).toEqual(['2026-10-13']);
+    await query('DELETE FROM attendance_records');
+    setClock(new Date('2026-10-14T02:30:00Z')); // 08:00 IST
+    await signIn('a@example.test');
+    expect((await records(ids.empA)).map(r => r.work_date)).toEqual([DAY]);
+  });
+
+  it('an open record past the shift end plus the 3 h late buffer is incomplete and no longer "working"', async () => {
+    await query('DELETE FROM attendance_records');
+    await setShift(ids.empA, '10:00', '19:00');
+    await query(`INSERT INTO attendance_records (employee_id, work_date, punch_in) VALUES ($1, $2, '2026-10-14T04:30:00Z')`, [ids.empA, DAY]);
+    setClock(new Date('2026-10-14T16:29:00Z')); // 21:59 IST: inside the buffer (19:00 + 3 h)
+    agents.employee = await signIn('a@example.test'); // sessions last 12 h; the open shift blocks a new record
+    agents.manager = await signIn('manager@example.test');
+    expect((await agents.employee.get('/api/attendance/me/today').expect(200)).body.record.workedMinutes).toBe(719);
+    expect((await agents.manager.get('/api/attendance').expect(200)).body.summary.currentlyWorking).toBe(1);
+
+    setClock(new Date('2026-10-14T16:31:00Z')); // 22:01 IST: past it
+    expect((await agents.employee.get('/api/attendance/me/today').expect(200)).body.record.workedMinutes).toBeNull();
+    const roster = (await agents.manager.get('/api/attendance').expect(200)).body;
+    expect(roster.summary).toMatchObject({ currentlyWorking: 0, incomplete: 1 });
+    expect(roster.employees.find((e: { employeeId: string }) => e.employeeId === ids.empA).shift).toEqual({ start: '10:00', end: '19:00' });
+  });
+
+  it('employees without working hours keep the default working day (06:00 IST) and show shift: null', async () => {
+    const today = await agents.employee.get('/api/attendance/me/today').expect(200);
+    expect(today.body).toMatchObject({ date: DAY, shift: null });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Employee: today, month, punch-out
 // ---------------------------------------------------------------------------
 describe('employee attendance', () => {

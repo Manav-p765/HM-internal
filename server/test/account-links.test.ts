@@ -19,6 +19,8 @@ const newEmployee = (workEmail: string, fullName = 'Ajay Fake') => ({
   designation: 'Developer',
   joiningDate: '2026-01-05',
   monthlySalary: '50000',
+  shiftStart: '10:00',
+  shiftEnd: '19:00',
 });
 
 async function linkOf(email: string): Promise<string | null> {

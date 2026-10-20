@@ -1,5 +1,8 @@
 import React from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
+import { Clock } from 'lucide-react';
+import { employeesApi } from '../../api/employees';
+import { useApiData } from '../../api/useApiData';
 import { useApp } from '../../context/AppContext';
 import { UserRole } from '../../types';
 import { COMPANY_BRAND } from '../../utils/company';
@@ -26,6 +29,9 @@ export const DashboardView: React.FC = () => {
   const requested = params.get('tab') as DashboardTab | null;
   const tab: DashboardTab = requested && tabs.includes(requested) ? requested : tabs[0];
   const isAdmin = currentUser.role === 'admin';
+  // Admin reminder: employees created before working hours existed (attendance can't follow their shift).
+  const roster = useApiData(() => (isAdmin ? employeesApi.list({ limit: 1 }) : Promise.resolve(null)), [isAdmin]);
+  const withoutHours = roster.data?.summary.withoutWorkingHours ?? 0;
 
   return (
     <div className="space-y-6">
@@ -60,6 +66,26 @@ export const DashboardView: React.FC = () => {
           </div>
         )}
       </div>
+
+      {isAdmin && withoutHours > 0 && (
+        <div
+          className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-xl border border-[#B45309]/20 bg-[#B45309]/5 text-xs text-[#111827]"
+          data-testid="working-hours-reminder"
+        >
+          <span className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-[#B45309] shrink-0" />
+            <span>
+              <span className="font-semibold">
+                {withoutHours} employee{withoutHours === 1 ? ' has' : 's have'} no working hours yet.
+              </span>{' '}
+              Add their shift so attendance follows it.
+            </span>
+          </span>
+          <Link to="/employees?workingHours=missing" className="font-semibold text-[#5038F5] hover:underline self-start sm:self-auto">
+            Set working hours →
+          </Link>
+        </div>
+      )}
 
       {tab === 'overview' && isAdmin ? <FinanceOverview /> : <OperationsDashboard />}
     </div>

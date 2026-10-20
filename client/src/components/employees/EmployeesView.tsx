@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useApp } from '../../context/AppContext';
 import { employeesApi } from '../../api/employees';
 import { usersApi } from '../../api/users';
 import { LinkAccountModal } from '../users/LinkAccountModal';
 import { errorMessage } from '../../api/client';
 import { useApiData } from '../../api/useApiData';
-import { DEPARTMENTS, EMPLOYMENT_STATUS_LABEL, Employee, EmploymentStatus } from '../../types';
+import { DEPARTMENTS, EMPLOYMENT_STATUS_LABEL, Employee, EmploymentStatus, shiftLabel } from '../../types';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
@@ -18,7 +18,7 @@ import { Modal } from '../common/Modal';
 import { EmployeeModal } from './EmployeeModal';
 import { EmployeeDetailModal } from './EmployeeDetailModal';
 import { loginStatus, statusBadgeVariant } from './employeeDisplay';
-import { Users, Plus, Search, Eye, Edit2, UserX, UserCheck, ChevronLeft, ChevronRight, Link2, Unlink2 } from 'lucide-react';
+import { Users, Plus, Search, Eye, Edit2, UserX, UserCheck, ChevronLeft, ChevronRight, Link2, Unlink2, Clock } from 'lucide-react';
 import { formatDate, formatDateIst } from '../../utils/formatters';
 import { formatMoney } from '../../utils/money';
 
@@ -34,6 +34,13 @@ export const EmployeesView: React.FC = () => {
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<'' | EmploymentStatus>('');
   const [offset, setOffset] = useState(0);
+  // ?workingHours=missing: only employees whose working hours were never set (the reminder's "Show them").
+  const [searchParams, setSearchParams] = useSearchParams();
+  const missingHoursOnly = searchParams.get('workingHours') === 'missing';
+  const setMissingHoursOnly = (on: boolean) => {
+    setOffset(0);
+    setSearchParams(on ? { workingHours: 'missing' } : {}, { replace: true });
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -49,10 +56,11 @@ export const EmployeesView: React.FC = () => {
         search,
         department: departmentFilter || undefined,
         status: statusFilter || undefined,
+        workingHours: missingHoursOnly ? 'missing' : undefined,
         limit: PAGE_SIZE,
         offset,
       }),
-    [search, departmentFilter, statusFilter, offset],
+    [search, departmentFilter, statusFilter, missingHoursOnly, offset],
   );
   const employees = list.data?.employees ?? [];
   const summary = list.data?.summary;
@@ -138,7 +146,7 @@ export const EmployeesView: React.FC = () => {
     }
   };
 
-  const hasFilters = Boolean(search || departmentFilter || statusFilter);
+  const hasFilters = Boolean(search || departmentFilter || statusFilter || missingHoursOnly);
 
   return (
     <div className="space-y-6">
@@ -157,6 +165,29 @@ export const EmployeesView: React.FC = () => {
           </Button>
         )}
       </div>
+
+      {/* Reminder: employees created before working hours existed (attendance falls back to 06:00-05:59 IST). */}
+      {isAdmin && summary && summary.withoutWorkingHours > 0 && (
+        <Card padding="sm" className="bg-[#B45309]/5 border-[#B45309]/20">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2" data-testid="working-hours-reminder">
+            <div className="flex items-center gap-2 text-xs text-[#111827]">
+              <Clock className="w-4 h-4 text-[#B45309] shrink-0" />
+              <span>
+                <span className="font-semibold">
+                  {summary.withoutWorkingHours} employee{summary.withoutWorkingHours === 1 ? ' has' : 's have'} no working hours.
+                </span>{' '}
+                Set their shift so attendance counts the right working day (night shifts included).
+              </span>
+            </div>
+            <button
+              onClick={() => setMissingHoursOnly(!missingHoursOnly)}
+              className="text-xs font-semibold text-[#5038F5] hover:underline cursor-pointer self-start sm:self-auto"
+            >
+              {missingHoursOnly ? 'Show everyone' : 'Show them →'}
+            </button>
+          </div>
+        </Card>
+      )}
 
       {/* KPI Cards (whole roster, not the filtered page) */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
@@ -307,7 +338,16 @@ export const EmployeesView: React.FC = () => {
                         </div>
                       </td>
                       <td className="py-3 px-4 font-medium text-[#111827]">{emp.department}</td>
-                      <td className="py-3 px-4 text-[#475569]">{emp.designation}</td>
+                      <td className="py-3 px-4 text-[#475569]">
+                        {emp.designation}
+                        <div className="text-[11px] mt-0.5">
+                          {shiftLabel(emp) ? (
+                            <span className="text-[#7185A5]">{shiftLabel(emp)}</span>
+                          ) : (
+                            emp.status !== 'inactive' && <span className="font-semibold text-[#B45309]">No working hours</span>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-3 px-4 whitespace-nowrap">
                         <Badge variant={account.variant} size="sm">
                           {account.label}

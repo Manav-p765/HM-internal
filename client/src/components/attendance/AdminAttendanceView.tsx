@@ -241,6 +241,9 @@ export const AdminAttendanceView: React.FC = () => {
                         <div>
                           <span className="font-semibold text-[#111827] block">{e.fullName}</span>
                           <span className="font-mono text-[10px] text-[#7185A5]">{e.code}</span>
+                          <span className={`block text-[10px] ${e.shift ? 'text-[#7185A5]' : 'text-[#B45309] font-semibold'}`}>
+                            {e.shift ? `Shift ${e.shift.start} – ${e.shift.end} IST` : 'No working hours'}
+                          </span>
                         </div>
                       </div>
                     </td>

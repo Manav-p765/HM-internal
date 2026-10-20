@@ -51,6 +51,13 @@ export const EmployeeDashboardView: React.FC = () => {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6" data-testid="punch-card">
           <div className="space-y-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-[#7185A5]">Today's Attendance</span>
+            {today.data && (
+              <p className="text-[11px] text-[#7185A5]" data-testid="my-shift">
+                {today.data.shift
+                  ? `Your shift: ${today.data.shift.start} – ${today.data.shift.end} IST (you can sign in up to 2 hours early)`
+                  : 'Your working hours are not set yet: ask your admin to add them.'}
+              </p>
+            )}
             {today.error ? (
               <p className="text-xs text-[#E11D48]">{today.error}</p>
             ) : !today.data ? (

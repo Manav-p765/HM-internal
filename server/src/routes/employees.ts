@@ -19,10 +19,14 @@ const STATUSES = ['active', 'on_leave', 'inactive'] as const;
 // ---------------------------------------------------------------------------
 // SQL fragments and row shaping
 // ---------------------------------------------------------------------------
+// Working hours ('HH:MM' IST, null for employees created before hours existed: admins are reminded).
+const SHIFT_COLUMNS = `to_char(e.shift_start, 'HH24:MI') AS "shiftStart", to_char(e.shift_end, 'HH24:MI') AS "shiftEnd"`;
+
 const EMPLOYEE_COLUMNS = `
   e.id, e.employee_code AS code, e.full_name AS "fullName", e.work_email AS "workEmail", e.phone,
   e.department, e.designation, e.joining_date AS "joiningDate", e.status, e.notes,
   e.avatar_url AS "avatarUrl", e.created_at AS "createdAt", e.updated_at AS "updatedAt",
+  ${SHIFT_COLUMNS},
   e.monthly_salary AS "monthlySalary", e.payment_method AS "paymentMethod"`;
 
 // The employee's login (if any), for the admin/manager views.
@@ -111,6 +115,22 @@ const avatarUrl = z
 
 const email = z.string().trim().toLowerCase().max(254).pipe(z.email('Enter a valid work email'));
 
+// Shift start/end in IST, 24-hour 'HH:MM'. The end may be earlier than the start (an overnight shift).
+const timeOfDay = (label: string) =>
+  z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, `Enter the ${label} as HH:MM (24-hour, IST)`);
+
+// Working hours come as a pair: both or neither, and not the same time.
+function checkShift(body: { shiftStart?: string; shiftEnd?: string }): void {
+  const invalid = (path: string, message: string) => new HttpError(400, message, 'VALIDATION_ERROR', [{ path, message }]);
+  if ((body.shiftStart === undefined) !== (body.shiftEnd === undefined)) {
+    const missing = body.shiftStart === undefined ? 'shiftStart' : 'shiftEnd';
+    throw invalid(missing, 'Enter both the shift start and the shift end');
+  }
+  if (body.shiftStart !== undefined && body.shiftStart === body.shiftEnd) {
+    throw invalid('shiftEnd', 'The shift must end at a different time than it starts');
+  }
+}
+
 const createSchema = z.object({
   fullName: trimmed(120).min(1, 'Full name is required'),
   workEmail: email,
@@ -123,6 +143,9 @@ const createSchema = z.object({
   paymentMethod: optionalText(40),
   notes: optionalText(2000),
   avatarUrl,
+  // Working hours are required for new employees (the working day and attendance follow them).
+  shiftStart: timeOfDay('shift start'),
+  shiftEnd: timeOfDay('shift end'),
 });
 
 const updateSchema = createSchema
@@ -143,6 +166,8 @@ const COLUMN: Record<string, string> = {
   paymentMethod: 'payment_method',
   notes: 'notes',
   avatarUrl: 'avatar_url',
+  shiftStart: 'shift_start',
+  shiftEnd: 'shift_end',
 };
 
 // Turns a Postgres unique violation on work_email into a 409.
@@ -160,6 +185,7 @@ const listQuerySchema = z.object({
   search: z.string().trim().max(100).optional(),
   status: z.enum(STATUSES).optional(),
   department: z.string().trim().max(80).optional(),
+  workingHours: z.enum(['missing']).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -167,7 +193,7 @@ const listQuerySchema = z.object({
 employeesRouter.get('/', ['admin', 'manager'], async (req, res) => {
   const parsed = listQuerySchema.safeParse(req.query);
   if (!parsed.success) throw new HttpError(400, parsed.error.issues[0].message, 'VALIDATION_ERROR');
-  const { search, status, department, limit, offset } = parsed.data;
+  const { search, status, department, workingHours, limit, offset } = parsed.data;
 
   const where: string[] = [];
   const params: unknown[] = [];
@@ -184,6 +210,7 @@ employeesRouter.get('/', ['admin', 'manager'], async (req, res) => {
     params.push(department);
     where.push(`e.department = $${params.length}`);
   }
+  if (workingHours === 'missing') where.push(`e.shift_start IS NULL AND e.status <> 'inactive'`);
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   const [rows, [{ total }], [summary]] = await Promise.all([
@@ -198,11 +225,13 @@ employeesRouter.get('/', ['admin', 'manager'], async (req, res) => {
     query<{ total: number }>(`SELECT count(*)::int AS total FROM employees e ${whereSql}`, params),
     // Headline numbers for the whole roster (not the filtered page).
     // onLeaveToday: approved full-day leave covering today (IST), the same rule as attendance and availability.
-    query<{ total: number; active: number; onLeave: number; onLeaveToday: number; inactive: number; monthlyPayroll: string }>(
+    query<{ total: number; active: number; onLeave: number; onLeaveToday: number; inactive: number; withoutWorkingHours: number; monthlyPayroll: string }>(
       `SELECT count(*)::int AS total,
               count(*) FILTER (WHERE status = 'active')::int AS active,
               count(*) FILTER (WHERE status = 'on_leave')::int AS "onLeave",
               count(*) FILTER (WHERE status = 'inactive')::int AS inactive,
+              -- Reminder: current employees whose working hours were never set (created before they existed).
+              count(*) FILTER (WHERE status <> 'inactive' AND shift_start IS NULL)::int AS "withoutWorkingHours",
               count(*) FILTER (WHERE status <> 'inactive' AND EXISTS (
                 SELECT 1 FROM leave_requests l
                  WHERE l.employee_id = employees.id AND l.status = 'approved' AND l.day_type = 'full'
@@ -238,7 +267,7 @@ employeesRouter.get('/directory', STAFF, async (_req, res) => {
 // ---------------------------------------------------------------------------
 const ME_COLUMNS = `
   e.id, e.employee_code AS code, e.full_name AS "fullName", e.work_email AS "workEmail", e.phone,
-  e.department, e.designation, e.joining_date AS "joiningDate", e.status, e.avatar_url AS "avatarUrl"`;
+  e.department, e.designation, e.joining_date AS "joiningDate", e.status, e.avatar_url AS "avatarUrl", ${SHIFT_COLUMNS}`;
 
 function ownEmployeeId(req: Request): string {
   const id = req.user!.employeeId;
@@ -290,6 +319,7 @@ employeesRouter.get('/:id', ['admin', 'manager'], async (req, res) => {
 // ---------------------------------------------------------------------------
 employeesRouter.post('/', ['admin'], async (req, res) => {
   const body = parseBody(createSchema, req.body);
+  checkShift(body);
 
   const { id, linkedUserId } = await withTransaction(async client => {
     // Serialise code allocation: EMP-001, EMP-002, ... (max + 1 under a transaction-scoped lock).
@@ -301,8 +331,8 @@ employeesRouter.post('/', ['admin'], async (req, res) => {
     const inserted = await client
       .query<{ id: string }>(
         `INSERT INTO employees (employee_code, full_name, work_email, phone, department, designation, joining_date,
-                                status, monthly_salary, payment_method, notes, avatar_url)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+                                status, monthly_salary, payment_method, notes, avatar_url, shift_start, shift_end)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
         [
           next.rows[0].code,
           body.fullName,
@@ -316,6 +346,8 @@ employeesRouter.post('/', ['admin'], async (req, res) => {
           body.paymentMethod,
           body.notes,
           body.avatarUrl,
+          body.shiftStart,
+          body.shiftEnd,
         ],
       )
       .catch(rethrowEmailTaken);
@@ -340,6 +372,7 @@ employeesRouter.post('/', ['admin'], async (req, res) => {
 employeesRouter.patch('/:id', ['admin'], async (req, res) => {
   const id = parseId(req.params.id);
   const body = parseBody(updateSchema, req.body);
+  checkShift(body);
 
   const { changed, linkedUserId } = await withTransaction(async client => {
     const current = (await client.query<{ status: string }>('SELECT status FROM employees WHERE id = $1 FOR UPDATE', [id]))

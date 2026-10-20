@@ -27,6 +27,7 @@ Migrations always run **before** the code that needs them, by hand, from your ma
    npm run db:migrate
    ```
    It prints each file it applies (`Applied N migration(s).`). Run it again: it must print `No pending migrations.`
+   This round adds `010_password_tokens`, `011_company_logo` and `012_employee_working_hours` (all additive).
 3. Once only, if not done yet: make Neon enforce the statement timeout (Neon drops the one the app sends at connect time, see NEON.md):
    ```sql
    ALTER ROLE hm_app SET statement_timeout = '15s';
@@ -80,6 +81,7 @@ Must **not** be set in production (the server refuses to start): `DB_SCHEMA`, `S
    - [ ] Sign in as a client: Projects, **Invoices** (only their company's issued invoices; open one, Print / Save as PDF), Team.
    - [ ] Settings > Users: send yourself a reset link; the email arrives (check spam), has a plain and an HTML version, the link opens `APP_URL/set-password` and works once.
    - [ ] Employees: nobody who signs in shows "No login" (otherwise Link, or `npm run link-by-email`).
+   - [ ] Employees: the "no working hours" reminder lists everyone created before working hours existed; set each person's shift (Edit > Shift Start / Shift End, IST). Until then their attendance uses the 06:00-05:59 working day.
 6. Render logs: no `Mail send failed`, no `Automatic punch-in failed`, no 5xx bursts.
 
 ## 4. Vercel (client)

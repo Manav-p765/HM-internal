@@ -34,8 +34,9 @@ export interface TodayLeave {
 
 // GET /api/attendance/me/today
 export interface MyAttendanceToday {
-  date: string;
+  date: string; // the employee's working day (it follows their working hours)
   serverTime: string;
+  shift: { start: string; end: string } | null; // working hours, IST; null when not set yet
   record: AttendanceRecord | null;
   leave: TodayLeave | null;
 }
@@ -63,6 +64,7 @@ export interface RosterEntry {
   department: string;
   designation: string;
   avatarUrl: string | null;
+  shift: { start: string; end: string } | null;
   record: AttendanceRecord | null;
   leave: { leaveType: LeaveType; dayType: DayType; halfDayPeriod: HalfDayPeriod | null } | null;
   status: RosterStatus;

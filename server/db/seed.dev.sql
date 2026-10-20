@@ -22,6 +22,11 @@ INSERT INTO employees (id, employee_code, full_name, work_email, phone, departme
   ('00000000-0000-4000-a000-000000000103', 'EMP-003', 'Eli Employee (Fake)',   'employee2@example.test', '+00 00000 00003', 'Design',      'Product Designer',  '2025-01-06', 'active',  70000.00, 'UPI'),
   ('00000000-0000-4000-a000-000000000104', 'EMP-004', 'Nia Newhire (Fake)',    'newhire@example.test',   '+00 00000 00004', 'Marketing',   'Marketing Associate', '2026-10-01', 'active',  55000.00, 'Bank Transfer');
 
+-- Working hours (IST). Mostly night shifts; EMP-004 has none yet, so the "set working hours" reminder shows.
+UPDATE employees SET shift_start = '10:00', shift_end = '19:00' WHERE employee_code = 'EMP-001';
+UPDATE employees SET shift_start = '21:00', shift_end = '06:00' WHERE employee_code = 'EMP-002';
+UPDATE employees SET shift_start = '18:30', shift_end = '03:30' WHERE employee_code = 'EMP-003';
+
 -- Users. password_hash = bcrypt('devpass123', cost 10)
 INSERT INTO users (id, email, password_hash, role, employee_id, status) VALUES
   ('00000000-0000-4000-a000-000000000001', 'admin@example.test',     '$2b$10$1Oz/QhsWJBXzDI5l1KQLIuIHO1qX3AskdqHU.NvBn1n1JHcXSaGWW', 'admin',    NULL,                                   'active'),
