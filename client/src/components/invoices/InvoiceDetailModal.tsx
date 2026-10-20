@@ -13,7 +13,7 @@ import { LoadError } from '../common/LoadError';
 import { InvoiceStatusBadge } from './InvoiceStatusBadge';
 import { RecordPaymentModal } from './RecordPaymentModal';
 import { CancelInvoiceModal } from './CancelInvoiceModal';
-import { Printer, CreditCard, CheckCircle2, Send, Edit2, Trash2, Ban, Undo2 } from 'lucide-react';
+import { Download, Printer, CreditCard, CheckCircle2, Send, Edit2, Trash2, Ban, Undo2 } from 'lucide-react';
 import { formatDate, formatDateIst } from '../../utils/formatters';
 import { formatMoney, trimRate } from '../../utils/money';
 
@@ -105,6 +105,9 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
               <div className="flex items-center gap-2 flex-wrap">
                 <Button variant="outline" size="sm" icon={<Printer className="w-3.5 h-3.5" />} onClick={() => navigate(`/invoices/${invoice.id}/print`)}>
                   Print
+                </Button>
+                <Button variant="outline" size="sm" icon={<Download className="w-3.5 h-3.5" />} onClick={() => navigate(`/invoices/${invoice.id}/print?download=1`)}>
+                  Download PDF
                 </Button>
                 {(invoice.status === 'draft' || invoice.status === 'sent') && (
                   <Button variant="outline" size="sm" icon={<Edit2 className="w-3.5 h-3.5" />} onClick={() => navigate(`/invoices/${invoice.id}/edit`)}>

@@ -49,7 +49,7 @@ beforeEach(async () => {
   await resetAll();
   await query(
     `UPDATE company_settings SET company_name = 'Example Studio (Fake)', invoice_prefix = 'HM-', invoice_next_number = 1,
-            default_gst_rate = 18, bank_details = NULL, terms = NULL`,
+            default_gst_rate = 18, bank_details = NULL, terms = NULL, logo_data_url = NULL`,
   );
   const adminUser = await user('admin@example.test', 'admin');
   await user('manager@example.test', 'manager', { employeeId: await employee('Morgan Manager') });
@@ -185,6 +185,63 @@ describe('company settings', () => {
     await bad({ companyEmail: 'not-an-email' }, 'companyEmail');
     await bad({ companyName: '' }, 'companyName');
     await bad({}, '');
+  });
+
+  describe('logo (printed on invoices)', () => {
+    // Smallest valid files of each type: the API checks the file signature, not just the declared type.
+    const PNG_1PX =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const png = `data:image/png;base64,${PNG_1PX}`;
+    const jpeg = `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10]).toString('base64')}`;
+    const webp = `data:image/webp;base64,${Buffer.from('RIFF\x1a\x00\x00\x00WEBPVP8 ', 'latin1').toString('base64')}`;
+
+    it('admin sets, replaces and removes it; managers read it; the audit row names the field only', async () => {
+      const set = await agents.admin.patch('/api/settings/company').send({ logoDataUrl: png }).expect(200);
+      expect(set.body.company.logoDataUrl).toBe(png);
+      expect((await agents.manager.get('/api/settings/company').expect(200)).body.company.logoDataUrl).toBe(png);
+      await agents.admin.patch('/api/settings/company').send({ logoDataUrl: jpeg }).expect(200);
+      await agents.admin.patch('/api/settings/company').send({ logoDataUrl: webp }).expect(200);
+      const cleared = await agents.admin.patch('/api/settings/company').send({ logoDataUrl: null }).expect(200);
+      expect(cleared.body.company.logoDataUrl).toBeNull();
+      const rows = await auditRows('settings.company_updated');
+      expect(rows.map(r => r.metadata)).toEqual(Array(4).fill({ fields: ['logoDataUrl'] }));
+      expect(JSON.stringify(rows)).not.toContain('base64');
+    });
+
+    it('managers cannot change it', async () => {
+      await agents.manager.patch('/api/settings/company').send({ logoDataUrl: png }).expect(403);
+    });
+
+    it('refuses SVG, other schemes, a type that does not match the file, bad base64 and files over 150 KB', async () => {
+      const bad = async (logoDataUrl: unknown) => {
+        const res = await agents.admin.patch('/api/settings/company').send({ logoDataUrl }).expect(400);
+        expect(res.body.details.map((d: { path: string }) => d.path)).toContain('logoDataUrl');
+      };
+      await bad(`data:image/svg+xml;base64,${Buffer.from('<svg onload="alert(1)"/>').toString('base64')}`);
+      await bad('https://example.test/logo.png');
+      await bad('javascript:alert(1)');
+      await bad(`data:image/png;base64,${Buffer.from('<script>alert(1)</script>').toString('base64')}`); // not a PNG
+      await bad(`data:image/jpeg;base64,${PNG_1PX}`); // PNG bytes declared as JPEG
+      await bad(`data:image/png;base64,${PNG_1PX.slice(0, -1)}`); // truncated base64
+      await bad(`${png}"><img src=x onerror=alert(1)>`);
+      const big = Buffer.alloc(150 * 1024 + 1);
+      Buffer.from(PNG_1PX, 'base64').copy(big);
+      await bad(`data:image/png;base64,${big.toString('base64')}`);
+      await bad(42);
+      const [{ logo }] = await query<{ logo: string | null }>('SELECT logo_data_url AS logo FROM company_settings');
+      expect(logo).toBeNull();
+    });
+  });
+});
+
+describe('total in words (printed on the invoice)', () => {
+  it('every invoice response carries totalInWords derived from the stored total', async () => {
+    const draft = await createInvoice({ items: [item('A', 3, '33.33')], taxRate: 18 });
+    expect(draft.total).toBe('117.99');
+    expect(draft.totalInWords).toBe('One Hundred and Seventeen Indian Rupees and Ninety Nine Paise Only');
+    const big = await createInvoice({ items: [item('B', 1, '100000')], taxRate: 18 });
+    const res = await agents.manager.get(`/api/invoices/${big.id}`).expect(200);
+    expect(res.body.invoice).toMatchObject({ total: '118000.00', totalInWords: 'One Lakh Eighteen Thousand Indian Rupees Only' });
   });
 });
 
