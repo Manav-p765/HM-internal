@@ -142,15 +142,18 @@ describe('automatic punch-in', () => {
     expect(rows[0].punch_in.toISOString()).toBe(T0.toISOString());
   });
 
-  it('GET /auth/me is read-only: it never creates a record, even on a new IST day', async () => {
+  it('GET /auth/me is read-only: it never creates a record, even on a new working day', async () => {
     await query('DELETE FROM attendance_records');
     setClock(new Date('2026-10-14T16:30:00Z')); // 22:00 IST on the 14th
     const agent = await signIn('b@example.test');
-    setClock(new Date('2026-10-15T01:00:00Z')); // 06:30 IST on the 15th, same sign-in (8.5 h later)
+    await agent.post('/api/attendance/me/punch-out').expect(409); // INVALID: same instant as the punch-in
+    setClock(new Date('2026-10-14T17:30:00Z')); // 23:00 IST: the shift ends
+    await agent.post('/api/attendance/me/punch-out').expect(200);
+    setClock(new Date('2026-10-15T01:00:00Z')); // 06:30 IST on the 15th: a new working day, same sign-in
     await agent.get('/api/auth/me').expect(200);
     expect((await records(ids.empB)).map(r => r.work_date)).toEqual([DAY]);
     expect(await query(`SELECT 1 FROM attendance_records WHERE work_date = '2026-10-15'`)).toHaveLength(0);
-    // The first heartbeat (a POST) of the new day does punch in.
+    // The first heartbeat (a POST) of the new working day does punch in.
     await agent.post('/api/presence/heartbeat').expect(200);
     expect((await records(ids.empB)).map(r => r.work_date)).toEqual([DAY, '2026-10-15']);
   });
@@ -451,9 +454,11 @@ describe('roster and corrections', () => {
     expect(team.body.availability.find((a: { employeeId: string }) => a.employeeId === ids.empA).status).toBe('on_leave');
   });
 
-  it('defaults to today (IST) and validates the date', async () => {
-    setClock(new Date('2026-10-14T19:00:00Z')); // already the 15th in IST
+  it('defaults to the current working day (06:00-05:59 IST) and validates the date', async () => {
+    setClock(new Date('2026-10-14T19:00:00Z')); // 00:30 IST on the 15th: still the 14th's working day
     const admin = await signIn('admin@example.test'); // a fresh sign-in (the 09:30 one would be 15 h old)
+    expect((await admin.get('/api/attendance').expect(200)).body.date).toBe(DAY);
+    setClock(new Date('2026-10-15T00:30:00Z')); // 06:00 IST on the 15th
     expect((await admin.get('/api/attendance').expect(200)).body.date).toBe('2026-10-15');
     await admin.get('/api/attendance?date=2026-02-30x').expect(400);
   });
