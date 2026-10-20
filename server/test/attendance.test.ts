@@ -467,6 +467,22 @@ describe('roster and corrections', () => {
     await agents.admin.put('/api/attendance/00000000-0000-4000-a000-00000000dead/2026-10-14').send(base).expect(404);
     expect(await query(`SELECT 1 FROM audit_logs WHERE action = 'attendance.corrected'`)).toHaveLength(0);
   });
+
+  it('PUT accepts a night shift on its working day: punch in after midnight, punch out the next morning', async () => {
+    setClock(new Date('2026-10-15T05:00:00Z')); // 10:30 IST on the 15th
+    agents.admin = await signIn('admin@example.test');
+    const res = await agents.admin
+      .put(`/api/attendance/${ids.empB}/${DAY}`)
+      .send({ punchIn: '2026-10-15T01:30:00+05:30', punchOut: '2026-10-15T07:00:00+05:30', note: 'Night shift (fake)' })
+      .expect(200);
+    expect(res.body.record).toMatchObject({ workDate: DAY, workedMinutes: 330 });
+    // 06:00 starts the next working day: that punch-in does not belong to the 14th.
+    const wrong = await agents.admin
+      .put(`/api/attendance/${ids.empB}/${DAY}`)
+      .send({ punchIn: '2026-10-15T06:00:00+05:30', note: 'Wrong day (fake)' })
+      .expect(400);
+    expect(wrong.body.details[0].path).toBe('punchIn');
+  });
 });
 
 // ---------------------------------------------------------------------------
