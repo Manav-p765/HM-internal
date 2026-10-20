@@ -11,8 +11,9 @@ import { company, employee, member, project, resetAll, signIn, task, user } from
 
 const OWN_PAY = new Set(['GET /api/salary/slips/me', 'GET /api/salary/slips/me/:id']);
 
-// Keys that carry money, and any string that looks like a decimal amount ("45000.00").
-const MONEY_KEY = /amount|salary|payroll|balance|budget|cost|price|invoice|payment|paid|gst|tax|bank|revenue|income|expense|billing|outstanding|collected|net/i;
+// Keys that carry money, and any string that looks like a decimal amount ("45000.00"). A GSTIN is a tax
+// registration id (managers keep client records), not an amount, so "gstin" is allowed.
+const MONEY_KEY = /amount|salary|payroll|balance|budget|cost|price|invoice|payment|paid|gst(?!in)|tax|bank|revenue|income|expense|billing|outstanding|collected|net/i;
 const AMOUNT = /^-?\d+\.\d{2}$/;
 
 function moneyIn(value: unknown, path = '$'): string[] {
