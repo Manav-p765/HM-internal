@@ -19,10 +19,12 @@ export interface AttendanceRecord {
   workDate: string; // YYYY-MM-DD (IST)
   punchIn: string; // ISO timestamp
   punchOut: string | null;
-  source: 'login' | 'manual';
+  source: 'login' | 'manual' | 'punch'; // login = the old automatic punch-in; punch = the employee's button; manual = a correction
   note: string | null;
   corrected: boolean; // changed by an admin/manager
   workedMinutes: number | null; // null = an open record from an earlier day (incomplete)
+  lateMinutes: number | null; // punched in more than 30 min after the shift start (derived from working hours)
+  outsideHours: boolean; // punched in outside the shift window (allowed, flagged for review)
 }
 
 export interface TodayLeave {
@@ -39,6 +41,7 @@ export interface MyAttendanceToday {
   shift: { start: string; end: string } | null; // working hours, IST; null when not set yet
   record: AttendanceRecord | null;
   leave: TodayLeave | null;
+  punchInDue: boolean; // the shift window is open and nothing is recorded yet (not on full-day leave)
 }
 
 // GET /api/attendance/me?month=
@@ -84,6 +87,8 @@ export interface AttendanceRoster {
     halfDayLeave: number;
     currentlyWorking: number;
     incomplete: number;
+    late: number;
+    outsideHours: number;
   };
 }
 
@@ -194,4 +199,17 @@ export interface PortalTeamMember {
   avatarUrl: string | null;
   status: Availability | null; // null: an admin/manager, attendance not tracked (show no badge)
   projects: string[];
+}
+
+// GET /api/attendance/review?days= (admin, manager): records nobody has corrected that need a look.
+export type ReviewReason = 'incomplete' | 'outside_hours' | 'late';
+export const REVIEW_REASON_LABEL: Record<ReviewReason, string> = {
+  incomplete: 'No punch-out',
+  outside_hours: 'Outside hours',
+  late: 'Late',
+};
+export interface ReviewRecord extends AttendanceRecord {
+  fullName: string;
+  code: string;
+  reasons: ReviewReason[];
 }

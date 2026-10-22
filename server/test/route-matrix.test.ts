@@ -33,6 +33,8 @@ const CLIENT_ALLOWED = new Set([
   'GET /api/portal/projects/:id/assignees',
   'POST /api/portal/projects/:id/tasks',
   'PATCH /api/portal/tasks/:id',
+  // Where a shared task link opens: the company's own client-visible task, else 404 (see portal-tasks.test.ts).
+  'GET /api/portal/tasks/by-code/:code',
   // Who works on the company's projects and their status today (name, designation, avatar, status, projects).
   'GET /api/portal/team',
   // The company's own issued invoices, read-only (no drafts, no internal fields; see portal-invoices.test.ts).

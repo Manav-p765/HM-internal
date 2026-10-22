@@ -50,6 +50,8 @@ export const homeFor = (role: string) => (role === 'client' ? '/portal' : '/dash
 
 // Only return to a remembered page that belongs to the user's own shell.
 function safeReturnPath(from: string | undefined, role: string): string {
+  // A shared task link (/task/TSK-042) works for every role: it resolves to the reader's own shell.
+  if (from && /^\/task\/[A-Za-z0-9-]+$/.test(from)) return from;
   if (!from) return homeFor(role);
   const isPortalPath = from === '/portal' || from.startsWith('/portal/');
   return isPortalPath === (role === 'client') ? from : homeFor(role);

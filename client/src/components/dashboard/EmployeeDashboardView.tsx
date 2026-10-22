@@ -12,6 +12,8 @@ import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
 import { ArrowRight, CalendarDays, CheckCircle2 } from 'lucide-react';
 import { PunchOutButton } from '../attendance/PunchOutButton';
+import { PunchInButton } from '../attendance/PunchInButton';
+import { PunchFlagBadges } from '../attendance/PunchFlagBadges';
 import { formatDate, formatMinutes, formatMonthYear, formatTimeIst } from '../../utils/formatters';
 import { dayTypeLabel, daysLabel } from '../leaves/LeaveDetails';
 
@@ -54,7 +56,7 @@ export const EmployeeDashboardView: React.FC = () => {
             {today.data && (
               <p className="text-[11px] text-[#7185A5]" data-testid="my-shift">
                 {today.data.shift
-                  ? `Your shift: ${today.data.shift.start} – ${today.data.shift.end} IST (you can sign in up to 2 hours early)`
+                  ? `Your shift: ${today.data.shift.start} – ${today.data.shift.end} IST (you can punch in up to 2 hours early)`
                   : 'Your working hours are not set yet: ask your admin to add them.'}
               </p>
             )}
@@ -78,9 +80,10 @@ export const EmployeeDashboardView: React.FC = () => {
                       Punched In
                     </span>
                   )}
+                  <PunchFlagBadges record={record} />
                 </div>
                 <p className="text-xs text-[#7185A5]">
-                  Punched in automatically at sign-in{record.corrected ? ' (adjusted by a manager)' : ''}
+                  Punched in{record.corrected ? ' (adjusted by a manager)' : ''}
                   {record.punchOut
                     ? ` · Punched out at ${formatTimeIst(record.punchOut)} · Worked ${formatMinutes(record.workedMinutes)}`
                     : ` · ${formatMinutes(record.workedMinutes)} so far (as of ${formatTimeIst(today.data.serverTime)} IST)`}
@@ -92,13 +95,25 @@ export const EmployeeDashboardView: React.FC = () => {
                 <p className="text-xs text-[#7185A5]">
                   {todayLeave
                     ? `${LEAVE_TYPE_LABEL[todayLeave.leaveType]} · ${dayTypeLabel(todayLeave)}`
-                    : 'You are punched in automatically when you sign in.'}
+                    : today.data.punchInDue
+                      ? 'Press Punch In when you start your shift.'
+                      : 'Outside your working hours. Punch in only if you are starting work now.'}
                 </p>
               </>
             )}
           </div>
 
           <div className="flex items-center gap-3 self-start md:self-auto">
+            {today.data && !record && todayLeave?.dayType !== 'full' && (
+              <PunchInButton
+                size="lg"
+                className="px-6 py-3 text-sm shadow-md"
+                outsideWindow={!today.data.punchInDue}
+                onPunchedIn={async () => {
+                  await Promise.all([today.reload(), month.reload()]);
+                }}
+              />
+            )}
             {record && !record.punchOut && (
               <PunchOutButton
                 size="lg"

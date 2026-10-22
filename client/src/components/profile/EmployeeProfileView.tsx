@@ -32,7 +32,7 @@ export const EmployeeProfileView: React.FC = () => {
   const [fieldErrors, setFieldErrors] = useState<{ phone?: string; avatarUrl?: string }>({});
   const [isSaving, setIsSaving] = useState(false);
 
-  // Own attendance is an employee-role route; other roles have no automatic punch-in.
+  // Own attendance is an employee-role route; other roles do not punch in.
   const isEmployee = currentUser.role === 'employee';
   const month = useApiData(() => (isEmployee ? attendanceApi.myMonth() : Promise.resolve(null)), [isEmployee]);
 

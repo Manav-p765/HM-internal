@@ -1,5 +1,4 @@
 import { query } from '../db.js';
-import { autoPunchIn } from '../services/attendance.js';
 import { now } from '../services/clock.js';
 import { availabilityFor } from '../services/availability.js';
 import { createRouter, STAFF } from '../middleware/access.js';
@@ -16,7 +15,6 @@ export const presenceRouter = createRouter();
 presenceRouter.post('/heartbeat', ['employee'], heartbeatLimiter, async (req, res) => {
   const employeeId = req.user!.employeeId;
   if (!employeeId) throw new HttpError(404, 'Your account is not linked to an employee record', 'NOT_LINKED');
-  await autoPunchIn(req, req.user!); // the first heartbeat of a new IST day punches the employee in
   const at = now();
   await query(
     `UPDATE employees SET last_seen_at = $2

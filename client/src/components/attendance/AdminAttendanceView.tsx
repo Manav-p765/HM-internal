@@ -7,6 +7,7 @@ import {
   HALF_DAY_LABEL,
   LEAVE_TYPE_LABEL,
   ROSTER_STATUS_LABEL,
+  REVIEW_REASON_LABEL,
   RosterEntry,
   RosterStatus,
 } from '../../types/attendance';
@@ -19,8 +20,9 @@ import { EmptyState } from '../common/EmptyState';
 import { LoadError } from '../common/LoadError';
 import { FormField } from '../common/FormField';
 import { Avatar } from '../common/Avatar';
-import { CalendarCheck, Clock, Download, Edit2, History, Info, Search } from 'lucide-react';
+import { AlertTriangle, CalendarCheck, Clock, Download, Edit2, History, Info, Search } from 'lucide-react';
 import { exportToCSV, formatDate, formatMinutes, formatTimeIst, timeInputIst } from '../../utils/formatters';
+import { PunchFlagBadges } from './PunchFlagBadges';
 
 const STATUS_VARIANT: Record<RosterStatus, 'success' | 'purple' | 'neutral'> = {
   present: 'success',
@@ -37,6 +39,8 @@ export const AdminAttendanceView: React.FC = () => {
   const [toCorrect, setToCorrect] = useState<RosterEntry | null>(null);
 
   const { data, error, isLoading, reload } = useApiData(() => attendanceApi.roster(selectedDate), [selectedDate]);
+  const review = useApiData(() => attendanceApi.review(), []);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const date = data?.date ?? selectedDate ?? '';
 
   const filtered = useMemo(() => {
@@ -52,7 +56,7 @@ export const AdminAttendanceView: React.FC = () => {
   const onLeave = useMemo(() => (data ? data.employees.filter(e => e.leave) : []), [data]);
 
   const handleExportCSV = () => {
-    const headers = ['Employee Code', 'Employee Name', 'Department', 'Date', 'Status', 'Punch In (IST)', 'Punch Out (IST)', 'Worked', 'Corrected', 'Note'];
+    const headers = ['Employee Code', 'Employee Name', 'Department', 'Date', 'Status', 'Punch In (IST)', 'Punch Out (IST)', 'Worked', 'Flags', 'Corrected', 'Note'];
     const rows = filtered.map(e => [
       e.code,
       e.fullName,
@@ -62,6 +66,7 @@ export const AdminAttendanceView: React.FC = () => {
       e.record ? formatTimeIst(e.record.punchIn) : '',
       e.record?.punchOut ? formatTimeIst(e.record.punchOut) : e.record ? 'Open' : '',
       e.record ? formatMinutes(e.record.workedMinutes) : '',
+      e.record ? [e.record.lateMinutes !== null ? `Late ${e.record.lateMinutes} min` : '', e.record.outsideHours ? 'Outside hours' : ''].filter(Boolean).join('; ') : '',
       e.record?.corrected ? 'Yes' : 'No',
       e.record?.note ?? '',
     ]);
@@ -77,7 +82,7 @@ export const AdminAttendanceView: React.FC = () => {
         <div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">Attendance Management</h1>
           <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">
-            Daily punch records for the whole team. Employees are punched in automatically when they sign in.
+            Daily punch records for the whole team. Employees punch in and out themselves; late and outside-hours punches are flagged.
           </p>
         </div>
         <Button variant="outline" size="sm" icon={<Download className="w-3.5 h-3.5" />} onClick={handleExportCSV} disabled={!data}>
@@ -131,15 +136,57 @@ export const AdminAttendanceView: React.FC = () => {
             <span className="text-2xl font-mono font-bold text-[#E11D48]">{summary?.incomplete ?? '—'}</span>
             <span className="text-xs text-[#E11D48]">never closed</span>
           </div>
-          <p className="text-[11px] text-[#7185A5] mt-1">Open records from earlier days</p>
+          <p className="text-[11px] text-[#7185A5] mt-1">
+            Open past their shift{summary ? ` · ${summary.late} late · ${summary.outsideHours} outside hours` : ''}
+          </p>
         </Card>
       </div>
+
+      {/* Last 30 days of records nobody has corrected yet: forgotten punch-outs, outside-hours and late punches.
+          Opening one shows that day's roster, where the record is corrected. */}
+      {review.data && review.data.records.length > 0 && (
+        <Card padding="none" className="overflow-hidden" data-testid="attendance-review">
+          <button
+            onClick={() => setReviewOpen(!reviewOpen)}
+            className="w-full flex items-center justify-between px-4 py-3 text-xs font-semibold text-[#111827] cursor-pointer"
+            aria-expanded={reviewOpen}
+          >
+            <span className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-[#B45309]" />
+              Needs review: {review.data.records.length} record{review.data.records.length === 1 ? '' : 's'} in the last {review.data.days} days
+            </span>
+            <span className="text-[#5038F5]">{reviewOpen ? 'Hide' : 'Show'}</span>
+          </button>
+          {reviewOpen && (
+            <ul className="divide-y divide-[#DFE6F1] border-t border-[#DFE6F1] max-h-72 overflow-y-auto">
+              {review.data.records.map(r => (
+                <li key={r.id}>
+                  <button
+                    onClick={() => setSelectedDate(r.workDate)}
+                    className="w-full text-left px-4 py-2.5 text-xs flex flex-wrap items-center gap-2 hover:bg-[#F7F9FC] cursor-pointer"
+                  >
+                    <span className="font-semibold text-[#111827]">{r.fullName}</span>
+                    <span className="font-mono text-[#7185A5]">{formatDate(r.workDate)}</span>
+                    <span className="font-mono text-[#475569]">in {formatTimeIst(r.punchIn)}</span>
+                    {r.reasons.map(reason => (
+                      <Badge key={reason} variant={reason === 'incomplete' ? 'error' : 'warning'} size="sm">
+                        {reason === 'late' && r.lateMinutes !== null ? `Late ${r.lateMinutes} min` : REVIEW_REASON_LABEL[reason]}
+                      </Badge>
+                    ))}
+                    <span className="ml-auto text-[#5038F5]">Open day</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      )}
 
       {data?.isWeekend && (
         <Card padding="sm" className="bg-[#F7F9FC]">
           <div className="flex items-center gap-2 text-xs text-[#475569]">
             <Info className="w-4 h-4 text-[#7185A5] shrink-0" />
-            {formatDate(date)} is a weekend: nobody is expected in, so "absent" counts are not meaningful.
+            {formatDate(date)} is a weekend: only people working that day are expected, so "absent" counts may not mean much.
           </div>
         </Card>
       )}
@@ -248,7 +295,9 @@ export const AdminAttendanceView: React.FC = () => {
                       </div>
                     </td>
                     <td className="py-3 px-4 font-medium text-[#111827]">{e.department}</td>
-                    <td className="py-3 px-4 font-mono text-[#475569] whitespace-nowrap">{e.record ? formatTimeIst(e.record.punchIn) : '—'}</td>
+                    <td className="py-3 px-4 font-mono text-[#475569] whitespace-nowrap">
+                      {e.record ? formatTimeIst(e.record.punchIn) : '—'} {e.record && <PunchFlagBadges record={e.record} />}
+                    </td>
                     <td className="py-3 px-4 font-mono text-[#475569] whitespace-nowrap">
                       {!e.record ? (
                         '—'
@@ -300,6 +349,7 @@ export const AdminAttendanceView: React.FC = () => {
           onClose={() => setToCorrect(null)}
           onSaved={() => {
             reload();
+            review.reload();
           }}
         />
       )}

@@ -124,20 +124,32 @@ describe('role matrix', () => {
 });
 
 describe('employee scoping', () => {
-  it("can't read or change another employee's task (404, same as a missing id)", async () => {
+  it("can open and discuss another employee's task (shared links), but not change it (403)", async () => {
+    await agents.employee.get(`/api/tasks/${ids.olaTask}`).expect(200);
+    await agents.employee.get(`/api/tasks/${ids.olaTask}/comments`).expect(200);
+    await agents.employee.post(`/api/tasks/${ids.olaTask}/comments`).send({ body: 'Looks good' }).expect(201);
     for (const [method, path, body] of [
-      ['get', `/api/tasks/${ids.olaTask}`, undefined],
       ['patch', `/api/tasks/${ids.olaTask}/status`, { status: 'in_progress' }],
-      ['get', `/api/tasks/${ids.olaTask}/comments`, undefined],
-      ['post', `/api/tasks/${ids.olaTask}/comments`, { body: 'sneaky' }],
+      ['patch', `/api/tasks/${ids.olaTask}`, { title: 'Renamed' }],
+      ['delete', `/api/tasks/${ids.olaTask}`, undefined],
     ] as const) {
       const res = await call(agents.employee, method, path, body);
-      expect({ path, method, status: res.status, code: res.body.code }).toEqual({ path, method, status: 404, code: 'NOT_FOUND' });
+      expect({ path, method, status: res.status }).toEqual({ path, method, status: 403 });
     }
     const olaComment = await comment(ids.olaTask, ids.adminUser, 'internal_note', 'x');
-    await agents.employee.delete(`/api/comments/${olaComment}`).expect(404);
-    const [row] = await query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [ids.olaTask]);
-    expect(row.status).toBe('todo');
+    await agents.employee.delete(`/api/comments/${olaComment}`).expect(403); // not the author
+    const [row] = await query<{ status: string; title: string }>('SELECT status, title FROM tasks WHERE id = $1', [ids.olaTask]);
+    expect(row).toMatchObject({ status: 'todo', title: 'Ola writes copy' });
+  });
+
+  it('opens a task by its code (the shared /task/TSK-… link) for any staff member; unknown codes are 404', async () => {
+    const [{ task_code: code }] = await query<{ task_code: string }>('SELECT task_code FROM tasks WHERE id = $1', [ids.olaTask]);
+    const res = await agents.employee.get(`/api/tasks/by-code/${code.toLowerCase()}`).expect(200);
+    expect(res.body.task).toMatchObject({ id: ids.olaTask, code });
+    await agents.manager.get(`/api/tasks/by-code/${code}`).expect(200);
+    await agents.employee.get('/api/tasks/by-code/TSK-999999').expect(404);
+    await agents.employee.get('/api/tasks/by-code/not-a-code').expect(404);
+    await agents.client.get(`/api/tasks/by-code/${code}`).expect(403);
   });
 
   it('lists only their own tasks, ignoring any assignee filter, and summarises only those', async () => {

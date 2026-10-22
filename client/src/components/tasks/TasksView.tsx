@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
-import { ChevronLeft, ChevronRight, Columns3, ListChecks, Plus, Search, Table2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Columns3, ListChecks, Paperclip, Plus, Search, Table2 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { tasksApi, TaskListParams } from '../../api/tasks';
 import { projectsApi } from '../../api/projects';
@@ -248,6 +248,12 @@ export const TasksView: React.FC<TasksViewProps> = ({ mode = 'staff' }) => {
                   <PriorityBadge priority={task.priority} />
                   {task.overdue && <OverdueBadge />}
                   {task.requestedByClient && <ClientRequestBadge />}
+                  {task.attachmentCount > 0 && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] text-[#7185A5]" title={`${task.attachmentCount} attachment${task.attachmentCount === 1 ? '' : 's'}`}>
+                      <Paperclip className="w-3 h-3" />
+                      {task.attachmentCount}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center justify-between text-[11px] text-[#475569]">
                   <span>{task.assignee?.fullName ?? 'Unassigned'}</span>

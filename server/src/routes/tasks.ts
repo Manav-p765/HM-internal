@@ -1,4 +1,4 @@
-import type { Request } from 'express';
+import express, { type Request } from 'express';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
@@ -6,13 +6,15 @@ import { audit } from '../services/audit.js';
 import { notifyTaskAssigned } from '../services/notifications.js';
 import { createRouter, STAFF } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
+import { taskAttachmentsLimiter } from '../middleware/security.js';
 import { isoDate, likePattern, optionalText, pageQuery, TODAY_SQL } from './shared.js';
 
-// Tasks for staff. Admin and manager manage every task. An employee sees the tasks assigned to their own
-// employee record (req.user.employeeId) and the tasks they assigned to others (created_by), and gets 404 for
-// anyone else's. Employees may create tasks on projects they are on, for any active colleague; whoever assigned
+// Tasks for staff. Admin and manager manage every task. Any staff member may open any task (GET /:id,
+// /by-code/:code, its comments and attachments), so a task link shared in a team chat works for everyone;
+// an employee's lists stay their own: tasks assigned to their employee record (req.user.employeeId) or by them
+// (created_by). Employees may create tasks on projects they are on, for any active colleague; whoever assigned
 // a task may edit or delete it while it is still to do, and reviews it (in review -> completed, or back to in
-// progress) when it is someone else's.
+// progress) when it is someone else's. Changing a task someone can merely view is a 403.
 export const tasksRouter = createRouter();
 // DELETE /api/comments/:id lives on its own path.
 export const commentsRouter = createRouter();
@@ -55,7 +57,8 @@ const TASK_COLUMNS = `
   t.completed_at AS "completedAt", t.completion_comment AS "completionComment",
   ${OVERDUE_SQL} AS overdue,
   t.created_by AS "createdBy", ${displayNameSql('cu', 'ce', 'cuc')} AS "createdByName",
-  t.updated_by AS "updatedBy", t.created_at AS "createdAt", t.updated_at AS "updatedAt"`;
+  t.updated_by AS "updatedBy", t.created_at AS "createdAt", t.updated_at AS "updatedAt",
+  (SELECT count(*)::int FROM task_attachments x WHERE x.task_id = t.id) AS "attachmentCount"`;
 
 const TASK_FROM = `
   FROM tasks t
@@ -66,13 +69,24 @@ const TASK_FROM = `
   LEFT JOIN employees ce ON ce.id = cu.employee_id
   LEFT JOIN clients cuc ON cuc.id = cu.client_id`;
 
-// $1 = the employee's own record, $2 = their login (both null for admin/manager): assigned to them or by them.
+// Lists: $1 = the employee's own record, $2 = their login (both null for admin/manager): assigned to them or by them.
 const SCOPE_SQL = `($1::uuid IS NULL OR t.assignee_employee_id = $1 OR t.created_by = $2::uuid)`;
 
-async function getTask(req: Request, id: string) {
-  const [task] = await query(`SELECT ${TASK_COLUMNS} ${TASK_FROM} WHERE t.id = $3 AND ${SCOPE_SQL}`, [...viewerScope(req), id]);
+// One task: any staff member may open it.
+async function getTask(id: string) {
+  const [task] = await query(`SELECT ${TASK_COLUMNS} ${TASK_FROM} WHERE t.id = $1`, [id]);
   if (!task) throw new HttpError(404, 'Task not found', 'NOT_FOUND');
   return task;
+}
+
+// The people working on a task: admin/manager, its assignee, and whoever assigned it. They add and remove
+// attachments; anyone else who opens the task only views them.
+function worksOnTask(req: Request, task: { assignee_employee_id: string | null; created_by: string }): boolean {
+  return (
+    isManager(req) ||
+    (task.assignee_employee_id !== null && task.assignee_employee_id === req.user!.employeeId) ||
+    task.created_by === req.user!.id
+  );
 }
 
 function parseId(raw: unknown, what = 'Task'): string {
@@ -202,10 +216,18 @@ tasksRouter.get('/summary', STAFF, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/tasks/:id  (STAFF; employees only tasks assigned to or by them, else 404)
+// GET /api/tasks/by-code/:code  (STAFF): the task behind a shared link (/task/TSK-042 in the app)
+// GET /api/tasks/:id            (STAFF): any task
 // ---------------------------------------------------------------------------
+tasksRouter.get('/by-code/:code', STAFF, async (req, res) => {
+  const code = String(req.params.code).toUpperCase();
+  const [row] = /^TSK-\d{1,9}$/.test(code) ? await query<{ id: string }>('SELECT id FROM tasks WHERE task_code = $1', [code]) : [];
+  if (!row) throw new HttpError(404, 'Task not found', 'NOT_FOUND');
+  res.json({ task: await getTask(row.id) });
+});
+
 tasksRouter.get('/:id', STAFF, async (req, res) => {
-  res.json({ task: await getTask(req, parseId(req.params.id)) });
+  res.json({ task: await getTask(parseId(req.params.id)) });
 });
 
 // ---------------------------------------------------------------------------
@@ -273,7 +295,7 @@ tasksRouter.post('/', STAFF, async (req, res) => {
   });
 
   await audit(req, { action: 'task.created', entityType: 'task', entityId: id, metadata: { fields: Object.keys(body) } });
-  res.status(201).json({ task: await getTask(req, id) });
+  res.status(201).json({ task: await getTask(id) });
 });
 
 const updateSchema = z
@@ -309,13 +331,14 @@ type LockedTask = {
   status: string;
 };
 
-// The task row under FOR UPDATE, within the caller's scope (404 otherwise).
-async function lockTask(client: PoolClient, req: Request, id: string): Promise<LockedTask> {
+// The task row under FOR UPDATE (404 when missing). Every staff member can see it; each route checks who may
+// change it.
+async function lockTask(client: PoolClient, id: string): Promise<LockedTask> {
   const current = (
     await client.query<LockedTask>(
       `SELECT t.project_id, t.start_date, t.deadline, t.requested_by_client, t.assignee_employee_id, t.created_by, t.status
-         FROM tasks t WHERE t.id = $3 AND ${SCOPE_SQL} FOR UPDATE`,
-      [...viewerScope(req), id],
+         FROM tasks t WHERE t.id = $1 FOR UPDATE`,
+      [id],
     )
   ).rows[0];
   if (!current) throw new HttpError(404, 'Task not found', 'NOT_FOUND');
@@ -327,7 +350,7 @@ tasksRouter.patch('/:id', STAFF, async (req, res) => {
   const body = parseBody(updateSchema, req.body);
 
   await withTransaction(async client => {
-    const current = await lockTask(client, req, id);
+    const current = await lockTask(client, id);
     assertCreatorMayChange(req, current);
     if ('clientVisible' in body && !isManager(req)) throw shareForbidden();
     // A client's own request always stays visible to that client (migration 014).
@@ -350,7 +373,7 @@ tasksRouter.patch('/:id', STAFF, async (req, res) => {
   });
 
   await audit(req, { action: 'task.updated', entityType: 'task', entityId: id, metadata: { fields: Object.keys(body) } });
-  res.json({ task: await getTask(req, id) });
+  res.json({ task: await getTask(id) });
 });
 
 // ---------------------------------------------------------------------------
@@ -360,7 +383,7 @@ tasksRouter.patch('/:id', STAFF, async (req, res) => {
 tasksRouter.delete('/:id', STAFF, async (req, res) => {
   const id = parseId(req.params.id);
   const code = await withTransaction(async client => {
-    assertCreatorMayChange(req, await lockTask(client, req, id));
+    assertCreatorMayChange(req, await lockTask(client, id));
     const deleted = await client.query<{ task_code: string }>('DELETE FROM tasks WHERE id = $1 RETURNING task_code', [id]);
     return deleted.rows[0].task_code;
   });
@@ -384,7 +407,7 @@ tasksRouter.patch('/:id/status', STAFF, async (req, res) => {
   const { status, comment } = parseBody(statusSchema, req.body);
 
   const from = await withTransaction(async client => {
-    const current = await lockTask(client, req, id);
+    const current = await lockTask(client, id);
     const from = current.status as TaskStatus;
 
     if (!isManager(req)) {
@@ -418,7 +441,7 @@ tasksRouter.patch('/:id/status', STAFF, async (req, res) => {
   });
 
   await audit(req, { action: 'task.status_changed', entityType: 'task', entityId: id, metadata: { from, to: status } });
-  res.json({ task: await getTask(req, id) });
+  res.json({ task: await getTask(id) });
 });
 
 // ---------------------------------------------------------------------------
@@ -428,7 +451,7 @@ tasksRouter.patch('/:id/status', STAFF, async (req, res) => {
 export const COMMENT_AUTHOR_SQL = displayNameSql('au', 'ae', 'cc');
 
 tasksRouter.get('/:id/comments', STAFF, async (req, res) => {
-  const task = await getTask(req, parseId(req.params.id));
+  const task = await getTask(parseId(req.params.id));
   const comments = await query(
     `SELECT tc.id, tc.comment_type AS type, tc.body, tc.created_at AS "createdAt",
             tc.author_user_id AS "authorId", ${COMMENT_AUTHOR_SQL} AS "authorName", au.role AS "authorRole"
@@ -449,7 +472,7 @@ const staffCommentSchema = z.object({
 });
 
 tasksRouter.post('/:id/comments', STAFF, async (req, res) => {
-  const task = await getTask(req, parseId(req.params.id));
+  const task = await getTask(parseId(req.params.id));
   const { body, type } = parseBody(staffCommentSchema, req.body);
   const [comment] = await query<{ id: string }>(
     `INSERT INTO task_comments (task_id, author_user_id, comment_type, body) VALUES ($1, $2, $3, $4)
@@ -461,18 +484,186 @@ tasksRouter.post('/:id/comments', STAFF, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Attachments (migration 017): files kept in the database and http(s) links. Any staff member who opens the
+// task lists and downloads them; the people working on it (worksOnTask) add and remove them. Never shown in the
+// client portal.
+//   GET    /api/tasks/:id/attachments
+//   POST   /api/tasks/:id/attachments/link       { url, name? }
+//   POST   /api/tasks/:id/attachments/file       raw body; Content-Type, X-File-Name (URI-encoded)
+//   GET    /api/tasks/:id/attachments/:attachmentId/download
+//   DELETE /api/tasks/:id/attachments/:attachmentId
+// ---------------------------------------------------------------------------
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_ATTACHMENTS_PER_TASK = 20;
+
+// Allowed files by extension, with the type they are served as (the browser's own claim is not trusted).
+const FILE_TYPES: Record<string, string> = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  txt: 'text/plain',
+  csv: 'text/csv',
+  md: 'text/markdown',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  zip: 'application/zip',
+};
+export const ALLOWED_EXTENSIONS = Object.keys(FILE_TYPES);
+
+const ATTACHMENT_COLUMNS = `
+  a.id, a.kind, a.name, a.url, a.content_type AS "contentType", a.size_bytes AS "sizeBytes",
+  a.uploaded_by AS "uploadedBy", ${displayNameSql('au', 'ae', 'ac')} AS "uploadedByName", a.created_at AS "createdAt"`;
+const ATTACHMENT_FROM = `
+  FROM task_attachments a
+  JOIN users au ON au.id = a.uploaded_by
+  LEFT JOIN employees ae ON ae.id = au.employee_id
+  LEFT JOIN clients ac ON ac.id = au.client_id`;
+
+const attachmentById = async (id: string) => (await query(`SELECT ${ATTACHMENT_COLUMNS} ${ATTACHMENT_FROM} WHERE a.id = $1`, [id]))[0];
+
+// The task, locked, for adding an attachment: only the people working on it, at most MAX_ATTACHMENTS_PER_TASK.
+async function lockForAttachment(client: PoolClient, req: Request, taskId: string) {
+  const task = await lockTask(client, taskId);
+  if (!worksOnTask(req, task)) {
+    throw new HttpError(403, 'Only the assignee, the person who assigned this task or a manager can change its attachments', 'FORBIDDEN');
+  }
+  const [{ count }] = (await client.query<{ count: number }>('SELECT count(*)::int AS count FROM task_attachments WHERE task_id = $1', [taskId])).rows;
+  if (count >= MAX_ATTACHMENTS_PER_TASK) {
+    throw new HttpError(409, `A task can have at most ${MAX_ATTACHMENTS_PER_TASK} attachments`, 'TOO_MANY_ATTACHMENTS');
+  }
+}
+
+tasksRouter.get('/:id/attachments', STAFF, async (req, res) => {
+  const task = await getTask(parseId(req.params.id));
+  const attachments = await query(`SELECT ${ATTACHMENT_COLUMNS} ${ATTACHMENT_FROM} WHERE a.task_id = $1 ORDER BY a.created_at, a.id`, [task.id]);
+  res.json({ attachments });
+});
+
+const linkSchema = z.object({
+  url: z
+    .string()
+    .trim()
+    .max(2000, 'Links are limited to 2000 characters')
+    .refine(v => {
+      try {
+        return ['http:', 'https:'].includes(new URL(v).protocol);
+      } catch {
+        return false;
+      }
+    }, 'Enter a full link starting with https://'),
+  name: z.string().trim().max(200).optional(),
+});
+
+tasksRouter.post('/:id/attachments/link', STAFF, taskAttachmentsLimiter, async (req, res) => {
+  const taskId = parseId(req.params.id);
+  const body = parseBody(linkSchema, req.body);
+  const name = body.name || new URL(body.url).hostname;
+  const id = await withTransaction(async client => {
+    await lockForAttachment(client, req, taskId);
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO task_attachments (task_id, kind, name, url, uploaded_by) VALUES ($1, 'link', $2, $3, $4) RETURNING id`,
+      [taskId, name, body.url, req.user!.id],
+    );
+    return inserted.rows[0].id;
+  });
+  await audit(req, { action: 'task.attachment_added', entityType: 'task', entityId: taskId, metadata: { attachmentId: id, kind: 'link' } });
+  res.status(201).json({ attachment: await attachmentById(id) });
+});
+
+// A file name as shown and downloaded: no folders, no control characters, at most 200 characters.
+function cleanFileName(raw: string | undefined): string {
+  let name = '';
+  try {
+    name = decodeURIComponent(raw ?? '');
+  } catch {
+    name = '';
+  }
+  name = name.replace(/[\u0000-\u001f\u007f]/g, '').split(/[\\/]/).pop()!.trim();
+  return name.slice(-200);
+}
+
+const rawFile = express.raw({ type: () => true, limit: MAX_ATTACHMENT_BYTES });
+
+tasksRouter.post('/:id/attachments/file', STAFF, taskAttachmentsLimiter, rawFile, async (req, res) => {
+  const taskId = parseId(req.params.id);
+  const name = cleanFileName(req.get('X-File-Name'));
+  const extension = name.includes('.') ? name.split('.').pop()!.toLowerCase() : '';
+  const contentType = FILE_TYPES[extension];
+  const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  const invalid = (message: string) => new HttpError(400, message, 'VALIDATION_ERROR', [{ path: 'file', message }]);
+  if (!name) throw invalid('The file needs a name');
+  if (!contentType) throw invalid(`This type of file can't be attached. Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`);
+  if (data.length === 0) throw invalid('The file is empty');
+
+  const id = await withTransaction(async client => {
+    await lockForAttachment(client, req, taskId);
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO task_attachments (task_id, kind, name, content_type, size_bytes, data, uploaded_by)
+       VALUES ($1, 'file', $2, $3, $4, $5, $6) RETURNING id`,
+      [taskId, name, contentType, data.length, data, req.user!.id],
+    );
+    return inserted.rows[0].id;
+  });
+  await audit(req, {
+    action: 'task.attachment_added',
+    entityType: 'task',
+    entityId: taskId,
+    metadata: { attachmentId: id, kind: 'file', sizeBytes: data.length },
+  });
+  res.status(201).json({ attachment: await attachmentById(id) });
+});
+
+tasksRouter.get('/:id/attachments/:attachmentId/download', STAFF, async (req, res) => {
+  const taskId = parseId(req.params.id);
+  const attachmentId = parseId(req.params.attachmentId, 'Attachment');
+  const [file] = await query<{ name: string; content_type: string; data: Buffer }>(
+    `SELECT name, content_type, data FROM task_attachments WHERE id = $1 AND task_id = $2 AND kind = 'file'`,
+    [attachmentId, taskId],
+  );
+  if (!file) throw new HttpError(404, 'Attachment not found', 'NOT_FOUND');
+  // Always a download (never rendered in the app's origin); an ASCII fallback name plus the exact UTF-8 one.
+  const fallback = file.name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  res.setHeader('Content-Type', file.content_type);
+  res.setHeader('Content-Disposition', `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.send(file.data);
+});
+
+tasksRouter.delete('/:id/attachments/:attachmentId', STAFF, async (req, res) => {
+  const taskId = parseId(req.params.id);
+  const attachmentId = parseId(req.params.attachmentId, 'Attachment');
+  const kind = await withTransaction(async client => {
+    const task = await lockTask(client, taskId);
+    const [row] = (await client.query<{ kind: string }>('SELECT kind FROM task_attachments WHERE id = $1 AND task_id = $2', [attachmentId, taskId])).rows;
+    if (!row) throw new HttpError(404, 'Attachment not found', 'NOT_FOUND');
+    if (!worksOnTask(req, task)) {
+      throw new HttpError(403, 'Only the assignee, the person who assigned this task or a manager can change its attachments', 'FORBIDDEN');
+    }
+    await client.query('DELETE FROM task_attachments WHERE id = $1', [attachmentId]);
+    return row.kind;
+  });
+  await audit(req, { action: 'task.attachment_removed', entityType: 'task', entityId: taskId, metadata: { attachmentId, kind } });
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
 // DELETE /api/comments/:id  (staff: the author, or an admin)
 // ---------------------------------------------------------------------------
 commentsRouter.delete('/:id', STAFF, async (req, res) => {
   const id = parseId(req.params.id, 'Comment');
-  const [comment] = await query<{ author_user_id: string; task_id: string; assignee: string | null; creator: string }>(
-    `SELECT tc.author_user_id, tc.task_id, t.assignee_employee_id AS assignee, t.created_by AS creator
-       FROM task_comments tc JOIN tasks t ON t.id = tc.task_id WHERE tc.id = $1`,
+  const [comment] = await query<{ author_user_id: string; task_id: string }>(
+    'SELECT tc.author_user_id, tc.task_id FROM task_comments tc WHERE tc.id = $1',
     [id],
   );
-  // Employees can't even learn that comments on other people's tasks exist.
-  const visible = comment && (isManager(req) || comment.assignee === req.user!.employeeId || comment.creator === req.user!.id);
-  if (!visible) throw new HttpError(404, 'Comment not found', 'NOT_FOUND');
+  // Every staff member can read every task's comments; only the author or an admin deletes one.
+  if (!comment) throw new HttpError(404, 'Comment not found', 'NOT_FOUND');
   if (comment.author_user_id !== req.user!.id && req.user!.role !== 'admin') {
     throw new HttpError(403, 'Only the author or an admin can delete this comment', 'FORBIDDEN');
   }

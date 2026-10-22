@@ -5,6 +5,8 @@ import { PortalInvoiceResponse, PortalInvoicesResponse } from '../types/invoices
 // Client portal: only the signed-in client's company, only client-visible tasks, only shared feedback, and
 // the company's own issued invoices (read-only).
 export const portalApi = {
+  // Where a shared task link (/task/TSK-042) opens: the company's own shared task, else 404.
+  taskByCode: (code: string) => api<{ taskId: string; projectId: string }>(`/portal/tasks/by-code/${encodeURIComponent(code)}`),
   projects: () => api<{ projects: PortalProject[] }>('/portal/projects').then(r => r.projects),
   projectTasks: (projectId: string) =>
     api<{ project: { id: string; name: string }; tasks: PortalTask[] }>(`/portal/projects/${projectId}/tasks`),

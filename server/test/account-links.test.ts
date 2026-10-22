@@ -1,6 +1,6 @@
 // Employee <-> login links (users.employee_id): automatic by email on employee create/update and on user
 // create, never for client users, never overwriting a link; admin link/unlink by hand; the repair plan used
-// by `npm run link-by-email`. A linked employee login is punched in at sign-in like any employee.
+// by `npm run link-by-email`. A linked employee login can punch in like any employee.
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { app } from '../src/app.js';
@@ -56,10 +56,10 @@ describe('automatic link by email', () => {
     expect((await linkAudits()).map(a => [a.entity_id, a.metadata])).toEqual([[userId, { employeeId: res.body.employee.id, how: 'email' }]]);
   });
 
-  it('a linked employee login is punched in at sign-in (the "No login, no attendance" bug)', async () => {
+  it('a linked employee login can punch in (the "No login, no attendance" bug)', async () => {
     await user('ajay@example.test', 'employee');
     const res = await admin.post('/api/employees').send(newEmployee('ajay@example.test')).expect(201);
-    await signIn('ajay@example.test');
+    await (await signIn('ajay@example.test')).post('/api/attendance/me/punch-in').expect(201);
     expect(await query('SELECT 1 FROM attendance_records WHERE employee_id = $1', [res.body.employee.id])).toHaveLength(1);
   });
 

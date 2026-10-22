@@ -2,7 +2,6 @@ import type { Request } from 'express';
 import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { audit } from '../services/audit.js';
-import { autoPunchIn } from '../services/attendance.js';
 import { now } from '../services/clock.js';
 import { sendPasswordResetEmail } from '../services/mail.js';
 import { claimToken, checkToken, dropAllTokens, issueToken } from '../services/passwordTokens.js';
@@ -75,7 +74,6 @@ authRouter.post('/login', 'public', loginLimiter, async (req, res) => {
   await audit(req, { action: 'auth.login_success', actorUserId: user.id, entityType: 'user', entityId: user.id });
 
   const sessionUser = await loadSessionUser(user.id);
-  if (sessionUser) await autoPunchIn(req, sessionUser); // never fails the login
   res.json({ user: sessionUser });
 });
 
@@ -228,6 +226,5 @@ authRouter.post('/set-password', 'public', setPasswordLimiter, setPasswordPerTok
   });
 
   const sessionUser = await loadSessionUser(claimed.userId);
-  if (sessionUser) await autoPunchIn(req, sessionUser); // as on login; never fails the request
   res.json({ user: sessionUser });
 });

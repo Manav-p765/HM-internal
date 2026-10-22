@@ -325,6 +325,23 @@ async function visibleTaskId(rawId: unknown, clientId: string): Promise<string> 
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/portal/tasks/by-code/:code: where a shared task link (/task/TSK-042) opens in the portal. Only the
+// company's own client-visible tasks on non-archived projects; anything else is the same 404 as a missing code.
+// ---------------------------------------------------------------------------
+portalRouter.get('/tasks/by-code/:code', ['client'], async (req, res) => {
+  const code = String(req.params.code).toUpperCase();
+  const [task] = /^TSK-\d{1,9}$/.test(code)
+    ? await query<{ taskId: string; projectId: string }>(
+        `SELECT t.id AS "taskId", t.project_id AS "projectId" FROM tasks t JOIN projects p ON p.id = t.project_id
+          WHERE t.task_code = $1 AND t.client_visible AND p.client_id = $2 AND p.status <> 'archived'`,
+        [code, clientScope(req)],
+      )
+    : [];
+  if (!task) throw notFound('Task');
+  res.json(task);
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/portal/tasks/:id/comments  (client_feedback only, filtered in SQL)
 // ---------------------------------------------------------------------------
 portalRouter.get('/tasks/:id/comments', ['client'], async (req, res) => {

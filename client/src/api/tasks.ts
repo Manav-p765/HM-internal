@@ -1,6 +1,6 @@
 import { api } from './client';
 import { toQuery } from './query';
-import { CommentType, Task, TaskComment, TaskPriority, TaskStatus, TaskSummary } from '../types/work';
+import { CommentType, Task, TaskAttachment, TaskComment, TaskPriority, TaskStatus, TaskSummary } from '../types/work';
 
 export interface TaskListParams {
   projectId?: string;
@@ -32,6 +32,8 @@ export const tasksApi = {
     api<{ tasks: Task[]; total: number; limit: number; offset: number }>(`/tasks${toQuery(params)}`),
   summary: () => api<{ summary: TaskSummary }>('/tasks/summary').then(r => r.summary),
   get: (id: string) => api<{ task: Task }>(`/tasks/${id}`).then(r => r.task),
+  // A shared link (/task/TSK-042): any staff member may open any task.
+  byCode: (code: string) => api<{ task: Task }>(`/tasks/by-code/${encodeURIComponent(code)}`).then(r => r.task),
   create: (input: TaskInput) => api<{ task: Task }>('/tasks', { method: 'POST', body: input }).then(r => r.task),
   update: (id: string, changes: Partial<Omit<TaskInput, 'projectId'>>) =>
     api<{ task: Task }>(`/tasks/${id}`, { method: 'PATCH', body: changes }).then(r => r.task),
@@ -42,4 +44,18 @@ export const tasksApi = {
   addComment: (id: string, body: string, type: CommentType) =>
     api<{ comment: TaskComment }>(`/tasks/${id}/comments`, { method: 'POST', body: { body, type } }).then(r => r.comment),
   deleteComment: (commentId: string) => api<{ ok: true }>(`/comments/${commentId}`, { method: 'DELETE' }),
+
+  // Attachments: anyone who opens the task views and downloads; the assignee, the assigner and managers add/remove.
+  attachments: (id: string) => api<{ attachments: TaskAttachment[] }>(`/tasks/${id}/attachments`).then(r => r.attachments),
+  addLink: (id: string, url: string, name?: string) =>
+    api<{ attachment: TaskAttachment }>(`/tasks/${id}/attachments/link`, { method: 'POST', body: { url, name: name || undefined } }).then(r => r.attachment),
+  uploadFile: (id: string, file: File) =>
+    api<{ attachment: TaskAttachment }>(`/tasks/${id}/attachments/file`, {
+      method: 'POST',
+      body: file,
+      headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) },
+    }).then(r => r.attachment),
+  removeAttachment: (id: string, attachmentId: string) => api<{ ok: true }>(`/tasks/${id}/attachments/${attachmentId}`, { method: 'DELETE' }),
+  // A plain link: the browser downloads it with the session cookie.
+  downloadUrl: (id: string, attachmentId: string) => `/api/tasks/${id}/attachments/${attachmentId}/download`,
 };

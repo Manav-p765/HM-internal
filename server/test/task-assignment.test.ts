@@ -65,7 +65,7 @@ describe('employees assign tasks to colleagues', () => {
     await seo.post(`/api/tasks/${id}/comments`).send({ body: 'Thanks!' }).expect(201);
   });
 
-  it('the assigner edits or deletes only while to do; the assignee cannot edit; others get 404', async () => {
+  it('the assigner edits or deletes only while to do; the assignee cannot edit; others only view', async () => {
     const id = (await assignToDev().expect(201)).body.task.id;
     await seo.patch(`/api/tasks/${id}`).send({ title: 'Fix all meta tags' }).expect(200);
     await seo.patch(`/api/tasks/${id}`).send({ clientVisible: true }).expect(403);
@@ -79,8 +79,8 @@ describe('employees assign tasks to colleagues', () => {
 
     await user('ola@example.test', 'employee', { employeeId: await employee('Ola Other') });
     const ola = await signIn('ola@example.test');
-    await ola.get(`/api/tasks/${id}`).expect(404);
-    await ola.patch(`/api/tasks/${id}`).send({ title: 'x' }).expect(404);
+    await ola.get(`/api/tasks/${id}`).expect(200);
+    await ola.patch(`/api/tasks/${id}`).send({ title: 'x' }).expect(403);
   });
 
   it('the assigner reviews the hand-over; the assignee cannot complete it themselves', async () => {
