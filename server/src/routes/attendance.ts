@@ -13,7 +13,6 @@ import {
   isOpenShift,
   openShiftSql,
   punchFlags,
-  shiftWindow,
   type WorkingHours,
 } from '../services/attendance.js';
 
@@ -89,7 +88,7 @@ const notFound = () => new HttpError(404, 'Attendance record not found', 'NOT_FO
 // ---------------------------------------------------------------------------
 // GET /api/attendance/me/today  (employee): the current shift's record, the employee's working hours
 // (`shift`, null when not set yet), any approved leave covering their current working day (`date`) and the
-// reminders `punchInDue` / `punchOutDue`
+// reminder `punchInDue`
 // ---------------------------------------------------------------------------
 attendanceRouter.get('/me/today', ['employee'], async (req, res) => {
   const today = await todayFor(ownEmployeeId(req), now());
@@ -123,18 +122,17 @@ export async function todayFor(employeeId: string, at: Date) {
   };
 }
 
-// What to remind the employee of (the banner and the bell): punch in while their shift window is open and
-// nothing is recorded yet (not on a full-day leave), or punch out once the open shift has passed its end.
+// What to remind the employee of (the top bar and the bell): punch in while their shift window is open and
+// nothing is recorded yet (not on a full-day leave). There is no punch-out reminder: punching out is the
+// employee's own decision, whenever they stop working.
 function punchPrompts(
   record: RecordRow | undefined,
   leave: { dayType?: string } | undefined,
   today: string,
   hours: WorkingHours,
   at: Date,
-): { punchInDue: boolean; punchOutDue: boolean } {
-  const punchInDue = !record && leave?.dayType !== 'full' && inPunchInWindow(at, today, hours);
-  const end = record && !record.punchOut && isOpenShift(record, hours, at) ? shiftWindow(record.workDate, hours)?.end : undefined;
-  return { punchInDue, punchOutDue: Boolean(end && at > end) };
+): { punchInDue: boolean } {
+  return { punchInDue: !record && leave?.dayType !== 'full' && inPunchInWindow(at, today, hours) };
 }
 
 // ---------------------------------------------------------------------------

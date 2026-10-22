@@ -82,11 +82,6 @@ export const EmployeeDashboardView: React.FC = () => {
                   )}
                   <PunchFlagBadges record={record} />
                 </div>
-                {today.data.punchOutDue && (
-                  <p className="text-xs font-semibold text-[#B45309]" data-testid="punch-out-due">
-                    Your shift ended at {today.data.shift?.end} IST. Remember to punch out when you stop working.
-                  </p>
-                )}
                 <p className="text-xs text-[#7185A5]">
                   Punched in{record.corrected ? ' (adjusted by a manager)' : ''}
                   {record.punchOut

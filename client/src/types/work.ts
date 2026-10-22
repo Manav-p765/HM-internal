@@ -210,7 +210,6 @@ export interface NotificationFeed {
   // forgotten punch-outs and outside-hours punches nobody has corrected.
   attendance: {
     punchInDue?: boolean;
-    punchOutDue?: boolean;
     shift?: { start: string; end: string } | null;
     review?: {
       total: number;

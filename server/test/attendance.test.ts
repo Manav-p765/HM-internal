@@ -233,23 +233,24 @@ describe('late, outside hours and reminders', () => {
     expect(audit.metadata).toMatchObject({ outsideHours: true, late: false });
   });
 
-  it('/me/today and the bell remind the employee to punch in during the window and to punch out after the shift', async () => {
+  it('/me/today and the bell remind the employee to punch in during the window, never to punch out', async () => {
     setClock(ist(DAY, '07:00')); // before the 08:00 window: nothing due
     let agent = await signIn('a@example.test');
-    expect((await agent.get('/api/attendance/me/today').expect(200)).body).toMatchObject({ punchInDue: false, punchOutDue: false });
+    expect((await agent.get('/api/attendance/me/today').expect(200)).body).toMatchObject({ punchInDue: false });
 
     setClock(ist(DAY, '09:00'));
     agent = await signIn('a@example.test');
-    expect((await agent.get('/api/attendance/me/today').expect(200)).body).toMatchObject({ punchInDue: true, punchOutDue: false });
-    expect((await agent.get('/api/notifications').expect(200)).body.attendance).toMatchObject({ punchInDue: true, punchOutDue: false });
+    expect((await agent.get('/api/attendance/me/today').expect(200)).body).toMatchObject({ punchInDue: true });
+    expect((await agent.get('/api/notifications').expect(200)).body.attendance).toMatchObject({ punchInDue: true });
 
     await punchIn(agent).expect(201);
-    expect((await agent.get('/api/attendance/me/today').expect(200)).body).toMatchObject({ punchInDue: false, punchOutDue: false });
+    expect((await agent.get('/api/attendance/me/today').expect(200)).body).toMatchObject({ punchInDue: false });
 
-    setClock(ist(DAY, '19:30')); // past the end, still the open shift
-    expect((await agent.get('/api/notifications').expect(200)).body.attendance).toMatchObject({ punchInDue: false, punchOutDue: true });
+    setClock(ist(DAY, '19:30')); // past the end, still the open shift: no reminder, punching out is manual
+    expect((await agent.get('/api/notifications').expect(200)).body.attendance).toEqual({ punchInDue: false, shift: { start: '10:00', end: '19:00' } });
+    expect((await records(ids.empA))[0].punch_out).toBeNull();
     await agent.post('/api/attendance/me/punch-out').expect(200);
-    expect((await agent.get('/api/attendance/me/today').expect(200)).body).toMatchObject({ punchInDue: false, punchOutDue: false });
+    expect((await agent.get('/api/attendance/me/today').expect(200)).body).toMatchObject({ punchInDue: false });
 
     setClock(ist(DAY, '20:00')); // after the shift with nothing recorded: no nagging
     await query('DELETE FROM attendance_records');

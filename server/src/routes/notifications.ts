@@ -13,8 +13,8 @@ import { TODAY_SQL } from './shared.js';
 //   - derived each time, never stored: reminders for the caller's own open tasks due today, tomorrow or overdue,
 //     and overdue tasks of others they are responsible for (admin/manager: everyone's; an employee: the tasks
 //     they assigned to colleagues);
-//   - attendance, also derived: an employee is reminded to punch in while their shift window is open and to
-//     punch out once their shift has ended; admin/manager see forgotten punch-outs and outside-hours punches
+//   - attendance, also derived: an employee is reminded to punch in while their shift window is open (never
+//     to punch out: that is theirs to decide); admin/manager see forgotten punch-outs and outside-hours punches
 //     of the last ATTENDANCE_REVIEW_DAYS days that nobody has corrected yet.
 // Only tasks the caller may open anyway (see routes/tasks.ts) are listed; there are no money fields here.
 export const notificationsRouter = createRouter();
@@ -44,7 +44,7 @@ async function attendanceFeed(req: Request) {
     };
   }
   const today = req.user!.role === 'employee' && req.user!.employeeId ? await todayFor(req.user!.employeeId, at) : null;
-  return today ? { punchInDue: today.punchInDue, punchOutDue: today.punchOutDue, shift: today.shift } : {};
+  return today ? { punchInDue: today.punchInDue, shift: today.shift } : {};
 }
 
 const REMINDER_COLUMNS = `

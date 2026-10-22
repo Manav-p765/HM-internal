@@ -113,7 +113,6 @@ export const TopNav: React.FC<TopNavProps> = ({
     dueSoon.total +
     overdueTeam.total +
     (attendance.punchInDue ? 1 : 0) +
-    (attendance.punchOutDue ? 1 : 0) +
     attendanceReview.total;
 
   // Context-aware Quick Action button
@@ -238,17 +237,15 @@ export const TopNav: React.FC<TopNavProps> = ({
               </div>
 
               <div className="space-y-2 max-h-96 overflow-y-auto">
-                {/* Attendance reminders for the employee. */}
-                {(attendance.punchInDue || attendance.punchOutDue) && (
+                {/* The employee's punch-in reminder (there is none for punching out: that is theirs to decide). */}
+                {attendance.punchInDue && (
                   <div className="p-2.5 rounded-lg bg-[#B45309]/5 border border-[#B45309]/15 text-xs" data-testid="bell-punch">
                     <div className="flex items-center gap-1.5 font-semibold text-[#B45309]">
                       <Clock className="w-4 h-4 shrink-0" />
-                      {attendance.punchInDue ? 'You have not punched in' : 'Your shift has ended'}
+                      You have not punched in
                     </div>
                     <p className="text-[11px] text-[#475569] mt-1">
-                      {attendance.punchInDue
-                        ? `Your shift${attendance.shift ? ` starts at ${attendance.shift.start} IST` : ' is on'}. Punch in when you start working.`
-                        : `Your shift ended${attendance.shift ? ` at ${attendance.shift.end} IST` : ''}. Punch out when you stop working.`}
+                      Your shift{attendance.shift ? ` starts at ${attendance.shift.start} IST` : ' is on'}. Punch in when you start working.
                     </p>
                     <button
                       onClick={() => {

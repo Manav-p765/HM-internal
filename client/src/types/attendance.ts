@@ -42,7 +42,6 @@ export interface MyAttendanceToday {
   record: AttendanceRecord | null;
   leave: TodayLeave | null;
   punchInDue: boolean; // the shift window is open and nothing is recorded yet (not on full-day leave)
-  punchOutDue: boolean; // the open shift has passed its end
 }
 
 // GET /api/attendance/me?month=
