@@ -100,6 +100,7 @@ export interface Task {
   overdue: boolean;
   createdBy: string; // user id
   createdByName: string; // who assigned it: an employee name, the client company, or "Hybrid Monks"
+  attachmentCount: number; // files and links on the task (TaskAttachment)
   updatedBy: string | null;
   createdAt: string;
   updatedAt: string;
@@ -217,3 +218,32 @@ export interface NotificationFeed {
     };
   };
 }
+
+// GET /api/tasks/:id/attachments: files (kept by the server, downloaded through it) and links. Staff only.
+export interface TaskAttachment {
+  id: string;
+  kind: 'file' | 'link';
+  name: string;
+  url: string | null; // links only
+  contentType: string | null; // files only
+  sizeBytes: number | null; // files only
+  uploadedBy: string;
+  uploadedByName: string;
+  createdAt: string;
+}
+
+// The file types the server accepts (server/src/routes/tasks.ts, FILE_TYPES), at most 10 MB each.
+export const ATTACHMENT_EXTENSIONS = ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'txt', 'csv', 'md', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip'];
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+// The link people share in chats: opens just that task after sign-in (staff: the task; clients: in the portal,
+// only if it is their company's shared task).
+export const taskLink = (code: string) => `${window.location.origin}/task/${code}`;
+
+// The people working on a task (mirrors the server's worksOnTask): admin/manager, its assignee, and whoever
+// assigned it. They add and remove attachments; anyone else who opens the task only views.
+export const worksOnTask = (task: Task, user: { id: string; role: string; employeeId?: string }) =>
+  user.role === 'admin' ||
+  user.role === 'manager' ||
+  (task.assigneeId !== null && task.assigneeId === user.employeeId) ||
+  task.createdBy === user.id;

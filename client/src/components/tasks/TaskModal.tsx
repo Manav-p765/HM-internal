@@ -9,6 +9,8 @@ import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { FormField } from '../common/FormField';
 import { fieldClass } from '../work/WorkBits';
+import { ACCEPT_ATTACHMENTS, fileProblem, formatBytes } from './TaskAttachments';
+import { Paperclip, X } from 'lucide-react';
 
 interface TaskModalProps {
   isOpen: boolean;
@@ -24,7 +26,7 @@ type Errors = Partial<Record<keyof TaskInput, string>>;
 // they are on (the server lists only those), for any colleague; edits only their own task while it is to do.
 // Status is changed separately (TaskStatusControl). The assignee is notified by the server.
 export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, taskToEdit, defaultProjectId, onSaved }) => {
-  const { currentUser } = useApp();
+  const { currentUser, showToast } = useApp();
   const isManager = currentUser.role === 'admin' || currentUser.role === 'manager';
   const [projectId, setProjectId] = useState('');
   const [title, setTitle] = useState('');
@@ -39,6 +41,10 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, taskToEdi
   const [error, setError] = useState('');
   const [errors, setErrors] = useState<Errors>({});
   const [isSaving, setIsSaving] = useState(false);
+  // New task only: files and links attached right after it is created (a brief, a report, reference links).
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [pendingLinks, setPendingLinks] = useState<string[]>([]);
+  const [linkDraft, setLinkDraft] = useState('');
 
   useEffect(() => {
     if (!isOpen) return;
@@ -54,6 +60,9 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, taskToEdi
     setError('');
     setErrors({});
     setIsSaving(false);
+    setPendingFiles([]);
+    setPendingLinks([]);
+    setLinkDraft('');
     // Pickers: projects (not archived; an employee's own) and ACTIVE employees only. Employees can't read the
     // employee list, so they pick from the staff directory.
     projectsApi.list({ limit: 200 }).then(r => setProjects(r.projects)).catch(() => setProjects([]));
@@ -93,6 +102,16 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, taskToEdi
         saved = await tasksApi.update(taskToEdit.id, changes);
       } else {
         saved = await tasksApi.create(input);
+        // The task exists now: attach what was queued. A failure here never undoes the task; it is reported
+        // and can be retried from the task itself.
+        const failed: string[] = [];
+        for (const file of pendingFiles) {
+          await tasksApi.uploadFile(saved.id, file).catch(err => failed.push(`${file.name}: ${errorMessage(err)}`));
+        }
+        for (const link of pendingLinks) {
+          await tasksApi.addLink(saved.id, link).catch(err => failed.push(`${link}: ${errorMessage(err)}`));
+        }
+        if (failed.length > 0) showToast('error', `${saved.code} was created, but some attachments failed. ${failed.join(' · ')}`);
       }
       onSaved(saved, !taskToEdit);
       onClose();
@@ -210,6 +229,79 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, taskToEdi
               </span>
             </span>
           </label>
+        )}
+
+        {/* New task: files and links for context (a brief, a report, references). Existing tasks manage theirs in
+            the task view. */}
+        {!taskToEdit && (
+          <div className="p-3 rounded-lg border border-[#DFE6F1] space-y-2 text-xs" data-testid="new-task-attachments">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold text-[#111827] flex items-center gap-1.5">
+                <Paperclip className="w-3.5 h-3.5 text-[#5038F5]" /> Files & links (optional)
+              </span>
+              <label className="text-[11px] font-medium text-[#5038F5] hover:underline cursor-pointer">
+                Add files
+                <input
+                  type="file"
+                  multiple
+                  accept={ACCEPT_ATTACHMENTS}
+                  className="hidden"
+                  aria-label="Add files"
+                  onChange={e => {
+                    const picked = Array.from(e.target.files ?? []);
+                    const problems = picked.map(fileProblem).filter((p): p is string => p !== null);
+                    if (problems.length > 0) setError(problems.join(' · '));
+                    setPendingFiles(files => [...files, ...picked.filter(f => fileProblem(f) === null)]);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+            </div>
+            <div className="flex gap-2">
+              <input
+                aria-label="Add a link"
+                type="url"
+                placeholder="Paste a link (Google Doc, Drive, Figma…)"
+                value={linkDraft}
+                onChange={e => setLinkDraft(e.target.value)}
+                className={fieldClass}
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!/^https?:\/\/\S+$/i.test(linkDraft.trim())}
+                onClick={() => {
+                  setPendingLinks(links => [...links, linkDraft.trim()]);
+                  setLinkDraft('');
+                }}
+              >
+                Add
+              </Button>
+            </div>
+            {(pendingFiles.length > 0 || pendingLinks.length > 0) && (
+              <ul className="space-y-1">
+                {pendingFiles.map((f, i) => (
+                  <li key={`f${i}`} className="flex items-center gap-2 text-[#475569]">
+                    <span className="truncate flex-1">{f.name}</span>
+                    <span className="text-[#7185A5]">{formatBytes(f.size)}</span>
+                    <button type="button" aria-label={`Remove ${f.name}`} className="text-[#7185A5] hover:text-[#E11D48] cursor-pointer" onClick={() => setPendingFiles(files => files.filter((_, j) => j !== i))}>
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </li>
+                ))}
+                {pendingLinks.map((l, i) => (
+                  <li key={`l${i}`} className="flex items-center gap-2 text-[#475569]">
+                    <span className="truncate flex-1">{l}</span>
+                    <button type="button" aria-label={`Remove ${l}`} className="text-[#7185A5] hover:text-[#E11D48] cursor-pointer" onClick={() => setPendingLinks(links => links.filter((_, j) => j !== i))}>
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="text-[10px] text-[#7185A5]">Documents, images, spreadsheets, slides or zip, up to 10 MB each. Attached once the task is created.</p>
+          </div>
         )}
 
         <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#DFE6F1]">

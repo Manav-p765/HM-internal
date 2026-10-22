@@ -24,6 +24,7 @@ import {
 } from './routes/guards';
 import { ClientPortalLayout } from './components/portal/ClientPortalLayout';
 import { usePresence } from './api/usePresence';
+import { TaskLinkPage } from './routes/TaskLinkPage';
 
 // Pages are split into their own chunks and loaded on first visit.
 const named = <T, K extends keyof T>(load: () => Promise<T>, name: K) =>
@@ -139,6 +140,9 @@ export default function App() {
           <Route path="/set-password" element={<SetPasswordPage />} />
           <Route path="/reset-password" element={<SetPasswordPage />} />
           <Route path="/change-password" element={<RequirePasswordChange><ChangePasswordPage /></RequirePasswordChange>} />
+
+          {/* A shared task link: opens the task in the reader's own shell (staff app or client portal). */}
+          <Route path="/task/:code" element={<RequireAuth><TaskLinkPage /></RequireAuth>} />
 
           <Route path="/portal" element={<ClientPortal />}>
             <Route index element={<ClientPortalDashboard />} />

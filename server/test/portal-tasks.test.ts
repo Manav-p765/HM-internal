@@ -180,7 +180,7 @@ describe('staff side', () => {
     expect(res.body.code).toBe('CLIENT_REQUEST_VISIBLE');
     await manager.patch(`/api/tasks/${t.id}`).send({ assigneeId: ids.riya }).expect(200);
 
-    await samAgent.patch(`/api/tasks/${t.id}/status`).send({ status: 'in_progress' }).expect(404); // reassigned away from Sam
+    await samAgent.patch(`/api/tasks/${t.id}/status`).send({ status: 'in_progress' }).expect(403); // reassigned away from Sam: view only
     await manager.patch(`/api/tasks/${t.id}/status`).send({ status: 'in_progress' }).expect(200);
     expect((await manager.get('/api/tasks?requestedByClient=true&status=todo').expect(200)).body.tasks).toEqual([]);
   });

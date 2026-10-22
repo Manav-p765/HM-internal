@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useParams, useSearchParams } from 'react-router';
 import { ArrowLeft, Calendar, FolderKanban, MessageSquare, Pencil, Plus, User } from 'lucide-react';
 import { PortalTaskRequestModal } from './PortalTaskRequestModal';
 import { portalApi } from '../../api/portal';
@@ -63,7 +63,9 @@ export const PortalProjectsView: React.FC = () => {
 export const PortalProjectTasksView: React.FC = () => {
   const { id = '' } = useParams();
   const data = useApiData(() => portalApi.projectTasks(id), [id]);
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  // ?task= (from a shared task link, /task/TSK-042) opens that task's thread.
+  const [searchParams] = useSearchParams();
+  const [openTaskId, setOpenTaskId] = useState<string | null>(searchParams.get('task'));
   // undefined: closed; null: new request; a task: editing that request.
   const [requestFor, setRequestFor] = useState<PortalTask | null | undefined>(undefined);
   const [notice, setNotice] = useState('');

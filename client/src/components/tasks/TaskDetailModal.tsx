@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { Calendar, Edit2, Eye, EyeOff, FolderKanban, Lock, MessageSquare, Trash2, User } from 'lucide-react';
+import { Calendar, Edit2, Eye, EyeOff, FolderKanban, Link as LinkIcon, Lock, MessageSquare, Trash2, User } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { tasksApi } from '../../api/tasks';
 import { errorMessage } from '../../api/client';
 import { useApiData } from '../../api/useApiData';
-import { CommentType, Task, canChangeTask } from '../../types/work';
+import { CommentType, Task, canChangeTask, taskLink, worksOnTask } from '../../types/work';
+import { TaskAttachments } from './TaskAttachments';
 import { formatDate } from '../../utils/formatters';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
@@ -59,6 +60,17 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, onClos
     }
   };
 
+  // The link people paste in a team chat: it opens just this task (after sign-in).
+  const copyLink = async () => {
+    if (!task) return;
+    try {
+      await navigator.clipboard.writeText(taskLink(task.code));
+      showToast('success', `Link to ${task.code} copied`);
+    } catch {
+      showToast('error', `Could not copy. The link is ${taskLink(task.code)}`);
+    }
+  };
+
   const deleteTask = async () => {
     setConfirmDelete(false);
     try {
@@ -107,6 +119,9 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, onClos
               </Badge>
             )}
             <div className="ml-auto flex gap-2">
+              <Button variant="outline" size="sm" icon={<LinkIcon className="w-3.5 h-3.5" />} onClick={copyLink} title={taskLink(task.code)}>
+                Copy link
+              </Button>
               {onEdit && canChangeTask(task, currentUser) && (
                 <Button variant="outline" size="sm" icon={<Edit2 className="w-3.5 h-3.5" />} onClick={() => onEdit(task)}>
                   Edit
@@ -169,6 +184,15 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, onClos
               }}
             />
           </div>
+
+          <TaskAttachments
+            taskId={task.id}
+            canManage={worksOnTask(task, currentUser)}
+            onChanged={() => {
+              detail.reload();
+              onChanged();
+            }}
+          />
 
           {/* Comment thread */}
           <div className="rounded-xl border border-[#DFE6F1] overflow-hidden">

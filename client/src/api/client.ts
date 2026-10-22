@@ -28,14 +28,17 @@ export function setSessionHandlers(next: SessionHandlers | null): void {
 
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+  // JSON, or a Blob (a file) sent as is with `headers` (e.g. its Content-Type).
   body?: unknown;
+  headers?: Record<string, string>;
 }
 
 // Safety net so a form never spins forever: the server gives up well before this (mail after 10 s, SQL
 // statements after 15 s), so only a hung connection or proxy ever reaches it.
 const REQUEST_TIMEOUT_MS = 30_000;
 
-export async function api<T>(path: string, { method = 'GET', body }: RequestOptions = {}): Promise<T> {
+export async function api<T>(path: string, { method = 'GET', body, headers }: RequestOptions = {}): Promise<T> {
+  const raw = body instanceof Blob;
   const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   let response: Response;
   let data: { error?: string; code?: string; details?: { path: string; message: string }[] } | null;
@@ -43,8 +46,8 @@ export async function api<T>(path: string, { method = 'GET', body }: RequestOpti
     response = await fetch(`/api${path}`, {
       method,
       credentials: 'include',
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: raw || body === undefined ? headers : { 'Content-Type': 'application/json', ...headers },
+      body: body === undefined ? undefined : raw ? body : JSON.stringify(body),
       signal,
     });
     data = await response.json().catch(() => null);

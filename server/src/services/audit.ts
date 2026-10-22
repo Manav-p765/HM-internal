@@ -36,6 +36,8 @@ export type AuditAction =
   | 'task.updated'
   | 'task.deleted'
   | 'task.status_changed'
+  | 'task.attachment_added'
+  | 'task.attachment_removed'
   | 'comment.created'
   | 'comment.deleted'
   | 'attendance.punched_in'
