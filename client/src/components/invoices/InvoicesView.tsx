@@ -13,6 +13,7 @@ import { ConfirmDialog } from '../common/ConfirmDialog';
 import { InvoiceModal } from './InvoiceModal';
 import { InvoiceDetailModal } from './InvoiceDetailModal';
 import { InvoiceStatusBadge } from './InvoiceStatusBadge';
+import { OtherCurrencyTotals } from './OtherCurrencyTotals';
 import { FileText, Plus, Download, Search, Eye, Edit2, Trash2, Printer } from 'lucide-react';
 import { formatDate, exportToCSV } from '../../utils/formatters';
 import { formatMoney } from '../../utils/money';
@@ -74,12 +75,13 @@ export const InvoicesView: React.FC = () => {
   const total = list.data?.total ?? 0;
 
   const handleExportCSV = () => {
-    const headers = ['Invoice Number', 'Client', 'Invoice Date', 'Due Date', 'Subtotal (INR)', 'Tax Rate (%)', 'Tax (INR)', 'Total (INR)', 'Paid (INR)', 'Balance (INR)', 'Status'];
+    const headers = ['Invoice Number', 'Client', 'Invoice Date', 'Due Date', 'Currency', 'Subtotal', 'Tax Rate (%)', 'Tax', 'Total', 'Paid', 'Balance', 'Status'];
     const rows = invoices.map(i => [
       invoiceLabel(i),
       i.clientName,
       i.invoiceDate,
       i.dueDate,
+      i.currency,
       i.subtotal,
       i.taxRate,
       i.taxAmount,
@@ -130,6 +132,7 @@ export const InvoicesView: React.FC = () => {
           <span className="mt-2 block text-lg sm:text-xl font-mono font-bold text-[#B45309] truncate" data-testid="summary-outstanding">
             {summary ? formatMoney(summary.outstandingTotal) : '—'}
           </span>
+          <OtherCurrencyTotals rows={summary?.otherCurrencies} field="outstandingTotal" />
           <span className="text-[11px] text-[#7185A5]">Sent invoices not yet paid</span>
         </Card>
         <Card padding="md">
@@ -137,6 +140,7 @@ export const InvoicesView: React.FC = () => {
           <span className="mt-2 block text-lg sm:text-xl font-mono font-bold text-[#E11D48] truncate">
             {summary ? formatMoney(summary.overdueTotal) : '—'}
           </span>
+          <OtherCurrencyTotals rows={summary?.otherCurrencies} field="overdueTotal" />
           <span className="text-[11px] text-[#7185A5]">{summary ? `${summary.overdueCount} past due date` : ''}</span>
         </Card>
         <Card padding="md">
@@ -144,7 +148,7 @@ export const InvoicesView: React.FC = () => {
           <span className="mt-2 block text-lg sm:text-xl font-mono font-bold text-[#047857] truncate">
             {summary ? formatMoney(summary.collectedThisMonth) : '—'}
           </span>
-          <span className="text-[11px] text-[#7185A5]">Invoice payments (IST)</span>
+          <span className="text-[11px] text-[#7185A5]">Invoice payments received, in INR</span>
         </Card>
         <Card padding="md">
           <span className="text-xs font-semibold text-[#7185A5] block">Drafts</span>
@@ -249,10 +253,10 @@ export const InvoicesView: React.FC = () => {
                         Due {formatDate(inv.dueDate)}
                       </div>
                     </td>
-                    <td className="py-3 px-4 text-right font-mono font-bold text-[#111827] whitespace-nowrap">{formatMoney(inv.total)}</td>
+                    <td className="py-3 px-4 text-right font-mono font-bold text-[#111827] whitespace-nowrap">{formatMoney(inv.total, inv.currency)}</td>
                     <td className="py-3 px-4 text-right font-mono whitespace-nowrap">
-                      <span className={inv.status === 'sent' ? 'font-bold text-[#B45309]' : 'text-[#7185A5]'}>{formatMoney(inv.balance)}</span>
-                      {inv.amountPaid !== '0.00' && <div className="text-[11px] text-[#047857]">Paid {formatMoney(inv.amountPaid)}</div>}
+                      <span className={inv.status === 'sent' ? 'font-bold text-[#B45309]' : 'text-[#7185A5]'}>{formatMoney(inv.balance, inv.currency)}</span>
+                      {inv.amountPaid !== '0.00' && <div className="text-[11px] text-[#047857]">Paid {formatMoney(inv.amountPaid, inv.currency)}</div>}
                     </td>
                     <td className="py-3 px-4 text-center whitespace-nowrap">
                       <InvoiceStatusBadge status={inv.derivedStatus} />

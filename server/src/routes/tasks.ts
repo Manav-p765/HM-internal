@@ -3,12 +3,16 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { audit } from '../services/audit.js';
+import { notifyTaskAssigned } from '../services/notifications.js';
 import { createRouter, STAFF } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
 import { isoDate, likePattern, optionalText, pageQuery, TODAY_SQL } from './shared.js';
 
-// Tasks for staff. Admin and manager manage every task; an employee only ever sees and touches tasks
-// assigned to their own employee record (req.user.employeeId), and gets 404 for anyone else's.
+// Tasks for staff. Admin and manager manage every task. An employee sees the tasks assigned to their own
+// employee record (req.user.employeeId) and the tasks they assigned to others (created_by), and gets 404 for
+// anyone else's. Employees may create tasks on projects they are on, for any active colleague; whoever assigned
+// a task may edit or delete it while it is still to do, and reviews it (in review -> completed, or back to in
+// progress) when it is someone else's.
 export const tasksRouter = createRouter();
 // DELETE /api/comments/:id lives on its own path.
 export const commentsRouter = createRouter();
@@ -23,13 +27,23 @@ const EMPLOYEE_TRANSITIONS: Record<string, TaskStatus[]> = {
   in_progress: ['in_review', 'blocked'],
   blocked: ['in_progress'],
 };
+// Status changes an employee may make on a task they assigned to someone else: the review.
+const CREATOR_TRANSITIONS: Record<string, TaskStatus[]> = {
+  in_review: ['completed', 'in_progress'],
+};
 
 const isManager = (req: Request) => req.user!.role === 'admin' || req.user!.role === 'manager';
 const NO_EMPLOYEE = '00000000-0000-0000-0000-000000000000';
 // The assignee an employee is restricted to (null = no restriction, for admin/manager).
 const assigneeScope = (req: Request): string | null => (isManager(req) ? null : (req.user!.employeeId ?? NO_EMPLOYEE));
+// $1, $2 of SCOPE_SQL: the employee's own record and login (both null for admin/manager).
+const viewerScope = (req: Request): [string | null, string | null] => (isManager(req) ? [null, null] : [assigneeScope(req), req.user!.id]);
 
 export const OVERDUE_SQL = `(t.status <> 'completed' AND t.deadline < ${TODAY_SQL})`;
+
+// A login's display name: the linked employee, else the client company, else the company itself.
+export const displayNameSql = (user: string, employee: string, client: string) =>
+  `coalesce(${employee}.full_name, CASE WHEN ${user}.role = 'client' THEN ${client}.company_name ELSE 'Hybrid Monks' END)`;
 
 const TASK_COLUMNS = `
   t.id, t.task_code AS code, t.project_id AS "projectId", p.name AS "projectName", p.status AS "projectStatus",
@@ -37,21 +51,26 @@ const TASK_COLUMNS = `
   t.title, t.description, t.assignee_employee_id AS "assigneeId",
   CASE WHEN e.id IS NULL THEN NULL ELSE json_build_object('id', e.id, 'fullName', e.full_name, 'designation', e.designation) END AS assignee,
   t.start_date AS "startDate", t.deadline, t.priority, t.status, t.client_visible AS "clientVisible",
+  t.requested_by_client AS "requestedByClient",
   t.completed_at AS "completedAt", t.completion_comment AS "completionComment",
   ${OVERDUE_SQL} AS overdue,
-  t.created_by AS "createdBy", t.updated_by AS "updatedBy", t.created_at AS "createdAt", t.updated_at AS "updatedAt"`;
+  t.created_by AS "createdBy", ${displayNameSql('cu', 'ce', 'cuc')} AS "createdByName",
+  t.updated_by AS "updatedBy", t.created_at AS "createdAt", t.updated_at AS "updatedAt"`;
 
 const TASK_FROM = `
   FROM tasks t
   JOIN projects p ON p.id = t.project_id
   LEFT JOIN clients c ON c.id = p.client_id
-  LEFT JOIN employees e ON e.id = t.assignee_employee_id`;
+  LEFT JOIN employees e ON e.id = t.assignee_employee_id
+  JOIN users cu ON cu.id = t.created_by
+  LEFT JOIN employees ce ON ce.id = cu.employee_id
+  LEFT JOIN clients cuc ON cuc.id = cu.client_id`;
 
-// $1 = assignee scope (null for admin/manager).
-const SCOPE_SQL = `($1::uuid IS NULL OR t.assignee_employee_id = $1)`;
+// $1 = the employee's own record, $2 = their login (both null for admin/manager): assigned to them or by them.
+const SCOPE_SQL = `($1::uuid IS NULL OR t.assignee_employee_id = $1 OR t.created_by = $2::uuid)`;
 
 async function getTask(req: Request, id: string) {
-  const [task] = await query(`SELECT ${TASK_COLUMNS} ${TASK_FROM} WHERE t.id = $2 AND ${SCOPE_SQL}`, [assigneeScope(req), id]);
+  const [task] = await query(`SELECT ${TASK_COLUMNS} ${TASK_FROM} WHERE t.id = $3 AND ${SCOPE_SQL}`, [...viewerScope(req), id]);
   if (!task) throw new HttpError(404, 'Task not found', 'NOT_FOUND');
   return task;
 }
@@ -77,14 +96,41 @@ async function assignToProject(client: PoolClient, projectId: string, employeeId
   );
 }
 
+// TSK-001, TSK-002, ... (max + 1 under a transaction-scoped lock, like employee codes). Staff and client
+// requests (routes/portal.ts) share the sequence.
+export async function nextTaskCode(client: PoolClient): Promise<string> {
+  await client.query(`SELECT pg_advisory_xact_lock(hashtext('tasks.task_code'))`);
+  const next = await client.query<{ code: string }>(
+    `SELECT 'TSK-' || lpad((coalesce(max(substring(task_code FROM 5)::int), 0) + 1)::text, 3, '0') AS code
+       FROM tasks WHERE task_code ~ '^TSK-[0-9]+$'`,
+  );
+  return next.rows[0].code;
+}
+
 const datesError = () =>
   new HttpError(400, 'Deadline cannot be before the start date', 'VALIDATION_ERROR', [
     { path: 'deadline', message: 'Deadline cannot be before the start date' },
   ]);
 
+const shareForbidden = () => new HttpError(403, 'Only an admin or manager can share a task with the client', 'FORBIDDEN');
+
+// An employee changes or deletes a task only if they assigned it, and only while nobody has started on it.
+function assertCreatorMayChange(req: Request, task: { created_by: string; status: string }) {
+  if (isManager(req)) return;
+  if (task.created_by !== req.user!.id) {
+    throw new HttpError(403, 'Only the person who assigned this task or a manager can change it', 'FORBIDDEN');
+  }
+  if (task.status !== 'todo') {
+    throw new HttpError(409, 'Work has started on this task. Ask a manager to change it.', 'TASK_LOCKED');
+  }
+}
+
 // ---------------------------------------------------------------------------
-// GET /api/tasks  (STAFF; employees are forced to their own tasks, any assignee param is ignored)
-//   ?projectId=&assigneeId=&priority=&status=&overdue=true&clientVisible=&search=&limit=&offset=
+// GET /api/tasks  (STAFF)
+//   ?projectId=&assigneeId=&priority=&status=&overdue=true&requestedByClient=true&view=&search=&limit=&offset=
+//   view=assigned_by_me: tasks the caller assigned to someone else. Otherwise employees get the tasks assigned
+//   to them (any assigneeId param is ignored).
+//   (requestedByClient=true&status=todo is the admin/manager bell: client requests nobody has started)
 // ---------------------------------------------------------------------------
 const listQuerySchema = pageQuery.extend({
   projectId: z.uuid().optional(),
@@ -92,6 +138,8 @@ const listQuerySchema = pageQuery.extend({
   priority: z.enum(PRIORITIES).optional(),
   status: z.enum(TASK_STATUSES).optional(),
   overdue: z.enum(['true', 'false']).optional(),
+  requestedByClient: z.enum(['true', 'false']).optional(),
+  view: z.enum(['assigned_by_me']).optional(),
   search: z.string().trim().max(100).optional(),
 });
 
@@ -100,18 +148,25 @@ tasksRouter.get('/', STAFF, async (req, res) => {
   if (!parsed.success) throw new HttpError(400, parsed.error.issues[0].message, 'VALIDATION_ERROR');
   const q = parsed.data;
 
-  const params: unknown[] = [assigneeScope(req)];
+  const params: unknown[] = viewerScope(req);
   const where = [SCOPE_SQL];
   const add = (sql: (p: string) => string, value: unknown) => {
     params.push(value);
     where.push(sql(`$${params.length}`));
   };
+  if (q.view === 'assigned_by_me') {
+    add(p => `t.created_by = ${p}`, req.user!.id);
+    add(p => `t.assignee_employee_id IS DISTINCT FROM ${p}::uuid`, req.user!.employeeId ?? null);
+  } else if (!isManager(req)) {
+    where.push('t.assignee_employee_id = $1');
+  }
   if (q.projectId) add(p => `t.project_id = ${p}`, q.projectId);
   if (isManager(req) && q.assigneeId === 'unassigned') where.push('t.assignee_employee_id IS NULL');
   else if (isManager(req) && q.assigneeId) add(p => `t.assignee_employee_id = ${p}`, q.assigneeId);
   if (q.priority) add(p => `t.priority = ${p}`, q.priority);
   if (q.status) add(p => `t.status = ${p}`, q.status);
   if (q.overdue === 'true') where.push(OVERDUE_SQL);
+  if (q.requestedByClient) where.push(q.requestedByClient === 'true' ? 't.requested_by_client' : 'NOT t.requested_by_client');
   if (q.search) add(p => `(t.title ILIKE ${p} OR t.task_code ILIKE ${p})`, likePattern(q.search));
   const whereSql = `WHERE ${where.join(' AND ')}`;
 
@@ -129,7 +184,7 @@ tasksRouter.get('/', STAFF, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/tasks/summary  (STAFF; employees: their own tasks) - dashboard KPIs
+// GET /api/tasks/summary  (STAFF; employees: the tasks assigned to them) - dashboard KPIs
 // ---------------------------------------------------------------------------
 tasksRouter.get('/summary', STAFF, async (req, res) => {
   const [summary] = await query(
@@ -140,21 +195,24 @@ tasksRouter.get('/summary', STAFF, async (req, res) => {
             count(*) FILTER (WHERE t.status = 'completed')::int AS completed,
             count(*) FILTER (WHERE t.status = 'blocked')::int AS blocked,
             count(*) FILTER (WHERE ${OVERDUE_SQL})::int AS overdue
-       FROM tasks t WHERE ${SCOPE_SQL}`,
+       FROM tasks t WHERE ($1::uuid IS NULL OR t.assignee_employee_id = $1)`,
     [assigneeScope(req)],
   );
   res.json({ summary });
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/tasks/:id  (STAFF; employees only their own, else 404)
+// GET /api/tasks/:id  (STAFF; employees only tasks assigned to or by them, else 404)
 // ---------------------------------------------------------------------------
 tasksRouter.get('/:id', STAFF, async (req, res) => {
   res.json({ task: await getTask(req, parseId(req.params.id)) });
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/tasks and PATCH /api/tasks/:id  (admin, manager)
+// POST /api/tasks and PATCH /api/tasks/:id
+//   admin, manager: any task. employee: create on a (not archived) project they are on, for any active
+//   colleague; edit only tasks they created, while still to do. Only admin/manager share tasks with the client.
+//   The assignee is notified (services/notifications.ts).
 // ---------------------------------------------------------------------------
 const createSchema = z
   .object({
@@ -172,27 +230,32 @@ const createSchema = z
     path: ['deadline'],
   });
 
-tasksRouter.post('/', ['admin', 'manager'], async (req, res) => {
+tasksRouter.post('/', STAFF, async (req, res) => {
   const body = parseBody(createSchema, req.body);
+  if (body.clientVisible && !isManager(req)) throw shareForbidden();
 
   const id = await withTransaction(async client => {
-    const project = (await client.query('SELECT 1 FROM projects WHERE id = $1 FOR SHARE', [body.projectId])).rows[0];
+    // Employees: only projects they are on (anything else reads as missing).
+    const project = (
+      await client.query(
+        `SELECT 1 FROM projects p
+          WHERE p.id = $1
+            AND ($2::uuid IS NULL OR (p.status <> 'archived' AND EXISTS (
+                  SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.employee_id = $2)))
+          FOR SHARE`,
+        [body.projectId, assigneeScope(req)],
+      )
+    ).rows[0];
     if (!project) {
       throw new HttpError(400, 'Project not found', 'VALIDATION_ERROR', [{ path: 'projectId', message: 'Project not found' }]);
     }
     await assignToProject(client, body.projectId, body.assigneeId);
-    // TSK-001, TSK-002, ... (max + 1 under a transaction-scoped lock, like employee codes)
-    await client.query(`SELECT pg_advisory_xact_lock(hashtext('tasks.task_code'))`);
-    const next = await client.query<{ code: string }>(
-      `SELECT 'TSK-' || lpad((coalesce(max(substring(task_code FROM 5)::int), 0) + 1)::text, 3, '0') AS code
-         FROM tasks WHERE task_code ~ '^TSK-[0-9]+$'`,
-    );
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO tasks (task_code, project_id, title, description, assignee_employee_id, start_date, deadline,
                           priority, client_visible, created_by, updated_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10) RETURNING id`,
       [
-        next.rows[0].code,
+        await nextTaskCode(client),
         body.projectId,
         body.title,
         body.description,
@@ -204,7 +267,9 @@ tasksRouter.post('/', ['admin', 'manager'], async (req, res) => {
         req.user!.id,
       ],
     );
-    return inserted.rows[0].id;
+    const taskId = inserted.rows[0].id;
+    await notifyTaskAssigned(client, taskId, body.assigneeId, req.user!.id);
+    return taskId;
   });
 
   await audit(req, { action: 'task.created', entityType: 'task', entityId: id, metadata: { fields: Object.keys(body) } });
@@ -234,18 +299,41 @@ const TASK_COLUMN: Record<string, string> = {
   clientVisible: 'client_visible',
 };
 
-tasksRouter.patch('/:id', ['admin', 'manager'], async (req, res) => {
+type LockedTask = {
+  project_id: string;
+  start_date: string | null;
+  deadline: string | null;
+  requested_by_client: boolean;
+  assignee_employee_id: string | null;
+  created_by: string;
+  status: string;
+};
+
+// The task row under FOR UPDATE, within the caller's scope (404 otherwise).
+async function lockTask(client: PoolClient, req: Request, id: string): Promise<LockedTask> {
+  const current = (
+    await client.query<LockedTask>(
+      `SELECT t.project_id, t.start_date, t.deadline, t.requested_by_client, t.assignee_employee_id, t.created_by, t.status
+         FROM tasks t WHERE t.id = $3 AND ${SCOPE_SQL} FOR UPDATE`,
+      [...viewerScope(req), id],
+    )
+  ).rows[0];
+  if (!current) throw new HttpError(404, 'Task not found', 'NOT_FOUND');
+  return current;
+}
+
+tasksRouter.patch('/:id', STAFF, async (req, res) => {
   const id = parseId(req.params.id);
   const body = parseBody(updateSchema, req.body);
 
   await withTransaction(async client => {
-    const current = (
-      await client.query<{ project_id: string; start_date: string | null; deadline: string | null }>(
-        'SELECT project_id, start_date, deadline FROM tasks WHERE id = $1 FOR UPDATE',
-        [id],
-      )
-    ).rows[0];
-    if (!current) throw new HttpError(404, 'Task not found', 'NOT_FOUND');
+    const current = await lockTask(client, req, id);
+    assertCreatorMayChange(req, current);
+    if ('clientVisible' in body && !isManager(req)) throw shareForbidden();
+    // A client's own request always stays visible to that client (migration 014).
+    if (current.requested_by_client && body.clientVisible === false) {
+      throw new HttpError(409, 'A task the client requested stays shared with the client', 'CLIENT_REQUEST_VISIBLE');
+    }
     const start = 'startDate' in body ? body.startDate : current.start_date;
     const deadline = 'deadline' in body ? body.deadline : current.deadline;
     if (start && deadline && deadline < start) throw datesError();
@@ -256,6 +344,9 @@ tasksRouter.patch('/:id', ['admin', 'manager'], async (req, res) => {
       `UPDATE tasks SET ${fields.map((f, i) => `${TASK_COLUMN[f]} = $${i + 3}`).join(', ')}, updated_by = $2 WHERE id = $1`,
       [id, req.user!.id, ...fields.map(f => body[f] ?? null)],
     );
+    if ('assigneeId' in body && (body.assigneeId ?? null) !== current.assignee_employee_id) {
+      await notifyTaskAssigned(client, id, body.assigneeId, req.user!.id);
+    }
   });
 
   await audit(req, { action: 'task.updated', entityType: 'task', entityId: id, metadata: { fields: Object.keys(body) } });
@@ -263,19 +354,24 @@ tasksRouter.patch('/:id', ['admin', 'manager'], async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// DELETE /api/tasks/:id  (admin, manager). Comments go with it (ON DELETE CASCADE).
+// DELETE /api/tasks/:id  (admin, manager; an employee: a task they created, while still to do).
+// Comments and notifications go with it (ON DELETE CASCADE).
 // ---------------------------------------------------------------------------
-tasksRouter.delete('/:id', ['admin', 'manager'], async (req, res) => {
+tasksRouter.delete('/:id', STAFF, async (req, res) => {
   const id = parseId(req.params.id);
-  const deleted = await query<{ task_code: string }>('DELETE FROM tasks WHERE id = $1 RETURNING task_code', [id]);
-  if (deleted.length === 0) throw new HttpError(404, 'Task not found', 'NOT_FOUND');
-  await audit(req, { action: 'task.deleted', entityType: 'task', entityId: id, metadata: { code: deleted[0].task_code } });
+  const code = await withTransaction(async client => {
+    assertCreatorMayChange(req, await lockTask(client, req, id));
+    const deleted = await client.query<{ task_code: string }>('DELETE FROM tasks WHERE id = $1 RETURNING task_code', [id]);
+    return deleted.rows[0].task_code;
+  });
+  await audit(req, { action: 'task.deleted', entityType: 'task', entityId: id, metadata: { code } });
   res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------
 // PATCH /api/tasks/:id/status  { status, comment? }
-//   employee (own task only): todo->in_progress, in_progress->in_review|blocked, blocked->in_progress
+//   employee, own task: todo->in_progress, in_progress->in_review|blocked, blocked->in_progress
+//   employee, a task they assigned to someone else: in_review->completed|in_progress (the review)
 //   admin/manager: any transition. completed_at is set on completed and cleared when leaving it.
 // ---------------------------------------------------------------------------
 const statusSchema = z.object({
@@ -288,20 +384,23 @@ tasksRouter.patch('/:id/status', STAFF, async (req, res) => {
   const { status, comment } = parseBody(statusSchema, req.body);
 
   const from = await withTransaction(async client => {
-    const current = (
-      await client.query<{ status: TaskStatus }>(
-        `SELECT t.status FROM tasks t WHERE t.id = $2 AND ${SCOPE_SQL} FOR UPDATE`,
-        [assigneeScope(req), id],
-      )
-    ).rows[0];
-    if (!current) throw new HttpError(404, 'Task not found', 'NOT_FOUND');
+    const current = await lockTask(client, req, id);
+    const from = current.status as TaskStatus;
 
-    if (!isManager(req) && !(EMPLOYEE_TRANSITIONS[current.status] ?? []).includes(status)) {
-      throw new HttpError(
-        403,
-        `You can't move a task from ${current.status.replace('_', ' ')} to ${status.replace('_', ' ')}. Ask a manager.`,
-        'TRANSITION_NOT_ALLOWED',
-      );
+    if (!isManager(req)) {
+      const allowed =
+        current.assignee_employee_id === req.user!.employeeId
+          ? EMPLOYEE_TRANSITIONS[from]
+          : current.created_by === req.user!.id
+            ? CREATOR_TRANSITIONS[from]
+            : undefined;
+      if (!(allowed ?? []).includes(status)) {
+        throw new HttpError(
+          403,
+          `You can't move a task from ${from.replace('_', ' ')} to ${status.replace('_', ' ')}. Ask a manager.`,
+          'TRANSITION_NOT_ALLOWED',
+        );
+      }
     }
 
     // A note left when handing work over (in review) or finishing it is kept as the completion comment.
@@ -315,7 +414,7 @@ tasksRouter.patch('/:id/status', STAFF, async (req, res) => {
         WHERE id = $1`,
       [id, status, Boolean(keepComment), comment, req.user!.id],
     );
-    return current.status;
+    return from;
   });
 
   await audit(req, { action: 'task.status_changed', entityType: 'task', entityId: id, metadata: { from, to: status } });
@@ -323,11 +422,10 @@ tasksRouter.patch('/:id/status', STAFF, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Comments (staff side). Employees only on their own tasks. Staff pick the type (default internal_note):
-// internal notes are never shown to clients; client_feedback is the thread shared with the client.
+// Comments (staff side). Employees only on tasks assigned to or by them. Staff pick the type (default
+// internal_note): internal notes are never shown to clients; client_feedback is the thread shared with the client.
 // ---------------------------------------------------------------------------
-export const COMMENT_AUTHOR_SQL = `
-  coalesce(ae.full_name, CASE WHEN au.role = 'client' THEN cc.company_name ELSE 'Hybrid Monks' END)`;
+export const COMMENT_AUTHOR_SQL = displayNameSql('au', 'ae', 'cc');
 
 tasksRouter.get('/:id/comments', STAFF, async (req, res) => {
   const task = await getTask(req, parseId(req.params.id));
@@ -367,15 +465,14 @@ tasksRouter.post('/:id/comments', STAFF, async (req, res) => {
 // ---------------------------------------------------------------------------
 commentsRouter.delete('/:id', STAFF, async (req, res) => {
   const id = parseId(req.params.id, 'Comment');
-  const [comment] = await query<{ author_user_id: string; task_id: string; assignee: string | null }>(
-    `SELECT tc.author_user_id, tc.task_id, t.assignee_employee_id AS assignee
+  const [comment] = await query<{ author_user_id: string; task_id: string; assignee: string | null; creator: string }>(
+    `SELECT tc.author_user_id, tc.task_id, t.assignee_employee_id AS assignee, t.created_by AS creator
        FROM task_comments tc JOIN tasks t ON t.id = tc.task_id WHERE tc.id = $1`,
     [id],
   );
   // Employees can't even learn that comments on other people's tasks exist.
-  if (!comment || (!isManager(req) && comment.assignee !== req.user!.employeeId)) {
-    throw new HttpError(404, 'Comment not found', 'NOT_FOUND');
-  }
+  const visible = comment && (isManager(req) || comment.assignee === req.user!.employeeId || comment.creator === req.user!.id);
+  if (!visible) throw new HttpError(404, 'Comment not found', 'NOT_FOUND');
   if (comment.author_user_id !== req.user!.id && req.user!.role !== 'admin') {
     throw new HttpError(403, 'Only the author or an admin can delete this comment', 'FORBIDDEN');
   }

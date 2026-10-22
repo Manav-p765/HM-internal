@@ -1,10 +1,16 @@
 import nodemailer from 'nodemailer';
 import { config } from '../config.js';
 
-interface Mail {
+// Every email has a plain-text part and an HTML part with the same words and the same single link (whose
+// visible text is the URL itself, on APP_URL's host), a short plain subject, and an optional Reply-To
+// (SMTP_REPLY_TO). No images, no tracking pixels, no redirect links: Resend's open/click tracking must stay
+// off for the sending domain (docs/DEPLOY.md), so the link a user sees is the link they open.
+export interface Mail {
   to: string;
   subject: string;
   text: string;
+  html: string;
+  replyTo?: string;
 }
 
 // What kind of email it is, for logs (never the recipient, the password or the link).
@@ -89,7 +95,14 @@ export function createResendTransport(opts: {
         response = await doFetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: { Authorization: `Bearer ${opts.apiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ from: opts.from, to: [mail.to], subject: mail.subject, text: mail.text }),
+          body: JSON.stringify({
+            from: opts.from,
+            to: [mail.to],
+            subject: mail.subject,
+            text: mail.text,
+            html: mail.html,
+            ...(mail.replyTo ? { reply_to: mail.replyTo } : {}),
+          }),
           signal,
         });
         data = (await response.json().catch(() => null)) as typeof data;
@@ -121,7 +134,8 @@ function createSmtpTransport(timeoutMs = MAIL_TIMEOUT_MS): MailTransport {
     name: 'smtp',
     async send(mail, purpose) {
       try {
-        const info = await withTimeout(smtp.sendMail({ from: fromHeader(), ...mail }), timeoutMs);
+        const { to, subject, text, html, replyTo } = mail;
+        const info = await withTimeout(smtp.sendMail({ from: fromHeader(), to, subject, text, html, replyTo }), timeoutMs);
         return token(info.messageId) ?? '(no id)';
       } catch (err) {
         throw new MailError(purpose, err instanceof MailTimeout ? 'TIMEOUT' : smtpCode(err));
@@ -210,58 +224,71 @@ export async function sendTestEmail(to: string): Promise<string> {
   if (!t) throw new MailError('test', 'NOT_CONFIGURED');
   return deliver(
     t,
-    {
-      to,
-      subject: 'Monks Internal Management: test email',
-      text: `This is a test message from Monks Internal Management (${config.APP_URL}). If you received it, outgoing mail works.
-
-${SIGN_OFF}`,
-    },
+    composeMail(to, 'Test email from Monks Internal Management', {
+      paragraphs: [`This is a test message from Monks Internal Management (${config.APP_URL}). If you received it, outgoing mail works.`],
+    }),
     'test',
   );
 }
 
-const SIGN_OFF = 'Monks Internal Management\nHybrid Monks LLP';
+const SIGN_OFF = ['Monks Internal Management', 'Hybrid Monks LLP'];
 
-// The one link both emails carry. Only ever built here; the token is never logged.
-const setPasswordLink = (token: string) => `${config.APP_URL}/set-password?token=${encodeURIComponent(token)}`;
+const HTML_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const escapeHtml = (v: string) => v.replace(/[&<>"']/g, c => HTML_ESCAPES[c]);
+
+// One message in both formats from the same words: greeting, paragraphs, at most one link (shown as itself),
+// closing paragraphs and the sign-off. The HTML is plain and inline-styled: no images, scripts or assets.
+export function composeMail(to: string, subject: string, body: { paragraphs: string[]; link?: string; after?: string[] }): Mail {
+  const after = body.after ?? [];
+  const text = [
+    'Hello,',
+    '',
+    ...body.paragraphs.flatMap(p => [p, '']),
+    ...(body.link ? [body.link, ''] : []),
+    ...after.flatMap(p => [p, '']),
+    ...SIGN_OFF,
+  ].join('\n');
+  const para = (v: string) => `<p style="margin:0 0 16px">${escapeHtml(v)}</p>`;
+  const html = [
+    '<!doctype html><html><body style="margin:0;padding:24px;background:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#111827">',
+    '<div style="max-width:560px">',
+    para('Hello,'),
+    ...body.paragraphs.map(para),
+    body.link
+      ? `<p style="margin:0 0 16px"><a href="${escapeHtml(body.link)}" style="color:#4338ca;word-break:break-all">${escapeHtml(body.link)}</a></p>`
+      : '',
+    ...after.map(para),
+    `<p style="margin:24px 0 0;color:#6b7280">${SIGN_OFF.map(escapeHtml).join('<br>')}</p>`,
+    '</div></body></html>',
+  ].join('');
+  return { to, subject, text, html, ...(config.SMTP_REPLY_TO ? { replyTo: config.SMTP_REPLY_TO } : {}) };
+}
+
+// The one link both emails carry, always on APP_URL (the public origin). Only ever built here; the token is
+// never logged.
+export const setPasswordLink = (token: string) => `${config.APP_URL}/set-password?token=${encodeURIComponent(token)}`;
 
 export function sendInviteEmail(to: string, token: string): Promise<void> {
-  return send({
-    to,
-    subject: 'Set your password for Monks Internal Management',
-    text: [
-      'Hello,',
-      '',
-      'An account has been created for you on Monks Internal Management. Open this link to choose your password:',
-      '',
-      setPasswordLink(token),
-      '',
-      'The link works once and expires in 72 hours. If it has expired, ask your administrator to send a new invite.',
-      '',
-      'If you were not expecting this email, you can ignore it.',
-      '',
-      SIGN_OFF,
-    ].join('\n'),
-  }, 'invite');
+  return send(
+    composeMail(to, 'Set your password', {
+      paragraphs: ['An account has been created for you on Monks Internal Management. Open this link to choose your password:'],
+      link: setPasswordLink(token),
+      after: [
+        'The link works once and expires in 72 hours. If it has expired, ask your administrator to send a new invite.',
+        'If you were not expecting this email, you can ignore it.',
+      ],
+    }),
+    'invite',
+  );
 }
 
 export function sendPasswordResetEmail(to: string, token: string): Promise<void> {
-  return send({
-    to,
-    subject: 'Reset your Monks Internal Management password',
-    text: [
-      'Hello,',
-      '',
-      'We received a request to reset the password for your Monks Internal Management account. Open this link to choose a new one:',
-      '',
-      setPasswordLink(token),
-      '',
-      'The link works once and expires in 1 hour.',
-      '',
-      'If you did not request this, you can ignore this email; your password will not change.',
-      '',
-      SIGN_OFF,
-    ].join('\n'),
-  }, 'password-reset');
+  return send(
+    composeMail(to, 'Reset your password', {
+      paragraphs: ['We received a request to reset the password for your Monks Internal Management account. Open this link to choose a new one:'],
+      link: setPasswordLink(token),
+      after: ['The link works once and expires in 1 hour.', 'If you did not request this, you can ignore this email; your password will not change.'],
+    }),
+    'password-reset',
+  );
 }

@@ -16,6 +16,8 @@ export type AuditAction =
   | 'user.credentials_resent' // historical rows only (temporary passwords were replaced by invite links)
   | 'user.invite_sent'
   | 'user.reset_link_sent'
+  | 'user.employee_linked' // metadata: employeeId, how ('email' automatic, 'manual' by an admin, 'script')
+  | 'user.employee_unlinked'
   | 'auth.password_set'
   | 'employee.created'
   | 'employee.updated'

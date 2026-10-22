@@ -1,16 +1,18 @@
 import React, { Suspense, useState } from 'react';
 import { NavLink, Outlet } from 'react-router';
-import { Building2, FolderKanban, LayoutDashboard, LogOut, Menu, Users, X } from 'lucide-react';
+import { Building2, FileText, FolderKanban, LayoutDashboard, LogOut, Menu, Users, X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { Badge } from '../common/Badge';
 import { Avatar } from '../common/Avatar';
 import { PageLoading } from '../../routes/guards';
 
 // Restricted shell for client (portal) users. It never mounts the staff AppProvider, so no staff data
-// (invoices, salaries, employees...) is ever loaded in a client's browser.
+// (salaries, employees, the ledger...) is ever loaded in a client's browser. Invoices come only from
+// /api/portal/invoices (their own company's issued invoices).
 const NAV = [
   { to: '/portal', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" />, end: true },
   { to: '/portal/projects', label: 'My Projects', icon: <FolderKanban className="w-4 h-4" />, end: false },
+  { to: '/portal/invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" />, end: false },
   { to: '/portal/team', label: 'Team', icon: <Users className="w-4 h-4" />, end: false },
   { to: '/portal/profile', label: 'Company Profile', icon: <Building2 className="w-4 h-4" />, end: false },
 ];
@@ -21,10 +23,10 @@ export const ClientPortalLayout: React.FC = () => {
   const companyName = user?.clientName ?? 'Client';
 
   return (
-    <div className="min-h-screen bg-[#F7F9FC] flex">
-      {mobileOpen && <div className="fixed inset-0 z-40 bg-black/40 lg:hidden" onClick={() => setMobileOpen(false)} />}
+    <div className="min-h-screen bg-[#F7F9FC] print:bg-white flex">
+      {mobileOpen && <div className="no-print fixed inset-0 z-40 bg-black/40 lg:hidden" onClick={() => setMobileOpen(false)} />}
       <aside
-        className={`fixed top-0 bottom-0 left-0 z-40 w-64 bg-white border-r border-[#DFE6F1] flex flex-col transition-transform duration-200 lg:translate-x-0 ${
+        className={`no-print fixed top-0 bottom-0 left-0 z-40 w-64 bg-white border-r border-[#DFE6F1] flex flex-col transition-transform duration-200 lg:translate-x-0 ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -81,19 +83,19 @@ export const ClientPortalLayout: React.FC = () => {
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col min-w-0 lg:pl-64">
-        <header className="h-16 px-4 sm:px-8 bg-white border-b border-[#DFE6F1] flex items-center gap-3">
+      <div className="flex-1 flex flex-col min-w-0 lg:pl-64 print:pl-0">
+        <header className="no-print h-16 px-4 sm:px-8 bg-white border-b border-[#DFE6F1] flex items-center gap-3">
           <button onClick={() => setMobileOpen(true)} className="p-1.5 text-[#475569] lg:hidden" aria-label="Open menu">
             <Menu className="w-5 h-5" />
           </button>
           <span className="text-sm font-semibold text-[#111827] truncate">{companyName}</span>
         </header>
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-5xl w-full mx-auto">
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-5xl w-full mx-auto print:p-0 print:max-w-none">
           <Suspense fallback={<PageLoading />}>
             <Outlet />
           </Suspense>
         </main>
-        <footer className="px-6 py-4 border-t border-[#DFE6F1] bg-white text-xs text-[#7185A5]">
+        <footer className="no-print px-6 py-4 border-t border-[#DFE6F1] bg-white text-xs text-[#7185A5]">
           &copy; 2026 Hybrid Monks. Client Portal.
         </footer>
       </div>

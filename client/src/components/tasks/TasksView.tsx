@@ -15,7 +15,7 @@ import { LoadError } from '../common/LoadError';
 import { TaskModal } from './TaskModal';
 import { TaskDetailModal } from './TaskDetailModal';
 import { TaskStatusControl } from '../work/TaskStatusControl';
-import { OverdueBadge, PriorityBadge, TaskStatusBadge, fieldClass } from '../work/WorkBits';
+import { ClientRequestBadge, OverdueBadge, PriorityBadge, TaskStatusBadge, fieldClass } from '../work/WorkBits';
 
 const PAGE_SIZE = 50;
 const VIEW_KEY = 'hm.tasks.view'; // per-viewer convenience only
@@ -83,17 +83,38 @@ export const TasksView: React.FC<TasksViewProps> = ({ mode = 'staff' }) => {
   const replaceTask = (updated: Task) =>
     list.setData(current => (current ? { ...current, tasks: current.tasks.map(t => (t.id === updated.id ? updated : t)) } : current!));
 
-  const hasFilters = Object.values(filters).some(v => v !== undefined && v !== '');
+  const { view: listView, ...otherFilters } = filters;
+  const hasFilters = Object.values(otherFilters).some(v => v !== undefined && v !== '');
+  // 'mine': tasks assigned to me, or the ones I assigned to colleagues.
+  const byMe = listView === 'assigned_by_me';
 
   const header = (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
       <div>
         <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">{mode === 'mine' ? 'My Tasks' : 'Tasks'}</h1>
         <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">
-          {mode === 'mine' ? 'Tasks assigned to you. Move them along as you work.' : 'Every task across projects'}
+          {mode === 'staff'
+            ? 'Every task across projects'
+            : byMe
+              ? 'Tasks you assigned to colleagues. Review them when they are handed over.'
+              : 'Tasks assigned to you. Move them along as you work.'}
         </p>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {mode === 'mine' && (
+          <div className="flex p-1 bg-white border border-[#DFE6F1] rounded-lg">
+            {([undefined, 'assigned_by_me'] as const).map(v => (
+              <button
+                key={v ?? 'to_me'}
+                onClick={() => setFilter({ view: v })}
+                className={`px-2.5 py-1.5 text-xs font-semibold rounded-md cursor-pointer ${listView === v ? 'bg-[#5038F5] text-white' : 'text-[#7185A5]'}`}
+                aria-pressed={listView === v}
+              >
+                {v ? 'Assigned by me' : 'Assigned to me'}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex p-1 bg-white border border-[#DFE6F1] rounded-lg">
           <button
             onClick={() => switchView('board')}
@@ -110,9 +131,9 @@ export const TasksView: React.FC<TasksViewProps> = ({ mode = 'staff' }) => {
             <Table2 className="w-3.5 h-3.5" /> Table
           </button>
         </div>
-        {isManager && mode === 'staff' && (
+        {(mode === 'mine' || isManager) && (
           <Button variant="primary" size="sm" icon={<Plus className="w-3.5 h-3.5" />} onClick={() => setModal({ open: true, task: null })}>
-            Add Task
+            {mode === 'mine' ? 'Assign Task' : 'Add Task'}
           </Button>
         )}
       </div>
@@ -197,8 +218,8 @@ export const TasksView: React.FC<TasksViewProps> = ({ mode = 'staff' }) => {
     <Card padding="none">
       <EmptyState
         icon={<ListChecks className="w-6 h-6" />}
-        title={hasFilters ? 'No tasks match' : mode === 'mine' ? 'Nothing assigned to you' : 'No tasks yet'}
-        description={hasFilters ? 'Try different filters.' : mode === 'mine' ? 'Tasks assigned to you will appear here.' : 'Create a task inside a project.'}
+        title={hasFilters ? 'No tasks match' : byMe ? 'You have not assigned any tasks' : mode === 'mine' ? 'Nothing assigned to you' : 'No tasks yet'}
+        description={hasFilters ? 'Try different filters.' : byMe ? 'Use Assign Task to give a colleague work on one of your projects.' : mode === 'mine' ? 'Tasks assigned to you will appear here.' : 'Create a task inside a project.'}
       />
     </Card>
   ) : view === 'board' ? (
@@ -226,6 +247,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ mode = 'staff' }) => {
                 <div className="flex flex-wrap gap-1">
                   <PriorityBadge priority={task.priority} />
                   {task.overdue && <OverdueBadge />}
+                  {task.requestedByClient && <ClientRequestBadge />}
                 </div>
                 <div className="flex items-center justify-between text-[11px] text-[#475569]">
                   <span>{task.assignee?.fullName ?? 'Unassigned'}</span>
@@ -246,7 +268,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ mode = 'staff' }) => {
             <tr>
               <th className="py-3 px-4">Task</th>
               <th className="py-3 px-4">Project</th>
-              {mode === 'staff' && <th className="py-3 px-4">Assignee</th>}
+              {(mode === 'staff' || byMe) && <th className="py-3 px-4">Assignee</th>}
               <th className="py-3 px-4">Priority</th>
               <th className="py-3 px-4">Deadline</th>
               <th className="py-3 px-4">Status</th>
@@ -258,10 +280,12 @@ export const TasksView: React.FC<TasksViewProps> = ({ mode = 'staff' }) => {
               <tr key={task.id} className="hover:bg-[#F7F9FC]/60 cursor-pointer" onClick={() => open(task)}>
                 <td className="py-3 px-4">
                   <div className="font-semibold text-[#111827]">{task.title}</div>
-                  <div className="font-mono text-[10px] text-[#7185A5]">{task.code}</div>
+                  <div className="font-mono text-[10px] text-[#7185A5]">
+                    {task.code} {task.requestedByClient && <ClientRequestBadge />}
+                  </div>
                 </td>
                 <td className="py-3 px-4 text-[#475569]">{task.projectName}</td>
-                {mode === 'staff' && <td className="py-3 px-4 text-[#475569]">{task.assignee?.fullName ?? 'Unassigned'}</td>}
+                {(mode === 'staff' || byMe) && <td className="py-3 px-4 text-[#475569]">{task.assignee?.fullName ?? 'Unassigned'}</td>}
                 <td className="py-3 px-4">
                   <PriorityBadge priority={task.priority} />
                 </td>
@@ -306,25 +330,26 @@ export const TasksView: React.FC<TasksViewProps> = ({ mode = 'staff' }) => {
       )}
       {body}
 
-      {isManager && (
-        <TaskModal
-          isOpen={modal.open}
-          onClose={() => setModal({ open: false, task: null })}
-          taskToEdit={modal.task}
-          defaultProjectId={filters.projectId}
-          onSaved={(saved, created) => {
-            showToast('success', created ? `${saved.code} created` : `${saved.code} updated`);
-            list.reload();
-          }}
-        />
-      )}
+      {/* Admin/manager: any task. Employees (My Tasks): assign one to a colleague, edit their own while to do. */}
+      <TaskModal
+        isOpen={modal.open}
+        onClose={() => setModal({ open: false, task: null })}
+        taskToEdit={modal.task}
+        defaultProjectId={filters.projectId}
+        onSaved={(saved, created) => {
+          showToast('success', created ? `${saved.code} created${saved.assignee ? `, ${saved.assignee.fullName} notified` : ''}` : `${saved.code} updated`);
+          // An employee's new task for a colleague shows up under "Assigned by me".
+          if (created && mode === 'mine' && saved.assigneeId !== currentUser.employeeId) setFilter({ view: 'assigned_by_me' });
+          else list.reload();
+        }}
+      />
 
       {viewId && (
         <TaskDetailModal
           taskId={viewId}
           onClose={() => navigate(basePath)}
           onChanged={list.reload}
-          onEdit={isManager ? task => setModal({ open: true, task }) : undefined}
+          onEdit={task => setModal({ open: true, task })}
           onDeleted={() => {
             navigate(basePath);
             list.reload();

@@ -24,20 +24,26 @@ const readAsDataUrl = (file: File) =>
     reader.readAsDataURL(file);
   });
 
-// The logo is saved on its own (upload or remove), separately from the text fields below, and keeps its own
-// state so saving it never resets unsaved edits in the form.
-const LogoField: React.FC<{ initial: string | null }> = ({ initial }) => {
+// The logo and the signature are each saved on their own (upload or remove), separately from the text fields
+// below, and keep their own state so saving one never resets unsaved edits in the form.
+const ImageField: React.FC<{
+  field: 'logoDataUrl' | 'signatureDataUrl';
+  noun: 'Logo' | 'Signature';
+  label: string;
+  hint: string;
+  initial: string | null;
+}> = ({ field, noun, label, hint, initial }) => {
   const { showToast } = useApp();
-  const [logo, setLogo] = useState(initial);
+  const [image, setImage] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  const save = async (logoDataUrl: string | null) => {
+  const save = async (value: string | null) => {
     setBusy(true);
     setError('');
     try {
-      setLogo((await settingsApi.updateCompany({ logoDataUrl })).logoDataUrl);
-      showToast('success', logoDataUrl ? 'Logo saved' : 'Logo removed');
+      setImage((await settingsApi.updateCompany({ [field]: value }))[field]);
+      showToast('success', value ? `${noun} saved` : `${noun} removed`);
     } catch (err) {
       setError(err instanceof ApiError && err.details?.[0] ? err.details[0].message : errorMessage(err));
     } finally {
@@ -49,8 +55,8 @@ const LogoField: React.FC<{ initial: string | null }> = ({ initial }) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (!LOGO_TYPES.includes(file.type)) return setError('Logo must be a PNG, JPEG or WebP image');
-    if (file.size > LOGO_MAX_BYTES) return setError('Logo must be at most 150 KB');
+    if (!LOGO_TYPES.includes(file.type)) return setError(`${noun} must be a PNG, JPEG or WebP image`);
+    if (file.size > LOGO_MAX_BYTES) return setError(`${noun} must be at most 150 KB`);
     try {
       await save(await readAsDataUrl(file));
     } catch (err) {
@@ -59,21 +65,21 @@ const LogoField: React.FC<{ initial: string | null }> = ({ initial }) => {
   };
 
   return (
-    <FormField label="Logo (printed on invoices)" error={error} hint="PNG, JPEG or WebP, up to 150 KB.">
+    <FormField label={label} error={error} hint={hint}>
       <div className="flex items-center gap-3 flex-wrap">
         <div className="w-40 h-16 rounded-lg border border-dashed border-[#DFE6F1] bg-[#F7F9FC] flex items-center justify-center overflow-hidden">
-          {logo ? (
-            <img src={logo} alt="Company logo" className="max-h-full max-w-full object-contain" />
+          {image ? (
+            <img src={image} alt={`Company ${noun.toLowerCase()}`} className="max-h-full max-w-full object-contain" />
           ) : (
-            <span className="text-[11px] text-[#7185A5]">No logo</span>
+            <span className="text-[11px] text-[#7185A5]">No {noun.toLowerCase()}</span>
           )}
         </div>
         <label className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-[#DFE6F1] bg-white cursor-pointer hover:border-[#5038F5] ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
           <ImageUp className="w-3.5 h-3.5" />
-          {logo ? 'Replace' : 'Upload'}
-          <input type="file" accept={LOGO_TYPES.join(',')} className="sr-only" onChange={onFile} disabled={busy} aria-label="Upload logo" />
+          {image ? 'Replace' : 'Upload'}
+          <input type="file" accept={LOGO_TYPES.join(',')} className="sr-only" onChange={onFile} disabled={busy} aria-label={`Upload ${noun.toLowerCase()}`} />
         </label>
-        {logo && (
+        {image && (
           <Button type="button" variant="ghost" size="sm" icon={<Trash2 className="w-3.5 h-3.5" />} onClick={() => save(null)} disabled={busy}>
             Remove
           </Button>
@@ -93,6 +99,8 @@ type Form = {
   invoicePrefix: string;
   bankDetails: string;
   terms: string;
+  signatoryName: string;
+  signatoryDesignation: string;
 };
 
 const toForm = (c: CompanySettings): Form => ({
@@ -105,10 +113,13 @@ const toForm = (c: CompanySettings): Form => ({
   invoicePrefix: c.invoicePrefix,
   bankDetails: c.bankDetails ?? '',
   terms: c.terms ?? '',
+  signatoryName: c.signatoryName ?? '',
+  signatoryDesignation: c.signatoryDesignation ?? '',
 });
 
 // Settings > Company (admin only: the /settings route is admin-only and PATCH /api/settings/company is
-// admin-only on the server). What invoices and the print page show. Currency is fixed to INR.
+// admin-only on the server). What invoices and the print page show, saved once for every invoice. The
+// company's (ledger) currency is fixed to INR; each invoice has its own currency, from its client.
 export const CompanySettingsPanel: React.FC = () => {
   const { showToast } = useApp();
   const company = useApiData(() => settingsApi.company(), []);
@@ -160,8 +171,15 @@ export const CompanySettingsPanel: React.FC = () => {
         <Building2 className="w-4 h-4 text-[#5038F5]" />
         Company details for invoices
       </h3>
-      <div className="mb-4">
-        <LogoField initial={company.data.logoDataUrl} />
+      <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <ImageField field="logoDataUrl" noun="Logo" label="Logo (printed on invoices)" hint="PNG, JPEG or WebP, up to 150 KB." initial={company.data.logoDataUrl} />
+        <ImageField
+          field="signatureDataUrl"
+          noun="Signature"
+          label="Signature (printed above Authorized Signatory)"
+          hint="A scan or photo of the signature on a white or transparent background; PNG, JPEG or WebP, up to 150 KB."
+          initial={company.data.signatureDataUrl}
+        />
       </div>
       <form onSubmit={handleSave} className="space-y-4" noValidate>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -189,8 +207,17 @@ export const CompanySettingsPanel: React.FC = () => {
           <FormField label="Invoice prefix" required error={errors.invoicePrefix} hint={`Next number: ${company.data.nextInvoiceNumber}. Affects new invoices only.`}>
             <input value={form.invoicePrefix} onChange={set('invoicePrefix')} className={`${input} font-mono`} aria-label="Invoice prefix" />
           </FormField>
-          <FormField label="Currency" hint="Fixed to INR.">
+          <FormField label="Accounting currency" hint="Ledger and reports are in INR. Each client has its own invoice currency (Clients > Edit).">
             <input value="INR (₹)" disabled className={`${input} bg-[#F7F9FC] text-[#7185A5]`} aria-label="Currency" />
+          </FormField>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <FormField label="Signatory name (printed under the signature)" error={errors.signatoryName}>
+            <input value={form.signatoryName} onChange={set('signatoryName')} className={input} aria-label="Signatory name" />
+          </FormField>
+          <FormField label="Signatory designation" error={errors.signatoryDesignation} hint="e.g. Director, Partner">
+            <input value={form.signatoryDesignation} onChange={set('signatoryDesignation')} className={input} aria-label="Signatory designation" />
           </FormField>
         </div>
 

@@ -52,4 +52,10 @@ export const usersApi = {
 
   // A 1-hour link to choose a new password; the current password keeps working until the link is used.
   sendResetLink: (id: string) => api<{ user: ManagedUser }>(`/users/${id}/send-reset-link`, { method: 'POST' }).then(r => r.user),
+
+  // Admin: link a staff login to an employee record (one login per employee), or remove the link. Logins and
+  // employees with the same email are linked automatically; this is for the rest.
+  linkEmployee: (id: string, employeeId: string) =>
+    api<{ user: ManagedUser }>(`/users/${id}/employee`, { method: 'PUT', body: { employeeId } }).then(r => r.user),
+  unlinkEmployee: (id: string) => api<{ user: ManagedUser }>(`/users/${id}/employee`, { method: 'DELETE' }).then(r => r.user),
 };

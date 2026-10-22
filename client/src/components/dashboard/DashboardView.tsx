@@ -1,677 +1,93 @@
-import React, { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router';
-import { TaskKpis } from '../work/TaskKpis';
+import React from 'react';
+import { Link, useSearchParams } from 'react-router';
+import { Clock } from 'lucide-react';
 import { employeesApi } from '../../api/employees';
 import { useApiData } from '../../api/useApiData';
-import { DEPARTMENTS } from '../../types';
 import { useApp } from '../../context/AppContext';
-import { Card } from '../common/Card';
-import { Badge } from '../common/Badge';
-import {
-  TrendingUp,
-  TrendingDown,
-  Scale,
-  Receipt,
-  Users,
-  Banknote,
-  ArrowRight,
-  Clock,
-  UserCheck,
-  CheckCircle2,
-  FileText,
-  CalendarDays,
-  CalendarCheck,
-} from 'lucide-react';
-import { formatDate, formatMinutes, formatMonthYear, formatTimeIst } from '../../utils/formatters';
-import { attendanceApi } from '../../api/attendance';
-import { leavesApi } from '../../api/leaves';
-import { LEAVE_TYPE_LABEL } from '../../types/attendance';
-import { invoicesApi } from '../../api/invoices';
-import { salaryApi } from '../../api/salary';
-import { reportsApi } from '../../api/reports';
-import { transactionsApi } from '../../api/transactions';
-import { PeriodPreset } from '../../types/ledger';
-import { TrendBars } from '../reports/TrendBars';
-import { invoiceLabel } from '../../types/invoices';
-import { InvoiceStatusBadge } from '../invoices/InvoiceStatusBadge';
-import { formatMoney } from '../../utils/money';
+import { UserRole } from '../../types';
 import { COMPANY_BRAND } from '../../utils/company';
+import { OperationsDashboard } from './OperationsDashboard';
+import { FinanceOverview } from './FinanceOverview';
 
-// Admin finance cards: a server period preset (resolved from the IST date and the company financial year).
-const FINANCE_PERIODS: { id: PeriodPreset; label: string }[] = [
-  { id: 'this_month', label: 'This Month' },
-  { id: 'last_month', label: 'Last Month' },
-  { id: 'this_fy', label: 'This FY' },
-];
+// Staff dashboard (admin and manager; employees have EmployeeDashboardView).
+//   manager: the operational dashboard only. No money: no invoice, ledger, salary or report cards, and the
+//            browser never calls those APIs (the server refuses them with 403 anyway).
+//   admin:   two tabs on one page, Overview (finance) and Operations (the same component managers see).
+//            The tab is in the URL (?tab=operations) so it survives a reload and can be linked.
+export type DashboardTab = 'overview' | 'operations';
+
+export function dashboardTabsFor(role: UserRole): DashboardTab[] {
+  return role === 'admin' ? ['overview', 'operations'] : ['operations'];
+}
+
+const TAB_LABEL: Record<DashboardTab, string> = { overview: 'Overview', operations: 'Operations' };
 
 export const DashboardView: React.FC = () => {
   const { currentUser } = useApp();
+  const [params, setParams] = useSearchParams();
+  const tabs = dashboardTabsFor(currentUser.role);
+  const requested = params.get('tab') as DashboardTab | null;
+  const tab: DashboardTab = requested && tabs.includes(requested) ? requested : tabs[0];
   const isAdmin = currentUser.role === 'admin';
-  const navigate = useNavigate();
-  // Admin/manager dashboard: roster from the API (up to 200 for the department breakdown).
-  const roster = useApiData(() => employeesApi.list({ limit: 200 }), []);
-  // Today's attendance (IST, from the server) and pending leave requests.
-  const attendanceToday = useApiData(() => attendanceApi.roster(), []);
-  const pendingLeaves = useApiData(() => leavesApi.list({ status: 'pending', limit: 5 }), []);
-  // Invoice KPIs (outstanding, overdue, collected this month) and the latest invoices, from the server.
-  const invoiceData = useApiData(() => invoicesApi.list({ limit: 5 }), []);
-  const invoiceSummary = invoiceData.data?.summary;
-  const recentInvoices = invoiceData.data?.invoices ?? [];
-  const onLeaveToday = attendanceToday.data?.employees.filter(e => e.status === 'on_leave') ?? [];
-  const employees = roster.data?.employees ?? [];
-
-  const [financePeriod, setFinancePeriod] = useState<PeriodPreset>('this_month');
-  const periodLabel = FINANCE_PERIODS.find(p => p.id === financePeriod)?.label ?? '';
-  // Income, expenses and net (cash basis), the 6-month trend and the latest ledger entries: from the server,
-  // and only for admins (managers never call the ledger or report APIs).
-  const pl = useApiData(() => (isAdmin ? reportsApi.profitLoss({ preset: financePeriod }) : Promise.resolve(null)), [isAdmin, financePeriod]);
-  const trend = useApiData(() => (isAdmin ? reportsApi.trend(6) : Promise.resolve(null)), [isAdmin]);
-  const recentLedger = useApiData(() => (isAdmin ? transactionsApi.list({ limit: 5 }) : Promise.resolve(null)), [isAdmin]);
-  const plTotals = pl.data?.totals;
-
-  const outstandingInvoices = invoiceSummary ? formatMoney(invoiceSummary.outstandingTotal) : '—';
-  const overdueInvoices = invoiceSummary ? formatMoney(invoiceSummary.overdueTotal) : '—';
-  const collectedThisMonth = invoiceSummary ? formatMoney(invoiceSummary.collectedThisMonth) : '—';
-
-  // Pending salaries of the current month (IST), from the server. Admin only: managers never call /api/salary.
-  const salaryMonth = useApiData(
-    () => (currentUser.role === 'admin' ? salaryApi.list() : Promise.resolve(null)),
-    [currentUser.role],
-  );
-  const salarySummary = salaryMonth.data?.summary;
-
-  const totalEmployeesCount = roster.data?.summary.total ?? 0;
-  const activeEmployeesCount = roster.data?.summary.active ?? 0;
-
-  // Operational metrics for Manager role (today's roster from the server)
-  const todayAttendanceRecords = useMemo(
-    () => (attendanceToday.data?.employees ?? []).filter(e => e.record),
-    [attendanceToday.data],
-  );
-  const currentlyWorkingCount = attendanceToday.data?.summary.currentlyWorking ?? 0;
-  const presentTodayCount = attendanceToday.data?.summary.present ?? 0;
-  // People on approved full-day leave are not expected in.
-  const expectedTodayCount = Math.max(0, (attendanceToday.data?.summary.total ?? 0) - onLeaveToday.length);
-  const attendanceRate = Math.round((presentTodayCount / Math.max(1, expectedTodayCount)) * 100);
-
-  const isManager = currentUser.role === 'manager';
+  // Admin reminder: employees created before working hours existed (attendance can't follow their shift).
+  const roster = useApiData(() => (isAdmin ? employeesApi.list({ limit: 1 }) : Promise.resolve(null)), [isAdmin]);
+  const withoutHours = roster.data?.summary.withoutWorkingHours ?? 0;
 
   return (
     <div className="space-y-6">
-      {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">
-            {isManager ? 'Operational Dashboard' : 'Overview & Financial Status'}
+            {isAdmin ? 'Dashboard' : 'Operational Dashboard'}
           </h1>
-          <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">
-            {isManager
-              ? `Team attendance, client invoicing, and operations overview for ${COMPANY_BRAND}`
-              : `Real-time accounting, payroll, and invoice balances for ${COMPANY_BRAND}`}
+          <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5" data-testid="dashboard-subtitle">
+            {isAdmin
+              ? `Finances, payroll and day-to-day operations for ${COMPANY_BRAND}`
+              : 'Team attendance and operations overview'}
           </p>
         </div>
 
-        {/* Finance period (admin) */}
-        {isAdmin && (
-        <div className="flex items-center gap-1 p-1 bg-white border border-[#DFE6F1] rounded-lg shadow-xs self-start sm:self-auto">
-          {FINANCE_PERIODS.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setFinancePeriod(tab.id)}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-                financePeriod === tab.id
-                  ? 'bg-[#5038F5] text-white shadow-xs'
-                  : 'text-[#7185A5] hover:text-[#111827]'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-        )}
-      </div>
-
-      {/* Task KPIs (from the API) */}
-      <TaskKpis title="Tasks across all projects" linkTo="/tasks" />
-
-      {/* Pending leave requests */}
-      {pendingLeaves.data && pendingLeaves.data.summary.pending > 0 && (
-        <Card padding="sm" className="bg-[#B45309]/5 border-[#B45309]/20">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2" data-testid="pending-leaves-banner">
-            <div className="flex items-center gap-2 text-xs text-[#111827]">
-              <CalendarDays className="w-4 h-4 text-[#B45309] shrink-0" />
-              <span>
-                <span className="font-semibold">
-                  {pendingLeaves.data.summary.pending} leave request{pendingLeaves.data.summary.pending === 1 ? '' : 's'}
-                </span>{' '}
-                waiting for review: {pendingLeaves.data.leaves.map(l => l.employeeName).slice(0, 3).join(', ')}
-              </span>
-            </div>
-            <button onClick={() => navigate('/leaves')} className="text-xs font-semibold text-[#5038F5] hover:underline cursor-pointer self-start sm:self-auto">
-              Review leaves &rarr;
-            </button>
-          </div>
-        </Card>
-      )}
-
-      {/* On approved leave today */}
-      <Card padding="md">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3" data-testid="on-leave-card">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-[#5038F5]/10 text-[#5038F5] flex items-center justify-center">
-              <CalendarCheck className="w-4 h-4" />
-            </div>
-            <div>
-              <span className="text-xs font-semibold text-[#7185A5] block">On Approved Leave Today</span>
-              <span className="text-2xl font-mono font-bold text-[#5038F5]">{attendanceToday.data ? onLeaveToday.length : '—'}</span>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {onLeaveToday.map(e => (
-              <span key={e.employeeId} className="text-[11px] px-2 py-1 rounded-md bg-white border border-[#DFE6F1] font-medium text-[#111827]">
-                {e.fullName}
-                {e.leave && <span className="text-[#7185A5]"> · {LEAVE_TYPE_LABEL[e.leave.leaveType]}</span>}
-              </span>
+        {tabs.length > 1 && (
+          <div role="tablist" aria-label="Dashboard" className="flex items-center gap-1 p-1 bg-white border border-[#DFE6F1] rounded-lg shadow-xs self-start sm:self-auto">
+            {tabs.map(id => (
+              <button
+                key={id}
+                role="tab"
+                aria-selected={tab === id}
+                data-testid={`dashboard-tab-${id}`}
+                onClick={() => setParams(id === tabs[0] ? {} : { tab: id }, { replace: true })}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                  tab === id ? 'bg-[#5038F5] text-white shadow-xs' : 'text-[#7185A5] hover:text-[#111827]'
+                }`}
+              >
+                {TAB_LABEL[id]}
+              </button>
             ))}
-            {attendanceToday.data && onLeaveToday.length === 0 && <span className="text-xs text-[#7185A5]">Nobody is on leave today.</span>}
-            <button onClick={() => navigate('/attendance')} className="text-[11px] font-semibold text-[#5038F5] hover:underline cursor-pointer ml-2">
-              Attendance &rarr;
-            </button>
           </div>
-        </div>
-      </Card>
-
-      {/* 6 Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {isManager ? (
-          <>
-            {/* 1. Outstanding Invoices */}
-            <Card padding="md" className="relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#7185A5]">Outstanding Invoices</span>
-                <div className="w-8 h-8 rounded-lg bg-[#B45309]/10 text-[#B45309] flex items-center justify-center">
-                  <Receipt className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="mt-2">
-                <span className="text-2xl font-mono font-bold text-[#B45309]">
-                  {outstandingInvoices}
-                </span>
-                <p className="text-[11px] text-[#7185A5] mt-1">
-                  Collected this month: <span className="font-mono text-[#047857]">{collectedThisMonth}</span>
-                </p>
-              </div>
-            </Card>
-
-            {/* 2. Team Present Today */}
-            <Card padding="md" className="relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#7185A5]">Team Present Today</span>
-                <div className="w-8 h-8 rounded-lg bg-[#047857]/10 text-[#047857] flex items-center justify-center">
-                  <UserCheck className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="mt-2">
-                <span className="text-2xl font-mono font-bold text-[#047857]">
-                  {presentTodayCount} <span className="text-base text-[#7185A5] font-normal">/ {expectedTodayCount}</span>
-                </span>
-                <p className="text-[11px] text-[#7185A5] mt-1">
-                  Team members punched in for today's shift
-                </p>
-              </div>
-            </Card>
-
-            {/* 3. Currently Clocked In */}
-            <Card padding="md" className="relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#7185A5]">Currently Working</span>
-                <div className="w-8 h-8 rounded-lg bg-[#5038F5]/10 text-[#5038F5] flex items-center justify-center">
-                  <Clock className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="mt-2">
-                <span className="text-2xl font-mono font-bold text-[#5038F5]">
-                  {currentlyWorkingCount}
-                </span>
-                <p className="text-[11px] text-[#7185A5] mt-1">
-                  Active team members on the clock right now
-                </p>
-              </div>
-            </Card>
-
-            {/* 4. Pending Invoices */}
-            <Card padding="md" className="relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#7185A5]">Overdue Invoices</span>
-                <div className="w-8 h-8 rounded-lg bg-[#5038F5]/10 text-[#5038F5] flex items-center justify-center">
-                  <FileText className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="mt-2">
-                <span className="text-2xl font-mono font-bold text-[#E11D48]" data-testid="kpi-overdue">
-                  {overdueInvoices}
-                </span>
-                <p className="text-[11px] text-[#7185A5] mt-1">
-                  {invoiceSummary ? `${invoiceSummary.overdueCount} sent invoice(s) past their due date` : 'Sent invoices past their due date'}
-                </p>
-              </div>
-            </Card>
-
-            {/* 5. Total Employees */}
-            <Card padding="md" className="relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#7185A5]">Team Headcount</span>
-                <div className="w-8 h-8 rounded-lg bg-[#5038F5]/10 text-[#5038F5] flex items-center justify-center">
-                  <Users className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="mt-2">
-                <span className="text-2xl font-mono font-bold text-[#111827]">
-                  {totalEmployeesCount}
-                </span>
-                <p className="text-[11px] text-[#7185A5] mt-1">
-                  {activeEmployeesCount} active team members on staff roster
-                </p>
-              </div>
-            </Card>
-
-            {/* 6. Shift Compliance */}
-            <Card padding="md" className="relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#7185A5]">Shift Attendance Rate</span>
-                <div className="w-8 h-8 rounded-lg bg-[#047857]/10 text-[#047857] flex items-center justify-center">
-                  <CheckCircle2 className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="mt-2">
-                <span className="text-2xl font-mono font-bold text-[#111827]">
-                  {attendanceRate}%
-                </span>
-                <p className="text-[11px] text-[#7185A5] mt-1">
-                  Today's team attendance compliance
-                </p>
-              </div>
-            </Card>
-          </>
-        ) : (
-          <>
-            {/* Total Income */}
-            <Card padding="md" className="relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#7185A5]">Total Income</span>
-                <div className="w-8 h-8 rounded-lg bg-[#047857]/10 text-[#047857] flex items-center justify-center">
-                  <TrendingUp className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="mt-2">
-                <span className="text-2xl font-mono font-bold text-[#111827]" data-testid="kpi-income">
-                  {plTotals ? formatMoney(plTotals.income) : '—'}
-                </span>
-                <p className="text-[11px] text-[#7185A5] mt-1">
-                  Cash received · {periodLabel}
-                </p>
-              </div>
-            </Card>
-
-            {/* Total Expenses */}
-            <Card padding="md" className="relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#7185A5]">Total Expenses</span>
-                <div className="w-8 h-8 rounded-lg bg-[#E11D48]/10 text-[#E11D48] flex items-center justify-center">
-                  <TrendingDown className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="mt-2">
-                <span className="text-2xl font-mono font-bold text-[#111827]" data-testid="kpi-expense">
-                  {plTotals ? formatMoney(plTotals.expense) : '—'}
-                </span>
-                <p className="text-[11px] text-[#7185A5] mt-1">
-                  Salaries and operating costs · {periodLabel}
-                </p>
-              </div>
-            </Card>
-
-            {/* Net Balance */}
-            <Card padding="md" className="relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#7185A5]">Net Balance</span>
-                <div className="w-8 h-8 rounded-lg bg-[#5038F5]/10 text-[#5038F5] flex items-center justify-center">
-                  <Scale className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="mt-2">
-                <span
-                  className={`text-2xl font-mono font-bold ${plTotals?.net.startsWith('-') ? 'text-[#E11D48]' : 'text-[#047857]'}`}
-                  data-testid="kpi-net"
-                >
-                  {plTotals ? formatMoney(plTotals.net) : '—'}
-                </span>
-                <p className="text-[11px] text-[#7185A5] mt-1">
-                  Cash basis · {periodLabel}
-                </p>
-              </div>
-            </Card>
-
-            {/* Outstanding Invoices */}
-            <Card padding="md" className="relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#7185A5]">Outstanding Invoices</span>
-                <div className="w-8 h-8 rounded-lg bg-[#B45309]/10 text-[#B45309] flex items-center justify-center">
-                  <Receipt className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="mt-2">
-                <span className="text-2xl font-mono font-bold text-[#B45309]">
-                  {outstandingInvoices}
-                </span>
-                <p className="text-[11px] text-[#7185A5] mt-1" data-testid="kpi-invoice-detail">
-                  Overdue <span className="font-mono text-[#E11D48]">{overdueInvoices}</span> · Collected this month{' '}
-                  <span className="font-mono text-[#047857]">{collectedThisMonth}</span>
-                </p>
-              </div>
-            </Card>
-
-            {/* Total Employees */}
-            <Card padding="md" className="relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#7185A5]">Total Employees</span>
-                <div className="w-8 h-8 rounded-lg bg-[#5038F5]/10 text-[#5038F5] flex items-center justify-center">
-                  <Users className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="mt-2">
-                <span className="text-2xl font-mono font-bold text-[#111827]">
-                  {totalEmployeesCount}
-                </span>
-                <p className="text-[11px] text-[#7185A5] mt-1">
-                  {activeEmployeesCount} active team members on roster
-                </p>
-              </div>
-            </Card>
-
-            {/* Pending Salary Payments */}
-            <Card padding="md" className="relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#7185A5]">Pending Salary Payments</span>
-                <div className="w-8 h-8 rounded-lg bg-[#5038F5]/10 text-[#5038F5] flex items-center justify-center">
-                  <Banknote className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="mt-2">
-                <span className="text-2xl font-mono font-bold text-[#111827]">
-                  {salarySummary ? formatMoney(salarySummary.totalPending) : '—'}
-                </span>
-                <p className="text-[11px] text-[#7185A5] mt-1">
-                  {salarySummary && salaryMonth.data
-                    ? `${salarySummary.headcount - salarySummary.paidCount} unpaid in ${formatMonthYear(salaryMonth.data.month)}`
-                    : 'Unpaid salaries this month'}
-                </p>
-              </div>
-            </Card>
-          </>
         )}
       </div>
 
-      {/* Middle Block: Chart for Admin, Operations Snapshot for Manager */}
-      {isManager ? (
-        <Card padding="lg">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
-            <div>
-              <h3 className="text-sm font-bold text-[#111827]">
-                Today's Team Attendance & Shift Status
-              </h3>
-              <p className="text-xs text-[#7185A5]">
-                Live shift monitoring and compliance tracking for active staff members
-              </p>
-            </div>
-            <button onClick={() => navigate('/attendance')} className="text-xs font-semibold text-[#5038F5] hover:underline cursor-pointer">
-              Open attendance &rarr;
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-            <div className="p-4 rounded-xl bg-[#F7F9FC] border border-[#DFE6F1]">
-              <div className="text-xs font-semibold text-[#7185A5]">Today's Shift Rate</div>
-              <div className="text-2xl font-mono font-bold text-[#111827] mt-1">
-                {attendanceRate}%
-              </div>
-              <div className="w-full bg-[#DFE6F1] h-2 rounded-full overflow-hidden mt-3">
-                <div
-                  className="bg-[#5038F5] h-full rounded-full transition-all"
-                  style={{ width: `${Math.min(100, attendanceRate)}%` }}
-                />
-              </div>
-              <p className="text-[11px] text-[#7185A5] mt-2">
-                {presentTodayCount} out of {expectedTodayCount} expected team members present today
-              </p>
-            </div>
-
-            <div className="p-4 rounded-xl bg-[#F7F9FC] border border-[#DFE6F1]">
-              <div className="text-xs font-semibold text-[#7185A5]">Currently Clocked In</div>
-              <div className="text-2xl font-mono font-bold text-[#047857] mt-1">
-                {currentlyWorkingCount}
-              </div>
-              <div className="flex items-center gap-1.5 text-xs text-[#047857] font-semibold mt-3">
-                <span className="w-2 h-2 rounded-full bg-[#047857] animate-pulse" />
-                Live on shift right now
-              </div>
-              <p className="text-[11px] text-[#7185A5] mt-1">
-                Real-time active work sessions being recorded
-              </p>
-            </div>
-
-            <div className="p-4 rounded-xl bg-[#F7F9FC] border border-[#DFE6F1]">
-              <div className="text-xs font-semibold text-[#7185A5]">Pending Client Billing</div>
-              <div className="text-2xl font-mono font-bold text-[#B45309] mt-1">
-                {outstandingInvoices}
-              </div>
-              <p className="text-[11px] text-[#7185A5] mt-3">
-                {invoiceSummary ? `${invoiceSummary.overdueCount} overdue · ${overdueInvoices} past due` : ''}
-              </p>
-              <button
-                onClick={() => navigate('/invoices')}
-                className="text-[11px] font-semibold text-[#5038F5] hover:underline mt-1 block cursor-pointer"
-              >
-                Review invoices &rarr;
-              </button>
-            </div>
-          </div>
-        </Card>
-      ) : (
-        /* Monthly Income vs Expenses Chart */
-        <Card padding="lg">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
-            <div>
-              <h3 className="text-sm font-bold text-[#111827]">
-                Monthly Income vs Expenses
-              </h3>
-              <p className="text-xs text-[#7185A5]">
-                Last 6 months from the ledger (voided and reversed entries excluded)
-              </p>
-            </div>
-            <button onClick={() => navigate('/reports')} className="text-xs font-semibold text-[#5038F5] hover:underline cursor-pointer self-start">
-              Reports &rarr;
-            </button>
-          </div>
-
-          {trend.error ? (
-            <p className="py-6 text-center text-xs text-[#7185A5]">The trend could not be loaded.</p>
-          ) : !trend.data ? (
-            <p className="py-6 text-center text-xs text-[#7185A5]">Loading…</p>
-          ) : (
-            <TrendBars months={trend.data.months} testId="dashboard-trend" />
-          )}
-        </Card>
+      {isAdmin && withoutHours > 0 && (
+        <div
+          className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-xl border border-[#B45309]/20 bg-[#B45309]/5 text-xs text-[#111827]"
+          data-testid="working-hours-reminder"
+        >
+          <span className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-[#B45309] shrink-0" />
+            <span>
+              <span className="font-semibold">
+                {withoutHours} employee{withoutHours === 1 ? ' has' : 's have'} no working hours yet.
+              </span>{' '}
+              Add their shift so attendance follows it.
+            </span>
+          </span>
+          <Link to="/employees?workingHours=missing" className="font-semibold text-[#5038F5] hover:underline self-start sm:self-auto">
+            Set working hours →
+          </Link>
+        </div>
       )}
 
-      {/* Main Content Sections: Left Column & Recent Invoices */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {isManager ? (
-          /* Today's Team Clock-ins for Manager */
-          <Card padding="md">
-            <div className="flex items-center justify-between pb-3 border-b border-[#DFE6F1]">
-              <div>
-                <h3 className="text-sm font-bold text-[#111827]">Today's Team Clock-ins</h3>
-                <p className="text-xs text-[#7185A5]">Staff punch-in timeline for today</p>
-              </div>
-            </div>
-
-            <div className="divide-y divide-[#DFE6F1] mt-1">
-              {todayAttendanceRecords.length === 0 ? (
-                <div className="py-8 text-center text-xs text-[#7185A5]">
-                  No team members clocked in yet today.
-                </div>
-              ) : (
-                todayAttendanceRecords.slice(0, 5).map(entry => (
-                  <div key={entry.employeeId} className="py-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-[#111827] truncate">{entry.fullName}</div>
-                      <div className="text-[11px] text-[#7185A5] mt-0.5 flex items-center gap-1.5">
-                        <span>{entry.department}</span>
-                        <span>·</span>
-                        <span>In: {formatTimeIst(entry.record!.punchIn)}</span>
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <Badge variant={entry.record!.punchOut ? 'success' : 'purple'} size="sm">
-                        {entry.record!.punchOut ? 'Punched out' : 'Working'}
-                      </Badge>
-                      <div className="text-[10px] text-[#7185A5] mt-0.5">{formatMinutes(entry.record!.workedMinutes)}</div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </Card>
-        ) : (
-          /* Recent Transactions for Admin */
-          <Card padding="md">
-            <div className="flex items-center justify-between pb-3 border-b border-[#DFE6F1]">
-              <div>
-                <h3 className="text-sm font-bold text-[#111827]">Recent Transactions</h3>
-                <p className="text-xs text-[#7185A5]">Latest income and expense entries</p>
-              </div>
-              <button
-                onClick={() => navigate('/accounting')}
-                className="text-xs font-semibold text-[#5038F5] hover:underline flex items-center gap-1 cursor-pointer"
-              >
-                View All <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            <div className="divide-y divide-[#DFE6F1] mt-1">
-              {!recentLedger.data ? (
-                <p className="py-6 text-center text-xs text-[#7185A5]">{recentLedger.error ? 'Transactions could not be loaded.' : 'Loading…'}</p>
-              ) : recentLedger.data.transactions.length === 0 ? (
-                <p className="py-6 text-center text-xs text-[#7185A5]">No transactions yet.</p>
-              ) : (
-                recentLedger.data.transactions.map(txn => (
-                  <div key={txn.id} className="py-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-[#111827] truncate">{txn.description}</div>
-                      <div className="text-[11px] text-[#7185A5] mt-0.5 flex items-center gap-1.5">
-                        <span>{formatDate(txn.txnDate)}</span>
-                        <span>·</span>
-                        <span className="truncate">{txn.category}</span>
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <span className={`text-xs font-mono font-bold ${txn.type === 'income' ? 'text-[#047857]' : 'text-[#111827]'}`}>
-                        {txn.type === 'income' ? '+' : '−'}
-                        {formatMoney(txn.amount)}
-                      </span>
-                      <div className="text-[10px] text-[#7185A5] mt-0.5">{txn.paymentMethod}</div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </Card>
-        )}
-
-        {/* Recent Invoices */}
-        <Card padding="md">
-          <div className="flex items-center justify-between pb-3 border-b border-[#DFE6F1]">
-            <div>
-              <h3 className="text-sm font-bold text-[#111827]">Recent Invoices</h3>
-              <p className="text-xs text-[#7185A5]">Client billing and payment status</p>
-            </div>
-            <button
-              onClick={() => navigate('/invoices')}
-              className="text-xs font-semibold text-[#5038F5] hover:underline flex items-center gap-1 cursor-pointer"
-            >
-              View Invoices <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          <div className="divide-y divide-[#DFE6F1] mt-1">
-            {invoiceData.error ? (
-              <p className="py-6 text-center text-xs text-[#7185A5]">Invoices could not be loaded.</p>
-            ) : !invoiceData.data ? (
-              <p className="py-6 text-center text-xs text-[#7185A5]">Loading invoices…</p>
-            ) : recentInvoices.length === 0 ? (
-              <p className="py-6 text-center text-xs text-[#7185A5]">No invoices yet.</p>
-            ) : (
-              recentInvoices.map(inv => (
-                <button
-                  key={inv.id}
-                  onClick={() => navigate(`/invoices/${inv.id}`)}
-                  className="w-full text-left py-3 flex items-center justify-between gap-3 hover:bg-[#F7F9FC]/60 cursor-pointer"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono font-bold text-[#111827]">{invoiceLabel(inv)}</span>
-                      <InvoiceStatusBadge status={inv.derivedStatus} size="sm" />
-                    </div>
-                    <div className="text-[11px] text-[#7185A5] mt-0.5 truncate">
-                      {inv.clientName} · Due {formatDate(inv.dueDate)}
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span className="text-xs font-mono font-bold text-[#111827]">{formatMoney(inv.total)}</span>
-                    {inv.status === 'sent' && (
-                      <div className="text-[10px] font-mono text-[#E11D48] mt-0.5">Due: {formatMoney(inv.balance)}</div>
-                    )}
-                  </div>
-                </button>
-              ))
-            )}
-          </div>
-        </Card>
-      </div>
-
-      {/* Employee Overview Row */}
-      <Card padding="md">
-        <div className="flex items-center justify-between pb-3 border-b border-[#DFE6F1]">
-          <div>
-            <h3 className="text-sm font-bold text-[#111827]">Team Distribution</h3>
-            <p className="text-xs text-[#7185A5]">Department breakdown & headcount</p>
-          </div>
-          <button
-            onClick={() => navigate('/employees')}
-            className="text-xs font-semibold text-[#5038F5] hover:underline flex items-center gap-1 cursor-pointer"
-          >
-            Manage Team <ArrowRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-4">
-          {DEPARTMENTS.map(dept => {
-            const count = employees.filter(e => e.department === dept && e.status !== 'inactive').length;
-            return (
-              <div
-                key={dept}
-                className="p-3 rounded-lg bg-[#F7F9FC] border border-[#DFE6F1] flex flex-col justify-between"
-              >
-                <span className="text-xs text-[#7185A5] font-medium">{dept}</span>
-                <div className="text-lg font-mono font-bold text-[#111827] mt-2">
-                  {count} <span className="text-[11px] font-normal text-[#7185A5]">members</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </Card>
+      {tab === 'overview' && isAdmin ? <FinanceOverview /> : <OperationsDashboard />}
     </div>
   );
 };

@@ -1,6 +1,7 @@
 // Ledger and report shapes, exactly as /api/transactions and /api/reports return them. Money is always a
 // 2-decimal string ("45000.00", a net may be "-500.00"); every total is computed by the server in SQL.
 import type { InvoiceDerivedStatus, InvoicePaymentMethod } from './invoices';
+import type { InvoiceCurrency } from '../utils/money';
 
 export type TxnType = 'income' | 'expense';
 export type TxnSource = 'manual' | 'invoice' | 'salary';
@@ -119,6 +120,8 @@ export const AGING_LABEL: Record<AgingBucket, string> = {
 export interface InvoiceReport {
   today: string;
   period: ReportPeriod;
+  currency: InvoiceCurrency; // every figure below is in this currency only
+  currencies: InvoiceCurrency[]; // INR first, then every other currency that has invoices
   summary: { invoiced: string; collected: string; outstanding: string; count: number };
   byStatus: { status: InvoiceDerivedStatus; count: number; total: string; outstanding: string }[];
   aging: { bucket: AgingBucket; count: number; balance: string }[];

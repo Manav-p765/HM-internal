@@ -5,6 +5,7 @@ import { Client } from '../../types';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { FormField } from '../common/FormField';
+import { CURRENCY_LABEL, INVOICE_CURRENCIES } from '../../utils/money';
 
 interface ClientModalProps {
   isOpen: boolean;
@@ -25,6 +26,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({ isOpen, onClose, clien
     contactPhone: '',
     address: '',
     gstin: '',
+    currency: 'INR',
     notes: '',
   });
   const [error, setError] = useState('');
@@ -41,6 +43,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({ isOpen, onClose, clien
       contactPhone: c?.contactPhone ?? '',
       address: c?.address ?? '',
       gstin: c?.gstin ?? '',
+      currency: c?.currency ?? 'INR',
       notes: c?.notes ?? '',
     });
     setError('');
@@ -48,7 +51,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({ isOpen, onClose, clien
     setIsSaving(false);
   }, [isOpen, clientToEdit]);
 
-  const set = (field: keyof ClientInput) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+  const set = (field: keyof ClientInput) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm(current => ({ ...current, [field]: e.target.value }));
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -64,6 +67,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({ isOpen, onClose, clien
       contactPhone: optional(form.contactPhone),
       address: optional(form.address),
       gstin: optional(form.gstin),
+      currency: form.currency,
       notes: optional(form.notes),
     };
     try {
@@ -118,9 +122,20 @@ export const ClientModal: React.FC<ClientModalProps> = ({ isOpen, onClose, clien
           </FormField>
         </div>
 
-        <FormField label="Billing Address" error={fieldErrors.address}>
-          <textarea aria-label="Billing Address" rows={2} value={form.address ?? ''} onChange={set('address')} className={inputClass} />
-        </FormField>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <FormField label="Billing Address" error={fieldErrors.address}>
+            <textarea aria-label="Billing Address" rows={2} value={form.address ?? ''} onChange={set('address')} className={inputClass} />
+          </FormField>
+          <FormField label="Invoice Currency" error={fieldErrors.currency} hint="New invoices for this client start in this currency.">
+            <select aria-label="Invoice Currency" value={form.currency} onChange={set('currency')} className={inputClass}>
+              {INVOICE_CURRENCIES.map(c => (
+                <option key={c} value={c}>
+                  {CURRENCY_LABEL[c]}
+                </option>
+              ))}
+            </select>
+          </FormField>
+        </div>
 
         <FormField label="Internal Notes" error={fieldErrors.notes} hint="Visible to staff only, never to the client.">
           <textarea aria-label="Internal Notes" rows={2} value={form.notes ?? ''} onChange={set('notes')} className={inputClass} />

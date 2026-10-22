@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { audit } from '../services/audit.js';
+import { BASE_CURRENCY, currencyValue } from '../services/currency.js';
 import { deleteUserSessions } from '../middleware/auth.js';
 import { clientScope, createRouter } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
@@ -12,7 +13,7 @@ export const clientsRouter = createRouter();
 
 const CLIENT_COLUMNS = `
   c.id, c.company_name AS "companyName", c.contact_name AS "contactName", c.contact_email AS "contactEmail",
-  c.contact_phone AS "contactPhone", c.address, c.gstin, c.status, c.notes,
+  c.contact_phone AS "contactPhone", c.address, c.gstin, c.currency, c.status, c.notes,
   c.created_at AS "createdAt", c.updated_at AS "updatedAt"`;
 
 // Portal-login counts per company, for the list.
@@ -51,6 +52,8 @@ const createSchema = z.object({
   contactPhone: optionalText(40),
   address: optionalText(1000),
   gstin: optionalGstin,
+  // The currency new invoices for this client are written in (each invoice keeps its own).
+  currency: currencyValue.optional(),
   notes: optionalText(2000),
 });
 
@@ -63,6 +66,7 @@ const COLUMN: Record<string, string> = {
   contactPhone: 'contact_phone',
   address: 'address',
   gstin: 'gstin',
+  currency: 'currency',
   notes: 'notes',
 };
 
@@ -136,9 +140,9 @@ clientsRouter.get('/:id', ['admin', 'manager'], async (req, res) => {
 clientsRouter.post('/', ['admin', 'manager'], async (req, res) => {
   const body = parseBody(createSchema, req.body);
   const [{ id }] = await query<{ id: string }>(
-    `INSERT INTO clients (company_name, contact_name, contact_email, contact_phone, address, gstin, notes)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-    [body.companyName, body.contactName, body.contactEmail, body.contactPhone, body.address, body.gstin, body.notes],
+    `INSERT INTO clients (company_name, contact_name, contact_email, contact_phone, address, gstin, notes, currency)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+    [body.companyName, body.contactName, body.contactEmail, body.contactPhone, body.address, body.gstin, body.notes, body.currency ?? BASE_CURRENCY],
   );
   await audit(req, {
     action: 'client.created',

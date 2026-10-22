@@ -12,7 +12,9 @@
     "db:migrate": "tsx src/scripts/migrate.ts",
     "db:seed": "tsx src/scripts/seed.ts",
     "create-admin": "tsx src/scripts/create-admin.ts",
-    "mail:test": "tsx src/scripts/mail-test.ts"
+    "mail:test": "tsx src/scripts/mail-test.ts",
+    "link-by-email": "tsx src/scripts/link-by-email.ts",
+    "check-accounts": "tsx src/scripts/check-accounts.ts"
   },
   "devDependencies": {
     "@types/connect-pg-simple": "^7.0.3",

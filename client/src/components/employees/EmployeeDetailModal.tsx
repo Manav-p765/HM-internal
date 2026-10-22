@@ -2,7 +2,7 @@ import React from 'react';
 import { Link } from 'react-router';
 import { employeesApi } from '../../api/employees';
 import { useApiData } from '../../api/useApiData';
-import { EMPLOYMENT_STATUS_LABEL, Employee } from '../../types';
+import { EMPLOYMENT_STATUS_LABEL, Employee, shiftLabel } from '../../types';
 import { Avatar } from '../common/Avatar';
 import { LoadError } from '../common/LoadError';
 import { loginStatus, statusBadgeVariant } from './employeeDisplay';
@@ -117,6 +117,15 @@ export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({ employ
               <span className="text-[#7185A5] block text-[10px]">Date of Joining</span>
               <span className="font-medium text-[#111827]">
                 {formatDate(employee.joiningDate)}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2.5 p-3 rounded-lg border border-[#DFE6F1] bg-white">
+            <Clock className="w-4 h-4 text-[#7185A5]" />
+            <div>
+              <span className="text-[#7185A5] block text-[10px]">Working Hours</span>
+              <span className={`font-medium ${shiftLabel(employee) ? 'text-[#111827]' : 'text-[#B45309]'}`}>
+                {shiftLabel(employee) ?? 'Not set yet'}
               </span>
             </div>
           </div>

@@ -52,6 +52,8 @@ const PortalProjectTasksView = named(() => import('./components/portal/PortalPro
 const ClientPortalDashboard = named(() => import('./components/portal/ClientPortalDashboard'), 'ClientPortalDashboard');
 const ClientPortalProfile = named(() => import('./components/portal/ClientPortalProfile'), 'ClientPortalProfile');
 const PortalTeamView = named(() => import('./components/portal/PortalTeamView'), 'PortalTeamView');
+const PortalInvoicesView = named(() => import('./components/portal/PortalInvoicesView'), 'PortalInvoicesView');
+const PortalInvoiceView = named(() => import('./components/portal/PortalInvoicesView'), 'PortalInvoiceView');
 const AdminAttendanceView = named(() => import('./components/attendance/AdminAttendanceView'), 'AdminAttendanceView');
 const EmployeeAttendanceView = named(() => import('./components/attendance/EmployeeAttendanceView'), 'EmployeeAttendanceView');
 const LeaveManagementView = named(() => import('./components/leaves/LeaveManagementView'), 'LeaveManagementView');
@@ -142,6 +144,8 @@ export default function App() {
             <Route index element={<ClientPortalDashboard />} />
             <Route path="projects" element={<PortalProjectsView />} />
             <Route path="projects/:id" element={<PortalProjectTasksView />} />
+            <Route path="invoices" element={<PortalInvoicesView />} />
+            <Route path="invoices/:id" element={<PortalInvoiceView />} />
             <Route path="team" element={<PortalTeamView />} />
             <Route path="profile" element={<ClientPortalProfile />} />
             <Route path="*" element={<Navigate to="/portal" replace />} />
@@ -160,12 +164,6 @@ export default function App() {
             <Route element={<RequireRole roles={['admin', 'manager']} />}>
               <Route path="/employees" element={<EmployeesView />} />
               <Route path="/employees/:id" element={<EmployeesView />} />
-              <Route path="/invoices" element={<InvoicesView />} />
-              <Route path="/invoices/new" element={<InvoicesView />} />
-              <Route path="/invoices/:id" element={<InvoicesView />} />
-              <Route path="/invoices/:id/edit" element={<InvoicesView />} />
-              <Route path="/invoices/:id/print" element={<InvoicePrintView />} />
-              <Route path="/reports" element={<ReportsView />} />
               <Route path="/clients" element={<ClientsView />} />
               <Route path="/clients/:id" element={<ClientsView />} />
               <Route path="/projects" element={<ProjectsView />} />
@@ -186,6 +184,13 @@ export default function App() {
             </Route>
 
             <Route element={<RequireRole roles={['admin']} />}>
+              {/* Money is admin only: managers get no invoices, reports, ledger or salaries. */}
+              <Route path="/invoices" element={<InvoicesView />} />
+              <Route path="/invoices/new" element={<InvoicesView />} />
+              <Route path="/invoices/:id" element={<InvoicesView />} />
+              <Route path="/invoices/:id/edit" element={<InvoicesView />} />
+              <Route path="/invoices/:id/print" element={<InvoicePrintView />} />
+              <Route path="/reports" element={<ReportsView />} />
               <Route path="/accounting" element={<AccountingView />} />
               <Route path="/accounting/new" element={<AccountingView />} />
               <Route path="/salary" element={<SalaryView />} />

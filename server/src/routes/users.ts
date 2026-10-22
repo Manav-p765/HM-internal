@@ -5,6 +5,7 @@ import { query, withTransaction } from '../db.js';
 import { audit } from '../services/audit.js';
 import { MailError, sendInviteEmail, sendPasswordResetEmail } from '../services/mail.js';
 import { dropOtherTokens, issueToken } from '../services/passwordTokens.js';
+import { employeeForEmail } from '../services/accountLinks.js';
 import { deleteUserSessions } from '../middleware/auth.js';
 import { createRouter } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
@@ -132,16 +133,19 @@ usersRouter.post('/', ['admin', 'manager'], accountMailLimiter, async (req, res)
   // The user (no password: invited) and the invite token are committed first, so no DB transaction stays open
   // while the mail provider is called (up to 10 s). If the email can't be sent, both are removed again and the
   // caller gets 502 MAIL_FAILED: nothing usable is left behind and the admin can simply try again.
-  const { userId, token } = await withTransaction(async client => {
+  const { userId, token, linkedEmployeeId, autoLinked } = await withTransaction(async client => {
     if (role === 'client') await assertClientActive(client, clientId!);
     if (employeeId) await assertEmployeeLinkable(client, employeeId);
+    // A staff login created without an employee is linked to the free employee record with the same email.
+    const autoEmployeeId = role !== 'client' && !employeeId ? await employeeForEmail(client, email) : null;
+    const linkTo = employeeId ?? autoEmployeeId;
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO users (email, password_hash, role, employee_id, client_id, must_change_password)
        VALUES ($1, NULL, $2, $3, $4, false) RETURNING id`,
-      [email, role, employeeId ?? null, role === 'client' ? clientId : null],
+      [email, role, linkTo, role === 'client' ? clientId : null],
     );
     const id = inserted.rows[0].id;
-    return { userId: id, token: (await issueToken(client, id, 'invite')).token };
+    return { userId: id, token: (await issueToken(client, id, 'invite')).token, linkedEmployeeId: linkTo, autoLinked: autoEmployeeId !== null };
   });
 
   try {
@@ -156,8 +160,11 @@ usersRouter.post('/', ['admin', 'manager'], accountMailLimiter, async (req, res)
     action: 'user.created',
     entityType: 'user',
     entityId: userId,
-    metadata: { email, role, employeeId: employeeId ?? null, clientId: clientId ?? null },
+    metadata: { email, role, employeeId: linkedEmployeeId, clientId: clientId ?? null },
   });
+  if (autoLinked) {
+    await audit(req, { action: 'user.employee_linked', entityType: 'user', entityId: userId, metadata: { employeeId: linkedEmployeeId, how: 'email' } });
+  }
   res.status(201).json({ user: await getUser(userId) });
 });
 
@@ -292,5 +299,66 @@ usersRouter.post('/:id/resend-invite', ['admin', 'manager'], accountMailLimiter,
 usersRouter.post('/:id/send-reset-link', ['admin', 'manager'], accountMailLimiter, async (req, res) => {
   const id = parseId(req.params.id);
   await sendLink(req, id, 'reset');
+  res.json({ user: await getUser(id) });
+});
+
+// ---------------------------------------------------------------------------
+// PUT /api/users/:id/employee  { employeeId }  (admin): link this staff login to an employee record
+// DELETE /api/users/:id/employee  (admin): unlink it
+// One login per employee (users.employee_id is UNIQUE): an employee that already has a login is a 409, and a
+// login already linked to another employee must be unlinked first (links are never moved silently). Client
+// users are never linked. Nobody re-links their own login: their employee id is what stops them changing
+// their own salary or attendance (CANNOT_MODIFY_OWN / CANNOT_CORRECT_OWN).
+// ---------------------------------------------------------------------------
+const linkSchema = z.object({ employeeId: z.uuid('Choose an employee') });
+
+async function lockLinkTarget(client: PoolClient, req: Request, id: string) {
+  const target = (
+    await client.query<{ id: string; role: string; employee_id: string | null }>(
+      'SELECT id, role, employee_id FROM users WHERE id = $1 FOR UPDATE',
+      [id],
+    )
+  ).rows[0];
+  if (!target) throw new HttpError(404, 'User not found', 'NOT_FOUND');
+  if (target.id === req.user!.id) throw new HttpError(400, 'You cannot change the link of your own account', 'CANNOT_MODIFY_SELF');
+  if (target.role === 'client') throw new HttpError(400, 'Client users cannot be linked to an employee', 'CLIENT_USER');
+  return target;
+}
+
+usersRouter.put('/:id/employee', ['admin'], async (req, res) => {
+  const id = parseId(req.params.id);
+  const { employeeId } = parseBody(linkSchema, req.body);
+
+  const changed = await withTransaction(async client => {
+    const target = await lockLinkTarget(client, req, id);
+    if (target.employee_id === employeeId) return false;
+    if (target.employee_id) {
+      throw new HttpError(409, 'This login is already linked to another employee. Unlink it first.', 'USER_LINKED');
+    }
+    await assertEmployeeLinkable(client, employeeId);
+    await client
+      .query('UPDATE users SET employee_id = $2 WHERE id = $1', [id, employeeId])
+      .catch((err: { code?: string }) => {
+        if (err.code === '23505') throw new HttpError(409, 'That employee already has a user account', 'EMPLOYEE_LINKED');
+        throw err;
+      });
+    return true;
+  });
+
+  if (changed) {
+    await audit(req, { action: 'user.employee_linked', entityType: 'user', entityId: id, metadata: { employeeId, how: 'manual' } });
+  }
+  res.json({ user: await getUser(id) });
+});
+
+usersRouter.delete('/:id/employee', ['admin'], async (req, res) => {
+  const id = parseId(req.params.id);
+  const employeeId = await withTransaction(async client => {
+    const target = await lockLinkTarget(client, req, id);
+    if (!target.employee_id) throw new HttpError(409, 'This login is not linked to an employee', 'NOT_LINKED');
+    await client.query('UPDATE users SET employee_id = NULL WHERE id = $1', [id]);
+    return target.employee_id;
+  });
+  await audit(req, { action: 'user.employee_unlinked', entityType: 'user', entityId: id, metadata: { employeeId } });
   res.json({ user: await getUser(id) });
 });

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { tasksApi } from '../../api/tasks';
 import { errorMessage } from '../../api/client';
-import { EMPLOYEE_TASK_TRANSITIONS, TASK_STATUSES, TASK_STATUS_LABEL, Task, TaskStatus } from '../../types/work';
+import { TASK_STATUSES, TASK_STATUS_LABEL, Task, TaskStatus, allowedTaskMoves } from '../../types/work';
 import { Button } from '../common/Button';
 
 interface TaskStatusControlProps {
@@ -12,11 +12,13 @@ interface TaskStatusControlProps {
   allowComment?: boolean; // detail view: optional hand-over note when sending to review / completing
 }
 
-// Changing a task's status. Admin/manager pick any status from a menu; an employee gets one button per
-// move they are allowed to make (the server enforces the same rules). No drag and drop.
+// Changing a task's status. Admin/manager pick any status from a menu; an employee gets one button per move
+// they are allowed to make: their own task's steps, or the review of a task they assigned (the server enforces
+// the same rules). No drag and drop.
 export const TaskStatusControl: React.FC<TaskStatusControlProps> = ({ task, onChanged, compact, allowComment }) => {
   const { currentUser, showToast } = useApp();
-  const isManager = currentUser.role === 'admin' || currentUser.role === 'manager';
+  const moves = allowedTaskMoves(task, currentUser);
+  const isAssignee = Boolean(task.assigneeId) && task.assigneeId === currentUser.employeeId;
   const [busy, setBusy] = useState(false);
   const [comment, setComment] = useState('');
 
@@ -46,7 +48,7 @@ export const TaskStatusControl: React.FC<TaskStatusControlProps> = ({ task, onCh
     />
   );
 
-  if (isManager) {
+  if (moves === null) {
     return (
       <div className="space-y-2">
         <select
@@ -68,28 +70,36 @@ export const TaskStatusControl: React.FC<TaskStatusControlProps> = ({ task, onCh
     );
   }
 
-  const moves = EMPLOYEE_TASK_TRANSITIONS[task.status] ?? [];
   if (moves.length === 0) {
-    return (
-      <p className="text-[11px] text-[#7185A5]">
-        {task.status === 'in_review' ? 'Waiting for a manager to review.' : task.status === 'completed' ? 'Completed.' : 'No changes available.'}
-      </p>
-    );
+    // Client requests and tasks from a login without an employee record are reviewed by a manager.
+    const reviewer = task.requestedByClient || task.createdByName === 'Hybrid Monks' ? 'a manager' : task.createdByName;
+    let note = 'No changes available.';
+    if (task.status === 'completed') note = 'Completed.';
+    else if (task.status === 'in_review') note = isAssignee ? `Waiting for ${reviewer} to review.` : 'Waiting for review.';
+    else if (!isAssignee) note = `With ${task.assignee?.fullName ?? 'nobody yet'}.`;
+    return <p className="text-[11px] text-[#7185A5]">{note}</p>;
   }
+  // The assigner reviewing a colleague's hand-over: approve, or send it back.
+  const label = (status: TaskStatus) => {
+    if (status === 'blocked') return 'Mark blocked';
+    if (!isAssignee && status === 'completed') return 'Approve & complete';
+    if (!isAssignee && status === 'in_progress') return 'Send back';
+    return `Move to ${TASK_STATUS_LABEL[status]}`;
+  };
   return (
     <div className="space-y-2">
-      {moves.includes('in_review') && commentBox}
+      {(moves.includes('in_review') || moves.includes('completed')) && commentBox}
       <div className="flex flex-wrap gap-1.5" onClick={e => e.stopPropagation()}>
         {moves.map(status => (
           <Button
             key={status}
             size="sm"
-            variant={status === 'blocked' ? 'outline' : 'primary'}
+            variant={status === 'blocked' || (!isAssignee && status === 'in_progress') ? 'outline' : 'primary'}
             disabled={busy}
             className={compact ? 'text-[11px]! px-2! py-1!' : undefined}
             onClick={() => change(status)}
           >
-            {status === 'blocked' ? 'Mark blocked' : `Move to ${TASK_STATUS_LABEL[status]}`}
+            {label(status)}
           </Button>
         ))}
       </div>

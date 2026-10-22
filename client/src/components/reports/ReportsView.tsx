@@ -13,7 +13,7 @@ import { InvoiceStatusBadge } from '../invoices/InvoiceStatusBadge';
 import { TrendBars } from './TrendBars';
 import { BarChart3, Banknote, Download, FileText, Printer, Scale } from 'lucide-react';
 import { formatDate, formatMonthYear } from '../../utils/formatters';
-import { formatMoney } from '../../utils/money';
+import { formatMoney, InvoiceCurrency } from '../../utils/money';
 
 type Tab = 'pnl' | 'trend' | 'invoices' | 'salary';
 
@@ -39,6 +39,7 @@ export const ReportsView: React.FC = () => {
   const [tab, setTab] = useState<Tab>(isAdmin ? 'pnl' : 'invoices');
   const [period, setPeriod] = useState<PeriodParams>({ preset: 'this_fy' });
   const [months, setMonths] = useState(12);
+  const [invoiceCurrency, setInvoiceCurrency] = useState<InvoiceCurrency>('INR');
 
   const csvReport = tab === 'pnl' ? 'profit-loss' : tab === 'invoices' ? 'invoices' : tab === 'salary' ? 'salary' : null;
 
@@ -54,7 +55,7 @@ export const ReportsView: React.FC = () => {
         <div className="flex items-center gap-2 flex-wrap no-print">
           {csvReport && (
             <a
-              href={reportsApi.csvUrl(csvReport, period)}
+              href={reportsApi.csvUrl(csvReport, csvReport === 'invoices' ? { ...period, currency: invoiceCurrency } : period)}
               download
               className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-[#DFE6F1] bg-white text-[#111827] hover:bg-[#F8FAFC]"
               data-testid="report-csv"
@@ -105,7 +106,7 @@ export const ReportsView: React.FC = () => {
 
       {tab === 'pnl' && isAdmin && <ProfitLossTab period={period} />}
       {tab === 'trend' && isAdmin && <TrendTab months={months} />}
-      {tab === 'invoices' && <InvoicesTab period={period} />}
+      {tab === 'invoices' && <InvoicesTab period={period} currency={invoiceCurrency} onCurrency={setInvoiceCurrency} />}
       {tab === 'salary' && isAdmin && <SalaryTab period={period} />}
     </div>
   );
@@ -210,17 +211,36 @@ const TrendTab: React.FC<{ months: number }> = ({ months }) => {
   );
 };
 
-const InvoicesTab: React.FC<{ period: PeriodParams }> = ({ period }) => {
-  const report = useApiData(() => reportsApi.invoices(period), [JSON.stringify(period)]);
+// One currency at a time: the server never adds invoices in different currencies together.
+const InvoicesTab: React.FC<{ period: PeriodParams; currency: InvoiceCurrency; onCurrency: (c: InvoiceCurrency) => void }> = ({ period, currency, onCurrency }) => {
+  const report = useApiData(() => reportsApi.invoices(period, currency), [JSON.stringify(period), currency]);
   const r = report.data;
   if (!r) return <Loading error={report.error} reload={report.reload} />;
   return (
     <div className="space-y-4" data-testid="invoice-report">
-      <PrintHeading title="Invoices" sub={`${periodText(r.period)} · aging as of ${formatDate(r.today)}`} />
+      <PrintHeading title={`Invoices (${r.currency})`} sub={`${periodText(r.period)} · aging as of ${formatDate(r.today)}`} />
+      {r.currencies.length > 1 && (
+        <div className="flex items-center gap-2 no-print">
+          <span className="text-xs text-[#7185A5]">Invoices in</span>
+          <div className="flex gap-1 p-1 bg-white border border-[#DFE6F1] rounded-lg" role="tablist" aria-label="Invoice currency">
+            {r.currencies.map(c => (
+              <button
+                key={c}
+                role="tab"
+                aria-selected={c === r.currency}
+                onClick={() => onCurrency(c)}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md cursor-pointer ${c === r.currency ? 'bg-[#5038F5] text-white' : 'text-[#7185A5] hover:text-[#111827]'}`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-        <Kpi label="Invoiced (sent and paid)" value={formatMoney(r.summary.invoiced)} sub={`${r.summary.count} invoices dated in the period`} testId="inv-invoiced" />
-        <Kpi label="Collected on them" value={formatMoney(r.summary.collected)} tone="text-[#047857]" testId="inv-collected" />
-        <Kpi label="Still outstanding" value={formatMoney(r.summary.outstanding)} tone="text-[#B45309]" testId="inv-outstanding" />
+        <Kpi label="Invoiced (sent and paid)" value={formatMoney(r.summary.invoiced, r.currency)} sub={`${r.summary.count} invoices dated in the period`} testId="inv-invoiced" />
+        <Kpi label="Collected on them" value={formatMoney(r.summary.collected, r.currency)} tone="text-[#047857]" testId="inv-collected" />
+        <Kpi label="Still outstanding" value={formatMoney(r.summary.outstanding, r.currency)} tone="text-[#B45309]" testId="inv-outstanding" />
       </div>
 
       <Card padding="none" className="overflow-hidden">
@@ -246,8 +266,8 @@ const InvoicesTab: React.FC<{ period: PeriodParams }> = ({ period }) => {
                     <span className="sr-only">{INVOICE_STATUS_LABEL[s.status]}</span>
                   </td>
                   <td className={`${td} text-right`}>{s.count}</td>
-                  <td className={`${td} text-right font-mono whitespace-nowrap`}>{formatMoney(s.total)}</td>
-                  <td className={`${td} text-right font-mono whitespace-nowrap`}>{formatMoney(s.outstanding)}</td>
+                  <td className={`${td} text-right font-mono whitespace-nowrap`}>{formatMoney(s.total, r.currency)}</td>
+                  <td className={`${td} text-right font-mono whitespace-nowrap`}>{formatMoney(s.outstanding, r.currency)}</td>
                 </tr>
               ))}
             </tbody>
@@ -273,7 +293,7 @@ const InvoicesTab: React.FC<{ period: PeriodParams }> = ({ period }) => {
                 <tr key={a.bucket} data-testid={`aging-${a.bucket}`}>
                   <td className={`${td} text-[#111827]`}>{AGING_LABEL[a.bucket]}</td>
                   <td className={`${td} text-right`}>{a.count}</td>
-                  <td className={`${td} text-right font-mono whitespace-nowrap ${a.bucket === 'not_due' ? '' : a.count ? 'text-[#E11D48]' : ''}`}>{formatMoney(a.balance)}</td>
+                  <td className={`${td} text-right font-mono whitespace-nowrap ${a.bucket === 'not_due' ? '' : a.count ? 'text-[#E11D48]' : ''}`}>{formatMoney(a.balance, r.currency)}</td>
                 </tr>
               ))}
             </tbody>
@@ -303,7 +323,7 @@ const InvoicesTab: React.FC<{ period: PeriodParams }> = ({ period }) => {
                     <td className={td}>{i.clientName}</td>
                     <td className={`${td} whitespace-nowrap hidden sm:table-cell`}>{formatDate(i.dueDate)}</td>
                     <td className={`${td} text-right`}>{i.daysOverdue || '—'}</td>
-                    <td className={`${td} text-right font-mono whitespace-nowrap`}>{formatMoney(i.balance)}</td>
+                    <td className={`${td} text-right font-mono whitespace-nowrap`}>{formatMoney(i.balance, r.currency)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -342,7 +362,7 @@ const InvoicesTab: React.FC<{ period: PeriodParams }> = ({ period }) => {
                   <tr key={c.clientName}>
                     <td className={`${td} text-[#111827]`}>{c.clientName}</td>
                     <td className={`${td} text-right`}>{c.count}</td>
-                    <td className={`${td} text-right font-mono whitespace-nowrap`}>{formatMoney(c.amount)}</td>
+                    <td className={`${td} text-right font-mono whitespace-nowrap`}>{formatMoney(c.amount, r.currency)}</td>
                   </tr>
                 ))}
               </tbody>

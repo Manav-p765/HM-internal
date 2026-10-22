@@ -78,7 +78,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
     if (!toReverse) return;
     const updated = await invoicesApi.reversePayment(invoiceId, toReverse.id, reason);
     applyUpdate(updated);
-    showToast('info', `Payment of ${formatMoney(toReverse.amount)} reversed`);
+    showToast('info', `Payment of ${formatMoney(toReverse.amount, updated.currency)} reversed`);
     setToReverse(null);
   };
 
@@ -158,6 +158,10 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
                   <span className="font-medium text-[#111827]">{formatDate(invoice.invoiceDate)}</span>
                 </div>
                 <div className="flex justify-between">
+                  <span className="text-[#7185A5]">Currency</span>
+                  <span className="font-medium text-[#111827]" data-testid="invoice-currency">{invoice.currency}</span>
+                </div>
+                <div className="flex justify-between">
                   <span className="text-[#7185A5]">Due date</span>
                   <span className={`font-medium ${invoice.derivedStatus === 'overdue' ? 'text-[#E11D48]' : 'text-[#111827]'}`}>{formatDate(invoice.dueDate)}</span>
                 </div>
@@ -186,8 +190,8 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
                     <tr key={item.id}>
                       <td className="py-2.5 px-4 font-medium text-[#111827]">{item.description}</td>
                       <td className="py-2.5 px-4 text-right font-mono text-[#475569]">{trimRate(item.quantity)}</td>
-                      <td className="py-2.5 px-4 text-right font-mono text-[#475569] whitespace-nowrap">{formatMoney(item.unitPrice)}</td>
-                      <td className="py-2.5 px-4 text-right font-mono font-medium text-[#111827] whitespace-nowrap">{formatMoney(item.lineTotal)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono text-[#475569] whitespace-nowrap">{formatMoney(item.unitPrice, invoice.currency)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono font-medium text-[#111827] whitespace-nowrap">{formatMoney(item.lineTotal, invoice.currency)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -198,24 +202,24 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
             <div className="sm:w-80 sm:ml-auto space-y-1.5 text-xs" data-testid="invoice-totals">
               <div className="flex justify-between text-[#7185A5]">
                 <span>Subtotal</span>
-                <span className="font-mono text-[#111827]">{formatMoney(invoice.subtotal)}</span>
+                <span className="font-mono text-[#111827]">{formatMoney(invoice.subtotal, invoice.currency)}</span>
               </div>
               <div className="flex justify-between text-[#7185A5]">
                 <span>GST ({trimRate(invoice.taxRate)}%)</span>
-                <span className="font-mono text-[#111827]">{formatMoney(invoice.taxAmount)}</span>
+                <span className="font-mono text-[#111827]">{formatMoney(invoice.taxAmount, invoice.currency)}</span>
               </div>
               <div className="flex justify-between font-bold text-sm text-[#111827] pt-1.5 border-t border-[#DFE6F1]">
                 <span>Total</span>
-                <span className="font-mono text-[#5038F5]">{formatMoney(invoice.total)}</span>
+                <span className="font-mono text-[#5038F5]">{formatMoney(invoice.total, invoice.currency)}</span>
               </div>
               <div className="flex justify-between text-[#047857]">
                 <span>Paid</span>
-                <span className="font-mono">{formatMoney(invoice.amountPaid)}</span>
+                <span className="font-mono">{formatMoney(invoice.amountPaid, invoice.currency)}</span>
               </div>
               <div className="flex justify-between font-bold text-[#B45309] pt-1 border-t border-dashed border-[#DFE6F1]">
                 <span>Balance due</span>
                 <span className="font-mono" data-testid="invoice-balance">
-                  {formatMoney(invoice.balance)}
+                  {formatMoney(invoice.balance, invoice.currency)}
                 </span>
               </div>
             </div>
@@ -249,7 +253,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
                               <td className="pt-2 px-3 line-through">{p.paymentMethod}</td>
                               <td className="pt-2 px-3 font-mono line-through">{p.referenceNumber || '—'}</td>
                               <td className="pt-2 px-3">{p.recordedByName}</td>
-                              <td className="pt-2 px-3 text-right font-mono whitespace-nowrap line-through">{formatMoney(p.amount)}</td>
+                              <td className="pt-2 px-3 text-right font-mono whitespace-nowrap line-through">{formatMoney(p.amount, invoice.currency)}</td>
                               {isAdmin && (
                                 <td className="pt-2 px-3 text-right">
                                   <span className="text-[11px] font-semibold uppercase tracking-wider">Reversed</span>
@@ -268,13 +272,16 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
                             <td className="py-2 px-3 text-[#7185A5]">{p.paymentMethod}</td>
                             <td className="py-2 px-3 font-mono text-[#7185A5]">{p.referenceNumber || '—'}</td>
                             <td className="py-2 px-3 text-[#7185A5]">{p.recordedByName}</td>
-                            <td className="py-2 px-3 text-right font-mono font-medium text-[#047857] whitespace-nowrap">{formatMoney(p.amount)}</td>
+                            <td className="py-2 px-3 text-right font-mono font-medium text-[#047857] whitespace-nowrap">
+                              {formatMoney(p.amount, invoice.currency)}
+                              {invoice.currency !== 'INR' && <div className="text-[11px] font-normal text-[#7185A5]">{formatMoney(p.amountInr)} received</div>}
+                            </td>
                             {isAdmin && (
                               <td className="py-2 px-3 text-right">
                                 <button
                                   onClick={() => setToReverse(p)}
                                   className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-[#E11D48] bg-[#E11D48]/10 hover:bg-[#E11D48]/20 rounded cursor-pointer"
-                                  aria-label={`Reverse payment of ${formatMoney(p.amount)}`}
+                                  aria-label={`Reverse payment of ${formatMoney(p.amount, invoice.currency)}`}
                                 >
                                   <Undo2 className="w-3 h-3" /> Reverse
                                 </button>
@@ -299,7 +306,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
             onClose={() => setConfirmSend(false)}
             onConfirm={handleSend}
             title="Send invoice"
-            message={`Mark ${invoiceLabel(invoice)} as sent to ${invoice.clientName || 'the client'} (${formatMoney(invoice.total)})? Its number, client and lines are locked from then on; only the due date and notes can change. No email is sent.`}
+            message={`Mark ${invoiceLabel(invoice)} as sent to ${invoice.clientName || 'the client'} (${formatMoney(invoice.total, invoice.currency)})? Its number, client and lines are locked from then on; only the due date and notes can change. No email is sent.`}
             confirmLabel="Mark as sent"
           />
           <ConfirmDialog
@@ -314,7 +321,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
           {toReverse && (
             <ReasonDialog
               title="Reverse payment"
-              message={`Reverse the ${formatMoney(toReverse.amount)} payment of ${formatDate(toReverse.txnDate)}? It stays on record, marked reversed, and no longer counts: the balance goes back up.`}
+              message={`Reverse the ${formatMoney(toReverse.amount, invoice.currency)} payment of ${formatDate(toReverse.txnDate)}? It stays on record, marked reversed, and no longer counts: the balance goes back up.`}
               confirmLabel="Reverse payment"
               reasonLabel="Reason for reversing"
               onClose={() => setToReverse(null)}

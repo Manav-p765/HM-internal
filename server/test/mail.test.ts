@@ -3,9 +3,10 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { app } from '../src/app.js';
-import { parseConfig } from '../src/config.js';
+import { config, parseConfig } from '../src/config.js';
 import { pool, query } from '../src/db.js';
 import {
+  composeMail,
   createResendTransport,
   MailError,
   sendTestEmail,
@@ -60,7 +61,7 @@ describe('config', () => {
 });
 
 describe('the Resend transport', () => {
-  const mail = { to: 'someone@example.test', subject: 'Hello', text: 'Body' };
+  const mail = { to: 'someone@example.test', subject: 'Hello', text: 'Body', html: '<p>Body</p>' };
 
   it('POSTs to /emails with the bearer key, the "Name <address>" sender and the recipient', async () => {
     const fetchImpl = vi.fn(async (..._args: FetchArgs) => json(200, { id: 'msg_123' }));
@@ -71,8 +72,15 @@ describe('the Resend transport', () => {
     expect(url).toBe('https://api.resend.com/emails');
     expect(init.method).toBe('POST');
     expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${FAKE_KEY}`);
-    expect(JSON.parse(String(init.body))).toEqual({ from: FROM, to: ['someone@example.test'], subject: 'Hello', text: 'Body' });
+    expect(JSON.parse(String(init.body))).toEqual({ from: FROM, to: ['someone@example.test'], subject: 'Hello', text: 'Body', html: '<p>Body</p>' });
     expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('sends reply_to only when a Reply-To is set', async () => {
+    const fetchImpl = vi.fn(async (..._args: FetchArgs) => json(200, { id: 'msg_123' }));
+    const t = createResendTransport({ apiKey: FAKE_KEY, from: FROM, fetchImpl: fetchImpl as unknown as typeof fetch });
+    await t.send({ ...mail, replyTo: 'admin@example.test' }, 'test');
+    expect(JSON.parse(String(fetchImpl.mock.calls[0][1].body)).reply_to).toBe('admin@example.test');
   });
 
   it('a 4xx becomes MailError RESEND_<status>/<name>, never the provider message', async () => {
@@ -140,9 +148,16 @@ describe('creating a login with Resend as the transport', () => {
     useResend(fetchImpl as unknown as typeof fetch);
     const res = await admin.post('/api/users').send({ email: 'new.person@example.test', role: 'employee' }).expect(201);
 
-    const sent = JSON.parse(String(fetchImpl.mock.calls[0][1].body)) as { to: string[]; subject: string; text: string };
+    const sent = JSON.parse(String(fetchImpl.mock.calls[0][1].body)) as { to: string[]; subject: string; text: string; html: string };
     expect(sent.to).toEqual(['new.person@example.test']);
-    expect(sent.subject).toBe('Set your password for Monks Internal Management');
+    expect(sent.subject).toBe('Set your password');
+    // The same link in both parts, on APP_URL's host, shown as itself (no redirect or tracking link).
+    const link = /(\S+\/set-password\?token=\S+)/.exec(sent.text)![1];
+    expect(new URL(link).origin).toBe(new URL(config.APP_URL).origin);
+    expect(sent.html).toContain(`<a href="${link}"`);
+    expect(sent.html).toContain(`>${link}</a>`);
+    expect(sent.html.match(/href=/g)).toHaveLength(1);
+    expect(sent.html).not.toMatch(/<img|<script|https?:\/\/(?!localhost)[^"]*\.(png|gif|jpg)/i);
     const token = tokenIn(String(fetchImpl.mock.calls[0][1].body));
     expect(res.text).not.toContain(token);
     expect(testOutbox).toHaveLength(0);
@@ -192,7 +207,7 @@ describe('creating a login with Resend as the transport', () => {
     const fetchImpl = vi.fn(async (..._args: FetchArgs) => json(200, { id: 'msg_test' }));
     useResend(fetchImpl as unknown as typeof fetch);
     await expect(sendTestEmail('me@example.test')).resolves.toBe('msg_test');
-    expect(JSON.parse(String(fetchImpl.mock.calls[0][1].body)).subject).toBe('Monks Internal Management: test email');
+    expect(JSON.parse(String(fetchImpl.mock.calls[0][1].body)).subject).toBe('Test email from Monks Internal Management');
 
     useResend((async () => json(401, { name: 'missing_api_key' })) as unknown as typeof fetch);
     await expect(sendTestEmail('me@example.test')).rejects.toMatchObject({ code: 'RESEND_401/missing_api_key' });
@@ -202,4 +217,27 @@ describe('creating a login with Resend as the transport', () => {
 
 afterAll(async () => {
   await pool.end();
+});
+
+describe('composeMail', () => {
+  it('builds matching text and HTML parts, escapes the HTML, and adds Reply-To only when SMTP_REPLY_TO is set', () => {
+    const mail = composeMail('x@example.test', 'Subject', { paragraphs: ['A <b>bold</b> & "quoted" claim'], link: 'http://localhost:3000/set-password?token=a&b' });
+    expect(mail.text).toContain('A <b>bold</b> & "quoted" claim');
+    expect(mail.html).toContain('A &lt;b&gt;bold&lt;/b&gt; &amp; &quot;quoted&quot; claim');
+    expect(mail.html).toContain('href="http://localhost:3000/set-password?token=a&amp;b"');
+    expect(mail).not.toHaveProperty('replyTo');
+
+    const settings = config as { SMTP_REPLY_TO?: string };
+    settings.SMTP_REPLY_TO = 'office@example.test';
+    try {
+      expect(composeMail('x@example.test', 'Subject', { paragraphs: ['Hi'] }).replyTo).toBe('office@example.test');
+    } finally {
+      delete settings.SMTP_REPLY_TO;
+    }
+  });
+
+  it('SMTP_REPLY_TO must be a plain address', () => {
+    const r = parseConfig({ NODE_ENV: 'development', DATABASE_URL: 'postgres://u:p@127.0.0.1:5440/db', SESSION_SECRET: 'x'.repeat(40), SMTP_REPLY_TO: 'Office <office@example.test>' });
+    expect(r.ok).toBe(false);
+  });
 });

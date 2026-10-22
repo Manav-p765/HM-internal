@@ -29,8 +29,15 @@ const CLIENT_ALLOWED = new Set([
   'GET /api/portal/projects/:id/tasks',
   'GET /api/portal/tasks/:id/comments',
   'POST /api/portal/tasks/:id/comments',
+  // Task requests on the company's own projects, assigned to that project's team (see portal-tasks.test.ts).
+  'GET /api/portal/projects/:id/assignees',
+  'POST /api/portal/projects/:id/tasks',
+  'PATCH /api/portal/tasks/:id',
   // Who works on the company's projects and their status today (name, designation, avatar, status, projects).
   'GET /api/portal/team',
+  // The company's own issued invoices, read-only (no drafts, no internal fields; see portal-invoices.test.ts).
+  'GET /api/portal/invoices',
+  'GET /api/portal/invoices/:id',
 ]);
 
 // Routes that need no sign-in at all.
@@ -181,14 +188,22 @@ describe('route matrix (deny by default)', () => {
     });
   });
 
-  it('ledger and report routes: admin only, except the invoice report (admin, manager); no DELETE on the ledger', () => {
+  it('money routes (invoices, company settings, ledger, reports, salary): admin only; only the own-payslip routes are wider', () => {
+    const OWN_SLIPS = new Set(['GET /api/salary/slips/me', 'GET /api/salary/slips/me/:id']);
+    const money = collectRoutes().routes.filter(
+      r => /^\/api\/(invoices|settings|transactions|reports|salary)(\/|$)/.test(r.path) && !OWN_SLIPS.has(r.key),
+    );
+    expect(money.length).toBeGreaterThan(30);
+    for (const route of money) expect({ route: route.key, access: route.declared?.access }).toEqual({ route: route.key, access: ['admin'] });
+  });
+
+  it('ledger and report routes: admin only; no DELETE on the ledger', () => {
     const finance = Object.fromEntries(
       collectRoutes()
         .routes.filter(r => r.path.startsWith('/api/transactions') || r.path.startsWith('/api/reports'))
         .map(r => [r.key, r.declared?.access]),
     );
     const ADMIN = ['admin'];
-    const ADMIN_MANAGER = ['admin', 'manager'];
     expect(finance).toEqual({
       'GET /api/transactions/': ADMIN,
       'GET /api/transactions/export.csv': ADMIN,
@@ -201,8 +216,8 @@ describe('route matrix (deny by default)', () => {
       'GET /api/reports/profit-loss': ADMIN,
       'GET /api/reports/profit-loss.csv': ADMIN,
       'GET /api/reports/trend': ADMIN,
-      'GET /api/reports/invoices': ADMIN_MANAGER,
-      'GET /api/reports/invoices.csv': ADMIN_MANAGER,
+      'GET /api/reports/invoices': ADMIN,
+      'GET /api/reports/invoices.csv': ADMIN,
       'GET /api/reports/salary': ADMIN,
       'GET /api/reports/salary.csv': ADMIN,
     });

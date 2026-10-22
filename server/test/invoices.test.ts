@@ -94,16 +94,16 @@ describe('role matrix', () => {
     return { draft, sent, paid, txn: res.body.paymentId };
   }
   const routes: { name: string; method: 'get' | 'post' | 'patch' | 'delete'; path: (f: Fresh) => string; allowed: Role[]; body?: object }[] = [
-    { name: 'GET /invoices', method: 'get', path: () => '/api/invoices', allowed: ['admin', 'manager'] },
-    { name: 'GET /invoices/:id', method: 'get', path: f => `/api/invoices/${f.sent}`, allowed: ['admin', 'manager'] },
-    { name: 'POST /invoices', method: 'post', path: () => '/api/invoices', allowed: ['admin', 'manager'], body: { clientId: '', dueDate: TODAY, items: [item()] } },
-    { name: 'PATCH /invoices/:id', method: 'patch', path: f => `/api/invoices/${f.draft}`, allowed: ['admin', 'manager'], body: { notes: 'x' } },
-    { name: 'POST /invoices/:id/send', method: 'post', path: f => `/api/invoices/${f.draft}/send`, allowed: ['admin', 'manager'] },
+    { name: 'GET /invoices', method: 'get', path: () => '/api/invoices', allowed: ['admin'] },
+    { name: 'GET /invoices/:id', method: 'get', path: f => `/api/invoices/${f.sent}`, allowed: ['admin'] },
+    { name: 'POST /invoices', method: 'post', path: () => '/api/invoices', allowed: ['admin'], body: { clientId: '', dueDate: TODAY, items: [item()] } },
+    { name: 'PATCH /invoices/:id', method: 'patch', path: f => `/api/invoices/${f.draft}`, allowed: ['admin'], body: { notes: 'x' } },
+    { name: 'POST /invoices/:id/send', method: 'post', path: f => `/api/invoices/${f.draft}/send`, allowed: ['admin'] },
     { name: 'POST /invoices/:id/cancel', method: 'post', path: f => `/api/invoices/${f.sent}/cancel`, allowed: ['admin'], body: { reason: 'Duplicate' } },
     { name: 'POST /invoices/:id/payments', method: 'post', path: f => `/api/invoices/${f.sent}/payments`, allowed: ['admin'], body: { amount: '1.00', txnDate: TODAY, paymentMethod: 'UPI' } },
     { name: 'DELETE /invoices/:id/payments/:txnId', method: 'delete', path: f => `/api/invoices/${f.paid}/payments/${f.txn}`, allowed: ['admin'], body: { reason: 'Bounced (fake)' } },
-    { name: 'DELETE /invoices/:id', method: 'delete', path: f => `/api/invoices/${f.draft}`, allowed: ['admin', 'manager'] },
-    { name: 'GET /settings/company', method: 'get', path: () => '/api/settings/company', allowed: ['admin', 'manager'] },
+    { name: 'DELETE /invoices/:id', method: 'delete', path: f => `/api/invoices/${f.draft}`, allowed: ['admin'] },
+    { name: 'GET /settings/company', method: 'get', path: () => '/api/settings/company', allowed: ['admin'] },
     { name: 'PATCH /settings/company', method: 'patch', path: () => '/api/settings/company', allowed: ['admin'], body: { terms: 'Net 15 (fake)' } },
   ];
   const roles: Role[] = ['admin', 'manager', 'employee', 'client', 'anonymous'];
@@ -126,13 +126,13 @@ describe('role matrix', () => {
 
   it('the allowed calls actually succeed (not just "not 403")', async () => {
     const f = await fresh();
-    await agents.manager.get('/api/invoices').expect(200);
-    await agents.manager.get(`/api/invoices/${f.sent}`).expect(200);
-    await agents.manager.patch(`/api/invoices/${f.draft}`).send({ notes: 'ok' }).expect(200);
-    await agents.manager.post(`/api/invoices/${f.draft}/send`).expect(200);
+    await agents.admin.get('/api/invoices').expect(200);
+    await agents.admin.get(`/api/invoices/${f.sent}`).expect(200);
+    await agents.admin.patch(`/api/invoices/${f.draft}`).send({ notes: 'ok' }).expect(200);
+    await agents.admin.post(`/api/invoices/${f.draft}/send`).expect(200);
     await agents.admin.post(`/api/invoices/${f.sent}/cancel`).send({ reason: 'Duplicate (fake)' }).expect(200);
     await agents.admin.delete(`/api/invoices/${f.paid}/payments/${f.txn}`).send({ reason: 'Bounced (fake)' }).expect(200);
-    await agents.manager.get('/api/settings/company').expect(200);
+    await agents.admin.get('/api/settings/company').expect(200);
     await agents.admin.patch('/api/settings/company').send({ terms: 'Net 15' }).expect(200);
   });
 });
@@ -195,10 +195,10 @@ describe('company settings', () => {
     const jpeg = `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10]).toString('base64')}`;
     const webp = `data:image/webp;base64,${Buffer.from('RIFF\x1a\x00\x00\x00WEBPVP8 ', 'latin1').toString('base64')}`;
 
-    it('admin sets, replaces and removes it; managers read it; the audit row names the field only', async () => {
+    it('admin sets, replaces and removes it; the audit row names the field only', async () => {
       const set = await agents.admin.patch('/api/settings/company').send({ logoDataUrl: png }).expect(200);
       expect(set.body.company.logoDataUrl).toBe(png);
-      expect((await agents.manager.get('/api/settings/company').expect(200)).body.company.logoDataUrl).toBe(png);
+      expect((await agents.admin.get('/api/settings/company').expect(200)).body.company.logoDataUrl).toBe(png);
       await agents.admin.patch('/api/settings/company').send({ logoDataUrl: jpeg }).expect(200);
       await agents.admin.patch('/api/settings/company').send({ logoDataUrl: webp }).expect(200);
       const cleared = await agents.admin.patch('/api/settings/company').send({ logoDataUrl: null }).expect(200);
@@ -208,7 +208,8 @@ describe('company settings', () => {
       expect(JSON.stringify(rows)).not.toContain('base64');
     });
 
-    it('managers cannot change it', async () => {
+    it('managers can neither read nor change it (no money: bank details, tax rates)', async () => {
+      await agents.manager.get('/api/settings/company').expect(403);
       await agents.manager.patch('/api/settings/company').send({ logoDataUrl: png }).expect(403);
     });
 
@@ -240,7 +241,7 @@ describe('total in words (printed on the invoice)', () => {
     expect(draft.total).toBe('117.99');
     expect(draft.totalInWords).toBe('One Hundred and Seventeen Indian Rupees and Ninety Nine Paise Only');
     const big = await createInvoice({ items: [item('B', 1, '100000')], taxRate: 18 });
-    const res = await agents.manager.get(`/api/invoices/${big.id}`).expect(200);
+    const res = await agents.admin.get(`/api/invoices/${big.id}`).expect(200);
     expect(res.body.invoice).toMatchObject({ total: '118000.00', totalInWords: 'One Lakh Eighteen Thousand Indian Rupees Only' });
   });
 });
@@ -276,7 +277,7 @@ describe('create and numbering', () => {
   });
 
   it('defaults the invoice date to today (IST) and the tax rate to the company default; request fields override the snapshot', async () => {
-    const res = await agents.manager
+    const res = await agents.admin
       .post('/api/invoices')
       .send({ clientId: ids.acme, clientName: 'Acme Billing Dept (Fake)', clientAddress: null, dueDate: '2026-11-01', items: [item()] })
       .expect(201);
@@ -290,10 +291,10 @@ describe('create and numbering', () => {
 
   it('numbers are assigned at send: unique and sequential with no gaps, including 10 concurrent sends', async () => {
     const first = await sentInvoice();
-    const drafts = await Promise.all(Array.from({ length: 10 }, (_, i) => createInvoice({ notes: `n${i}` }, i % 2 ? agents.admin : agents.manager)));
+    const drafts = await Promise.all(Array.from({ length: 10 }, (_, i) => createInvoice({ notes: `n${i}` }, agents.admin)));
     expect(drafts.every(d => d.invoiceNumber === null)).toBe(true);
     const sent = await Promise.all(
-      drafts.map((d, i) => (i % 2 ? agents.admin : agents.manager).post(`/api/invoices/${d.id}/send`).expect(200)),
+      drafts.map((d, i) => agents.admin.post(`/api/invoices/${d.id}/send`).expect(200)),
     );
     const numbers = [(await agents.admin.get(`/api/invoices/${first.id}`)).body.invoice.invoiceNumber, ...sent.map(r => r.body.invoice.invoiceNumber)].sort();
     expect(numbers).toEqual(Array.from({ length: 11 }, (_, i) => `HM-${String(i + 1).padStart(4, '0')}`));
@@ -380,7 +381,7 @@ describe('lifecycle', () => {
   it('a draft is fully editable: items replaced as a set, totals recomputed, client refilled', async () => {
     const invoice = await createInvoice();
     const other = await company('Other Co (Fake)');
-    const res = await agents.manager
+    const res = await agents.admin
       .patch(`/api/invoices/${invoice.id}`)
       .send({ clientId: other, items: [item('X', 1, '500'), item('Y', 2, '250.50')], taxRate: 5, notes: 'Updated' })
       .expect(200);
@@ -396,7 +397,7 @@ describe('lifecycle', () => {
     expect(res.body.code).toBe('INVOICE_LOCKED');
     await agents.admin.patch(`/api/invoices/${invoice.id}`).send({ taxRate: 0 }).expect(409);
     await agents.admin.patch(`/api/invoices/${invoice.id}`).send({ clientName: 'Someone else' }).expect(409);
-    const ok = await agents.manager.patch(`/api/invoices/${invoice.id}`).send({ dueDate: '2026-11-15', notes: 'Extended' }).expect(200);
+    const ok = await agents.admin.patch(`/api/invoices/${invoice.id}`).send({ dueDate: '2026-11-15', notes: 'Extended' }).expect(200);
     expect(ok.body.invoice).toMatchObject({ dueDate: '2026-11-15', notes: 'Extended', total: invoice.total, status: 'sent' });
     expect(ok.body.invoice.sentAt).toBe(T0.toISOString());
     // Sending twice is refused.
@@ -420,10 +421,10 @@ describe('lifecycle', () => {
     await agents.admin.patch(`/api/invoices/${cancelled.id}`).send({ dueDate: '2026-12-01' }).expect(409);
     await agents.admin.delete(`/api/invoices/${cancelled.id}`).expect(409);
     const sent = await sentInvoice();
-    await agents.manager.delete(`/api/invoices/${sent.id}`).expect(409);
+    await agents.admin.delete(`/api/invoices/${sent.id}`).expect(409);
 
     const draft = await createInvoice();
-    await agents.manager.delete(`/api/invoices/${draft.id}`).expect(204);
+    await agents.admin.delete(`/api/invoices/${draft.id}`).expect(204);
     await agents.admin.get(`/api/invoices/${draft.id}`).expect(404);
     expect((await auditRows('invoice.deleted'))[0].metadata).toEqual({ invoiceNumber: draft.invoiceNumber });
   });
@@ -561,6 +562,7 @@ describe('payments', () => {
     expect((await auditRows('invoice.payment_reversed'))[0].metadata).toEqual({
       transactionId: b.body.paymentId,
       amount: '2000.00',
+      amountInr: '2000.00',
       txnDate: TODAY,
       paymentMethod: 'UPI',
       referenceNumber: 'UTR-FAKE-1',
@@ -614,7 +616,7 @@ describe('list, derived statuses and summary', () => {
     const bounced = await pay(partial.id, '500.00').expect(201);
     await agents.admin.delete(`/api/invoices/${partial.id}/payments/${bounced.body.paymentId}`).send({ reason: 'Bounced (fake)' }).expect(200);
 
-    const list = async (q: string) => (await agents.manager.get(`/api/invoices${q}`).expect(200)).body;
+    const list = async (q: string) => (await agents.admin.get(`/api/invoices${q}`).expect(200)).body;
     const all = await list('');
     expect(all.total).toBe(6);
     const derived = Object.fromEntries(all.invoices.map((i: { id: string; derivedStatus: string }) => [i.id, i.derivedStatus]));
@@ -626,7 +628,7 @@ describe('list, derived statuses and summary', () => {
       [paid.id]: 'paid',
       [cancelled.id]: 'cancelled',
     });
-    expect(all.summary).toEqual({ outstandingTotal: '6720.00', overdueTotal: '2360.00', overdueCount: 1, draftCount: 1, collectedThisMonth: '360.00' });
+    expect(all.summary).toEqual({ outstandingTotal: '6720.00', overdueTotal: '2360.00', otherCurrencies: [], overdueCount: 1, draftCount: 1, collectedThisMonth: '360.00' });
     for (const row of all.invoices) {
       for (const key of ['subtotal', 'taxAmount', 'total', 'amountPaid', 'balance', 'taxRate']) expect(row[key]).toMatch(/^\d+\.\d{2}$/);
     }
@@ -638,7 +640,7 @@ describe('list, derived statuses and summary', () => {
 
     // Two days later the not-yet-due invoice is overdue too (nothing is stored).
     setClock(new Date('2026-10-21T04:00:00Z'));
-    agents.manager = await signIn('manager@example.test'); // sessions last 12 hours
+    agents.admin = await signIn('admin@example.test'); // sessions last 12 hours
     expect(idsOf(await list('?status=overdue'))).toEqual([due.id, overdue.id].sort());
     expect((await list('')).summary.overdueTotal).toBe('4720.00');
   });

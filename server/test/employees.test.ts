@@ -52,6 +52,8 @@ const VALID_EMPLOYEE = {
   joiningDate: '2026-10-01',
   monthlySalary: 65000.5,
   paymentMethod: 'UPI',
+  shiftStart: '21:00',
+  shiftEnd: '06:00',
 };
 
 // Seeded fresh for every test: an employee record for each role plus one unlinked employee.
@@ -238,6 +240,10 @@ describe('create and edit', () => {
       [{ ...VALID_EMPLOYEE, monthlySalary: '12.345' }, 'monthlySalary'],
       [{ ...VALID_EMPLOYEE, status: 'inactive' }, 'status'],
       [{ ...VALID_EMPLOYEE, avatarUrl: 'javascript:alert(1)' }, 'avatarUrl'],
+      [{ ...VALID_EMPLOYEE, shiftStart: undefined }, 'shiftStart'],
+      [{ ...VALID_EMPLOYEE, shiftEnd: '24:00' }, 'shiftEnd'],
+      [{ ...VALID_EMPLOYEE, shiftStart: '9:00' }, 'shiftStart'],
+      [{ ...VALID_EMPLOYEE, shiftEnd: '21:00' }, 'shiftEnd'],
     ];
     for (const [body, field] of cases) {
       const res = await agents.admin.post('/api/employees').send(body);
@@ -372,5 +378,37 @@ describe('deactivate and reactivate', () => {
     await agents.admin.post(`/api/employees/${secondEmp}/deactivate`).send({}).expect(200);
     const [row] = await query<{ status: string }>(`SELECT status FROM users WHERE email = 'second-admin@example.test'`);
     expect(row.status).toBe('disabled');
+  });
+});
+
+describe('working hours', () => {
+  it('are required for a new employee and returned as HH:MM; an overnight shift is fine', async () => {
+    const { shiftStart: _s, shiftEnd: _e, ...withoutHours } = VALID_EMPLOYEE;
+    const missing = await agents.admin.post('/api/employees').send(withoutHours).expect(400);
+    expect(missing.body.details.map((d: { path: string }) => d.path)).toEqual(expect.arrayContaining(['shiftStart', 'shiftEnd']));
+    const created = await agents.admin.post('/api/employees').send(VALID_EMPLOYEE).expect(201);
+    expect(created.body.employee).toMatchObject({ shiftStart: '21:00', shiftEnd: '06:00' });
+  });
+
+  it('are changed as a pair; managers see them; the employee sees their own', async () => {
+    const one = await agents.admin.patch(`/api/employees/${ids.staffEmp}`).send({ shiftStart: '09:30' }).expect(400);
+    expect(one.body.details[0].path).toBe('shiftEnd');
+    await agents.admin.patch(`/api/employees/${ids.staffEmp}`).send({ shiftStart: '09:30', shiftEnd: '09:30' }).expect(400);
+    await agents.admin.patch(`/api/employees/${ids.staffEmp}`).send({ shiftStart: '09:30', shiftEnd: '18:30' }).expect(200);
+    expect((await agents.manager.get(`/api/employees/${ids.staffEmp}`).expect(200)).body.employee).toMatchObject({ shiftStart: '09:30', shiftEnd: '18:30' });
+    expect((await agents.employee.get('/api/employees/me').expect(200)).body.employee).toMatchObject({ shiftStart: '09:30', shiftEnd: '18:30' });
+    // Managers cannot change them (admin only, like every employee edit).
+    await agents.manager.patch(`/api/employees/${ids.staffEmp}`).send({ shiftStart: '10:00', shiftEnd: '19:00' }).expect(403);
+  });
+
+  it('reminds admins: employees without working hours are counted and can be listed', async () => {
+    const before = (await agents.admin.get('/api/employees').expect(200)).body.summary.withoutWorkingHours;
+    expect(before).toBeGreaterThan(0); // fixture employees were created without hours
+    await agents.admin.patch(`/api/employees/${ids.staffEmp}`).send({ shiftStart: '21:00', shiftEnd: '06:00' }).expect(200);
+    const after = await agents.admin.get('/api/employees?workingHours=missing').expect(200);
+    expect(after.body.summary.withoutWorkingHours).toBe(before - 1);
+    expect(after.body.employees.map((e: { id: string }) => e.id)).not.toContain(ids.staffEmp);
+    expect(after.body.employees.every((e: { shiftStart: string | null }) => e.shiftStart === null)).toBe(true);
+    expect(after.body.total).toBe(before - 1);
   });
 });

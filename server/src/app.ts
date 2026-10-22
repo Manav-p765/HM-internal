@@ -25,6 +25,7 @@ import { settingsRouter } from './routes/settings.js';
 import { salaryRouter } from './routes/salary.js';
 import { transactionsRouter } from './routes/transactions.js';
 import { reportsRouter } from './routes/reports.js';
+import { notificationsRouter } from './routes/notifications.js';
 import { createRouter, mountRouter } from './middleware/access.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -112,6 +113,7 @@ mountRouter(api, '/clients', clientsRouter);
 mountRouter(api, '/projects', projectsRouter);
 mountRouter(api, '/tasks', tasksRouter);
 mountRouter(api, '/comments', commentsRouter);
+mountRouter(api, '/notifications', notificationsRouter);
 mountRouter(api, '/portal', portalRouter);
 mountRouter(api, '/attendance', attendanceRouter);
 mountRouter(api, '/presence', presenceRouter);

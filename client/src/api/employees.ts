@@ -5,6 +5,7 @@ export interface EmployeeListParams {
   search?: string;
   status?: EmploymentStatus;
   department?: string;
+  workingHours?: 'missing'; // only employees whose working hours are not set
   limit?: number;
   offset?: number;
 }
@@ -15,7 +16,8 @@ export interface EmployeeList {
   limit: number;
   offset: number;
   // Whole roster, ignoring filters. monthlyPayroll is admin-only.
-  summary: { total: number; active: number; onLeave: number; onLeaveToday: number; inactive: number; monthlyPayroll?: string };
+  // withoutWorkingHours: current employees whose working hours were never set (the admin reminder).
+  summary: { total: number; active: number; onLeave: number; onLeaveToday: number; inactive: number; withoutWorkingHours: number; monthlyPayroll?: string };
 }
 
 // What the admin form sends. monthlySalary is a decimal string (never a float).
@@ -31,6 +33,9 @@ export interface EmployeeInput {
   paymentMethod?: string | null;
   notes?: string | null;
   avatarUrl?: string | null;
+  // 'HH:MM' IST, both required for a new employee.
+  shiftStart: string;
+  shiftEnd: string;
 }
 
 function toQuery(params: EmployeeListParams): string {

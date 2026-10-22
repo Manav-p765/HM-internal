@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useNavigate } from 'react-router';
 import { TaskKpis } from '../work/TaskKpis';
 import { useApp } from '../../context/AppContext';
@@ -6,17 +6,17 @@ import { attendanceApi } from '../../api/attendance';
 import { leavesApi } from '../../api/leaves';
 import { salaryApi } from '../../api/salary';
 import { useApiData } from '../../api/useApiData';
-import { errorMessage } from '../../api/client';
 import { LEAVE_TYPE_LABEL } from '../../types/attendance';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
-import { ArrowRight, CalendarDays, CheckCircle2, Square } from 'lucide-react';
+import { ArrowRight, CalendarDays, CheckCircle2 } from 'lucide-react';
+import { PunchOutButton } from '../attendance/PunchOutButton';
 import { formatDate, formatMinutes, formatMonthYear, formatTimeIst } from '../../utils/formatters';
 import { dayTypeLabel, daysLabel } from '../leaves/LeaveDetails';
 
 export const EmployeeDashboardView: React.FC = () => {
-  const { currentUser, showToast } = useApp();
+  const { currentUser } = useApp();
   const navigate = useNavigate();
 
   // Everything time-related comes from the server: today's IST date, punch times, worked minutes.
@@ -25,24 +25,10 @@ export const EmployeeDashboardView: React.FC = () => {
   const leaves = useApiData(() => leavesApi.mine(), []);
   // Own published payslips, newest first (only when the login is linked to an employee record).
   const slips = useApiData(() => (currentUser.employeeId ? salaryApi.mySlips() : Promise.resolve([])), [currentUser.employeeId]);
-  const [isPunchingOut, setIsPunchingOut] = useState(false);
 
   const record = today.data?.record ?? null;
   const todayLeave = today.data?.leave ?? null;
   const latestSalarySlip = slips.data?.[0] ?? null;
-
-  const handlePunchOut = async () => {
-    setIsPunchingOut(true);
-    try {
-      const closed = await attendanceApi.punchOut();
-      showToast('success', `Punched out at ${formatTimeIst(closed.punchOut)}. Worked ${formatMinutes(closed.workedMinutes)} today.`);
-      await Promise.all([today.reload(), month.reload()]);
-    } catch (err) {
-      showToast('error', errorMessage(err));
-    } finally {
-      setIsPunchingOut(false);
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -65,6 +51,13 @@ export const EmployeeDashboardView: React.FC = () => {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6" data-testid="punch-card">
           <div className="space-y-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-[#7185A5]">Today's Attendance</span>
+            {today.data && (
+              <p className="text-[11px] text-[#7185A5]" data-testid="my-shift">
+                {today.data.shift
+                  ? `Your shift: ${today.data.shift.start} – ${today.data.shift.end} IST (you can sign in up to 2 hours early)`
+                  : 'Your working hours are not set yet: ask your admin to add them.'}
+              </p>
+            )}
             {today.error ? (
               <p className="text-xs text-[#E11D48]">{today.error}</p>
             ) : !today.data ? (
@@ -107,16 +100,13 @@ export const EmployeeDashboardView: React.FC = () => {
 
           <div className="flex items-center gap-3 self-start md:self-auto">
             {record && !record.punchOut && (
-              <Button
-                variant="danger"
+              <PunchOutButton
                 size="lg"
-                icon={<Square className="w-4 h-4 fill-current" />}
-                onClick={handlePunchOut}
-                disabled={isPunchingOut}
                 className="px-6 py-3 text-sm shadow-md"
-              >
-                {isPunchingOut ? 'Punching out…' : 'Punch Out'}
-              </Button>
+                onPunchedOut={async () => {
+                  await Promise.all([today.reload(), month.reload()]);
+                }}
+              />
             )}
             {record?.punchOut && (
               <span

@@ -47,7 +47,7 @@ describe('creating a user sends an invite link, never a password', () => {
     const res = await admin.post('/api/users').send({ email: 'Invitee@Example.test', role: 'employee' }).expect(201);
     const mail = testOutbox.at(-1)!;
     expect(mail.to).toBe('invitee@example.test');
-    expect(mail.subject).toBe('Set your password for Monks Internal Management');
+    expect(mail.subject).toBe('Set your password');
     expect(mail.text).toContain('http://localhost:3000/set-password?token=');
     expect(mail.text).toMatch(/expires in 72 hours/);
     expect(mail.text).not.toMatch(/temporary password/i);

@@ -14,6 +14,9 @@ export type CompanySettingsInput = Partial<
     | 'bankDetails'
     | 'terms'
     | 'logoDataUrl'
+    | 'signatureDataUrl'
+    | 'signatoryName'
+    | 'signatoryDesignation'
   >
 >;
 

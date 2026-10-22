@@ -1,3 +1,5 @@
+import type { InvoiceCurrency } from '../utils/money';
+
 export type UserRole = 'admin' | 'manager' | 'employee' | 'client';
 export type StaffRole = Exclude<UserRole, 'client'>;
 
@@ -37,6 +39,7 @@ export interface Client {
   contactPhone: string | null;
   address: string | null;
   gstin: string | null;
+  currency: InvoiceCurrency; // default currency of the client's new invoices
   status: ClientStatus;
   notes: string | null;
   createdAt: string;
@@ -95,6 +98,10 @@ export interface Employee {
   createdAt: string;
   updatedAt: string;
   login: EmployeeLogin | null;
+  // Working hours, 'HH:MM' IST (the end may be earlier: an overnight shift). null for employees created
+  // before working hours existed: admins are reminded to set them.
+  shiftStart: string | null;
+  shiftEnd: string | null;
   // Only present for admins; the server omits these fields for everyone else.
   monthlySalary?: string; // NUMERIC(14,2) as a string
   paymentMethod?: string | null;
@@ -123,6 +130,13 @@ export interface MyEmployeeProfile {
   joiningDate: string;
   status: EmploymentStatus;
   avatarUrl: string | null;
+  shiftStart: string | null;
+  shiftEnd: string | null;
+}
+
+// "21:00 – 06:00 IST" for a shift, or null when working hours are not set.
+export function shiftLabel(shift: { shiftStart: string | null; shiftEnd: string | null } | null | undefined): string | null {
+  return shift?.shiftStart && shift.shiftEnd ? `${shift.shiftStart} – ${shift.shiftEnd} IST` : null;
 }
 
 // Salaries and payslips live in types/salary.ts.

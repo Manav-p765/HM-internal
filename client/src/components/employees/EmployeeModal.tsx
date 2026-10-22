@@ -36,6 +36,9 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, e
   const [monthlySalary, setMonthlySalary] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Bank Transfer');
   const [notes, setNotes] = useState('');
+  // Working hours (IST). Required for a new employee; existing ones without hours are reminded to set them.
+  const [shiftStart, setShiftStart] = useState('');
+  const [shiftEnd, setShiftEnd] = useState('');
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [isSaving, setIsSaving] = useState(false);
@@ -55,6 +58,8 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, e
     setMonthlySalary(e?.monthlySalary ?? '');
     setPaymentMethod(e?.paymentMethod ?? 'Bank Transfer');
     setNotes(e?.notes ?? '');
+    setShiftStart(e?.shiftStart ?? '');
+    setShiftEnd(e?.shiftEnd ?? '');
     setError('');
     setFieldErrors({});
     setIsSaving(false);
@@ -75,14 +80,19 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, e
       monthlySalary: monthlySalary.trim(),
       paymentMethod: paymentMethod || null,
       notes: notes.trim() || null,
+      shiftStart,
+      shiftEnd,
       // An inactive employee's status is changed with Reactivate, not here.
       ...(isInactive ? {} : { status }),
     };
+    // Editing an employee who never had working hours: other changes still save without them.
+    const changes: Partial<EmployeeInput> =
+      employeeToEdit && !shiftStart && !shiftEnd ? (({ shiftStart: _s, shiftEnd: _e, ...rest }) => rest)(input) : input;
 
     setIsSaving(true);
     try {
       const saved = employeeToEdit
-        ? await employeesApi.update(employeeToEdit.id, input)
+        ? await employeesApi.update(employeeToEdit.id, changes)
         : await employeesApi.create(input);
       onSaved(saved, !employeeToEdit);
       onClose();
@@ -181,6 +191,36 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, e
               onChange={e => setJoiningDate(e.target.value)}
               className={inputClass}
               required
+            />
+          </FormField>
+          <FormField
+            label="Shift Start (IST)"
+            required
+            error={fieldErrors.shiftStart}
+            hint={employeeToEdit && !employeeToEdit.shiftStart ? 'Not set yet: please add their working hours.' : 'They can sign in up to 2 hours early.'}
+          >
+            <input
+              aria-label="Shift Start"
+              type="time"
+              value={shiftStart}
+              onChange={e => setShiftStart(e.target.value)}
+              className={inputClass}
+              required={!employeeToEdit}
+            />
+          </FormField>
+          <FormField
+            label="Shift End (IST)"
+            required
+            error={fieldErrors.shiftEnd}
+            hint="Earlier than the start = overnight shift (e.g. 21:00 to 06:00)."
+          >
+            <input
+              aria-label="Shift End"
+              type="time"
+              value={shiftEnd}
+              onChange={e => setShiftEnd(e.target.value)}
+              className={inputClass}
+              required={!employeeToEdit}
             />
           </FormField>
           <FormField

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useApp } from '../../context/AppContext';
 import { tasksApi, TaskInput } from '../../api/tasks';
 import { projectsApi } from '../../api/projects';
 import { employeesApi } from '../../api/employees';
@@ -19,8 +20,12 @@ interface TaskModalProps {
 
 type Errors = Partial<Record<keyof TaskInput, string>>;
 
-// Create / edit a task (admin, manager). Status is changed separately (TaskStatusControl).
+// Create / edit a task. Admin/manager: any project, and may share it with the client. An employee: a project
+// they are on (the server lists only those), for any colleague; edits only their own task while it is to do.
+// Status is changed separately (TaskStatusControl). The assignee is notified by the server.
 export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, taskToEdit, defaultProjectId, onSaved }) => {
+  const { currentUser } = useApp();
+  const isManager = currentUser.role === 'admin' || currentUser.role === 'manager';
   const [projectId, setProjectId] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -49,13 +54,13 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, taskToEdi
     setError('');
     setErrors({});
     setIsSaving(false);
-    // Pickers: projects (not archived) and ACTIVE employees only.
+    // Pickers: projects (not archived; an employee's own) and ACTIVE employees only. Employees can't read the
+    // employee list, so they pick from the staff directory.
     projectsApi.list({ limit: 200 }).then(r => setProjects(r.projects)).catch(() => setProjects([]));
-    employeesApi
-      .list({ status: 'active', limit: 200 })
-      .then(r => setEmployees(r.employees))
+    (isManager ? employeesApi.list({ status: 'active', limit: 200 }).then(r => r.employees) : employeesApi.directory())
+      .then(setEmployees)
       .catch(() => setEmployees([]));
-  }, [isOpen, taskToEdit, defaultProjectId]);
+  }, [isOpen, taskToEdit, defaultProjectId, isManager]);
 
   const selectedProject = projects.find(p => p.id === projectId);
 
@@ -77,7 +82,8 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, taskToEdi
       startDate: startDate || null,
       deadline: deadline || null,
       priority,
-      clientVisible,
+      // Only admin/manager share tasks with the client (the server refuses it from anyone else).
+      ...(isManager ? { clientVisible } : {}),
     };
     setIsSaving(true);
     try {
@@ -105,8 +111,8 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, taskToEdi
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={taskToEdit ? `Edit ${taskToEdit.code}` : 'Add Task'}
-      description="Assigning someone adds them to the project team"
+      title={taskToEdit ? `Edit ${taskToEdit.code}` : isManager ? 'Add Task' : 'Assign a Task'}
+      description="Assigning someone adds them to the project team and notifies them"
       size="md"
     >
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
@@ -186,23 +192,25 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, taskToEdi
           </FormField>
         </div>
 
-        <label className="flex items-start gap-2.5 p-3 rounded-lg border border-[#DFE6F1] bg-[#F7F9FC] cursor-pointer text-xs">
-          <input
-            type="checkbox"
-            aria-label="Visible to the client"
-            checked={clientVisible}
-            onChange={e => setClientVisible(e.target.checked)}
-            className="mt-0.5 accent-[#5038F5]"
-          />
-          <span>
-            <span className="font-semibold text-[#111827] block">Visible to the client</span>
-            <span className="text-[#7185A5]">
-              {selectedProject?.clientName
-                ? `${selectedProject.clientName} will see this task's title, description, status, dates and assignee in their portal. Internal notes stay hidden.`
-                : 'The client will see this task in their portal (internal projects have no client, so nobody outside sees it).'}
+        {isManager && (
+          <label className="flex items-start gap-2.5 p-3 rounded-lg border border-[#DFE6F1] bg-[#F7F9FC] cursor-pointer text-xs">
+            <input
+              type="checkbox"
+              aria-label="Visible to the client"
+              checked={clientVisible}
+              onChange={e => setClientVisible(e.target.checked)}
+              className="mt-0.5 accent-[#5038F5]"
+            />
+            <span>
+              <span className="font-semibold text-[#111827] block">Visible to the client</span>
+              <span className="text-[#7185A5]">
+                {selectedProject?.clientName
+                  ? `${selectedProject.clientName} will see this task's title, description, status, dates and assignee in their portal. Internal notes stay hidden.`
+                  : 'The client will see this task in their portal (internal projects have no client, so nobody outside sees it).'}
+              </span>
             </span>
-          </span>
-        </label>
+          </label>
+        )}
 
         <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#DFE6F1]">
           <Button type="button" variant="outline" size="md" onClick={onClose} disabled={isSaving}>
