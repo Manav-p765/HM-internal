@@ -91,7 +91,7 @@ Project settings:
 - **Root Directory:** `client`
 - **Framework preset:** Vite. **Build command:** `npm run build`. **Output directory:** `dist`. **Install command:** default.
 - **Environment variables:** none (the client has no configuration and no secrets).
-- `client/vercel.json` rewrites `/api/:path*` to `https://hm-internal-api.onrender.com/api/:path*` and serves `index.html` for every other non-asset path; it also sets the security headers. If the Render service URL changes, change it there.
+- `client/vercel.json` rewrites `/api/:path*` to `https://hm-internal.onrender.com/api/:path*` and serves `index.html` for every other non-asset path; it also sets the security headers. If the Render service URL changes, change it there.
 - **Domains:** the production domain (= `APP_URL`). Preview deployments use the same Render API: don't sign in to previews with real accounts.
 
 ## 5. DNS, TLS and TRUST_PROXY
