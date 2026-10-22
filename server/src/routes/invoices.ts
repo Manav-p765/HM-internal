@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { amountInWords } from '../services/amountInWords.js';
 import { audit } from '../services/audit.js';
+import { BASE_CURRENCY, currencyValue, type Currency } from '../services/currency.js';
 import { istDate, now } from '../services/clock.js';
 import {
   compareMoney,
@@ -31,6 +32,10 @@ import { formatInvoiceNumber } from './settings.js';
 // the ledger (reversed_at/by/reason) and is ignored by every sum. Derived states are never stored: amount
 // paid, balance, overdue (sent, balance > 0, due date before today IST) and partially paid.
 // All money is computed by services/money.ts and travels as 2-decimal strings.
+// Currency: an invoice is in one currency (`currency`, taken from the client's default unless the request
+// chose one); its lines, totals, payments (`amount`) and balance are all in it. Each payment also records the
+// INR actually received (`amountInr`, the ledger's transactions.amount); for an INR invoice the two are equal.
+// Sums over several invoices never mix currencies: the list summary gives INR and each other currency apart.
 export const invoicesRouter = createRouter();
 
 export const PAYMENT_METHODS = ['Bank Transfer', 'UPI', 'Credit Card', 'Cheque', 'Cash'] as const;
@@ -51,7 +56,7 @@ function parseId(raw: unknown): string {
 // ---------------------------------------------------------------------------
 export const PAID_JOIN = `
   LEFT JOIN LATERAL (
-    SELECT coalesce(sum(t.amount), 0)::numeric(14,2) AS paid FROM transactions t WHERE t.invoice_id = i.id AND t.reversed_at IS NULL
+    SELECT coalesce(sum(t.invoice_amount), 0)::numeric(14,2) AS paid FROM transactions t WHERE t.invoice_id = i.id AND t.reversed_at IS NULL
   ) p ON true`;
 
 export const BALANCE_SQL = `(CASE WHEN i.status = 'cancelled' THEN 0 ELSE i.total_amount - p.paid END)::numeric(14,2)`;
@@ -66,7 +71,7 @@ export const derivedStatusSql = (today: string) => `
 const invoiceColumns = (today: string) => `
   i.id, i.invoice_number AS "invoiceNumber", i.client_id AS "clientId", i.client_name AS "clientName",
   i.client_email AS "clientEmail", i.client_address AS "clientAddress", i.client_gstin AS "clientGstin",
-  i.invoice_date AS "invoiceDate", i.due_date AS "dueDate",
+  i.invoice_date AS "invoiceDate", i.due_date AS "dueDate", i.currency,
   i.subtotal::text AS subtotal, i.tax_rate::text AS "taxRate", i.tax_amount::text AS "taxAmount", i.total_amount::text AS total,
   p.paid::text AS "amountPaid", ${BALANCE_SQL}::text AS balance,
   i.status, ${derivedStatusSql(today)} AS "derivedStatus",
@@ -80,6 +85,7 @@ interface InvoiceRow {
   clientName: string;
   invoiceDate: string;
   dueDate: string;
+  currency: Currency;
   total: string;
   amountPaid: string;
   balance: string;
@@ -100,7 +106,8 @@ async function loadInvoice(id: string, db: Pick<PoolClient, 'query'> | null = nu
     [id],
   );
   const payments = await run(
-    `SELECT t.id, t.txn_date AS "txnDate", t.amount::text AS amount, t.payment_method AS "paymentMethod",
+    `SELECT t.id, t.txn_date AS "txnDate", t.invoice_amount::text AS amount, t.amount::text AS "amountInr",
+            t.payment_method AS "paymentMethod",
             t.reference_number AS "referenceNumber", t.notes, t.created_at AS "createdAt",
             coalesce(e.full_name, u.email::text) AS "recordedByName",
             t.reversed_at AS "reversedAt", t.reverse_reason AS "reverseReason",
@@ -115,7 +122,7 @@ async function loadInvoice(id: string, db: Pick<PoolClient, 'query'> | null = nu
     [id],
   );
   // Printed under the totals; derived from the stored total on every read, never stored.
-  return { ...invoice, totalInWords: amountInWords(invoice.total), items, payments };
+  return { ...invoice, totalInWords: amountInWords(invoice.total, invoice.currency), items, payments };
 }
 
 // ---------------------------------------------------------------------------
@@ -154,7 +161,7 @@ invoicesRouter.get('/', ['admin'], async (req, res) => {
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   const monthStart = `${today.slice(0, 7)}-01`;
-  const [invoices, [{ total }], [summary]] = await Promise.all([
+  const [invoices, [{ total }], [summary], byCurrency] = await Promise.all([
     query(
       `SELECT ${invoiceColumns('$1')} FROM invoices i ${PAID_JOIN} ${whereSql}
         ORDER BY i.invoice_date DESC, i.invoice_number DESC NULLS FIRST, i.created_at DESC
@@ -166,20 +173,47 @@ invoicesRouter.get('/', ['admin'], async (req, res) => {
       `WITH params AS (SELECT $1::date AS today) SELECT count(*)::int AS total FROM invoices i ${PAID_JOIN} ${whereSql}`,
       params,
     ),
-    // Headline numbers over all invoices (not the filtered page).
+    // Headline numbers over all invoices (not the filtered page). Outstanding and overdue are per currency
+    // (outstandingByCurrency); collected this month is the INR received (the ledger), whatever the currency.
     query(
-      `SELECT coalesce(sum(${BALANCE_SQL}) FILTER (WHERE i.status = 'sent'), 0)::numeric(14,2)::text AS "outstandingTotal",
-              coalesce(sum(${BALANCE_SQL}) FILTER (WHERE ${overdueSql('$1')}), 0)::numeric(14,2)::text AS "overdueTotal",
-              count(*) FILTER (WHERE ${overdueSql('$1')})::int AS "overdueCount",
+      `SELECT count(*) FILTER (WHERE ${overdueSql('$1')})::int AS "overdueCount",
               count(*) FILTER (WHERE i.status = 'draft')::int AS "draftCount",
               (SELECT coalesce(sum(t.amount), 0)::numeric(14,2)::text FROM transactions t
                 WHERE t.invoice_id IS NOT NULL AND t.reversed_at IS NULL AND t.txn_date BETWEEN $2::date AND $1::date) AS "collectedThisMonth"
          FROM invoices i ${PAID_JOIN}`,
       [today, monthStart],
     ),
+    outstandingByCurrency(today),
   ]);
-  res.json({ today, invoices, total, limit, offset, summary });
+  res.json({ today, invoices, total, limit, offset, summary: { ...summary, ...splitByCurrency(byCurrency) } });
 });
+
+type CurrencyTotals = { currency: Currency; outstandingTotal: string; overdueTotal: string };
+
+// Outstanding and overdue balances of sent invoices, one row per currency that has any. `scope` narrows the
+// invoices (the portal passes its own company as $2); $1 is today.
+export function outstandingByCurrency(today: string, scope = 'true', scopeParams: unknown[] = []) {
+  return query<CurrencyTotals>(
+    `SELECT i.currency,
+            sum(${BALANCE_SQL})::numeric(14,2)::text AS "outstandingTotal",
+            coalesce(sum(${BALANCE_SQL}) FILTER (WHERE ${overdueSql('$1')}), 0)::numeric(14,2)::text AS "overdueTotal"
+       FROM invoices i ${PAID_JOIN}
+      WHERE i.status = 'sent' AND i.total_amount > p.paid AND ${scope}
+      GROUP BY i.currency
+      ORDER BY i.currency`,
+    [today, ...scopeParams],
+  );
+}
+
+// INR stays in outstandingTotal/overdueTotal; every other currency with a balance is listed apart, never added.
+export function splitByCurrency(rows: CurrencyTotals[]) {
+  const inr = rows.find(r => r.currency === BASE_CURRENCY);
+  return {
+    outstandingTotal: inr?.outstandingTotal ?? '0.00',
+    overdueTotal: inr?.overdueTotal ?? '0.00',
+    otherCurrencies: rows.filter(r => r.currency !== BASE_CURRENCY),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // GET /api/invoices/:id  (admin)
@@ -205,6 +239,7 @@ const fields = {
   clientGstin: optionalGstin,
   invoiceDate: isoDate,
   dueDate: isoDate,
+  currency: currencyValue,
   taxRate: percentValue('Tax rate'),
   notes: optionalText(4000),
   items: z
@@ -214,7 +249,7 @@ const fields = {
 };
 
 const createSchema = z
-  .object({ ...fields, invoiceDate: fields.invoiceDate.optional(), taxRate: fields.taxRate.optional() })
+  .object({ ...fields, invoiceDate: fields.invoiceDate.optional(), currency: fields.currency.optional(), taxRate: fields.taxRate.optional() })
   .strict();
 const patchSchema = z
   .object(fields)
@@ -227,11 +262,12 @@ const SNAPSHOT = ['clientName', 'clientEmail', 'clientAddress', 'clientGstin'] a
 const sentKeys = (raw: unknown) => new Set(raw && typeof raw === 'object' ? Object.keys(raw) : []);
 
 // Fills the client snapshot from the client record for every snapshot field the request did not send
-// (`sent` = the keys present in the raw request body; parsed bodies turn a missing field into null).
-// An unknown client is a 400 on clientId; an inactive one a 409.
+// (`sent` = the keys present in the raw request body; parsed bodies turn a missing field into null), and
+// returns the client's default currency. An unknown client is a 400 on clientId; an inactive one a 409.
 async function clientSnapshot(db: PoolClient, clientId: string, body: Body, sent: Set<string>) {
   const { rows } = await db.query(
-    `SELECT company_name AS "clientName", contact_email AS "clientEmail", address AS "clientAddress", gstin AS "clientGstin", status
+    `SELECT company_name AS "clientName", contact_email AS "clientEmail", address AS "clientAddress", gstin AS "clientGstin",
+            status, currency
        FROM clients WHERE id = $1`,
     [clientId],
   );
@@ -242,7 +278,7 @@ async function clientSnapshot(db: PoolClient, clientId: string, body: Body, sent
   if (client.status !== 'active') throw new HttpError(409, 'This client is inactive', 'CLIENT_INACTIVE');
   const snapshot: Record<string, unknown> = {};
   for (const key of SNAPSHOT) snapshot[key] = sent.has(key) ? body[key] : client[key];
-  return snapshot;
+  return { snapshot, currency: client.currency as Currency };
 }
 
 function totalsFor(items: { quantity: string; unitPrice: string }[], taxRate: string) {
@@ -294,16 +330,16 @@ invoicesRouter.post('/', ['admin'], async (req, res) => {
     } = await db.query<{ rate: string }>(`SELECT default_gst_rate::text AS rate FROM company_settings`);
     const taxRate = body.taxRate ?? settings.rate;
     const totals = totalsFor(body.items, taxRate);
-    const snapshot = body.clientId
-      ? await clientSnapshot(db, body.clientId, body, sentKeys(req.body))
-      : Object.fromEntries(SNAPSHOT.map(k => [k, body[k] ?? null]));
+    const fromClient = body.clientId ? await clientSnapshot(db, body.clientId, body, sentKeys(req.body)) : null;
+    const snapshot = fromClient?.snapshot ?? Object.fromEntries(SNAPSHOT.map(k => [k, body[k] ?? null]));
+    const currency = body.currency ?? fromClient?.currency ?? BASE_CURRENCY;
 
     const {
       rows: [row],
     } = await db.query<{ id: string }>(
       `INSERT INTO invoices (client_id, client_name, client_email, client_address, client_gstin,
-                             invoice_date, due_date, subtotal, tax_rate, tax_amount, total_amount, status, notes, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'draft', $12, $13) RETURNING id`,
+                             invoice_date, due_date, subtotal, tax_rate, tax_amount, total_amount, status, notes, created_by, currency)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'draft', $12, $13, $14) RETURNING id`,
       [
         body.clientId ?? null,
         snapshot.clientName ?? '',
@@ -318,6 +354,7 @@ invoicesRouter.post('/', ['admin'], async (req, res) => {
         totals.total,
         body.notes ?? null,
         req.user!.id,
+        currency,
       ],
     );
     await insertItems(db, row.id, body.items);
@@ -341,9 +378,10 @@ async function lockInvoice(db: PoolClient, id: string) {
     dueDate: string;
     taxRate: string;
     total: string;
+    currency: Currency;
   }>(
     `SELECT id, invoice_number AS "invoiceNumber", status, client_id AS "clientId", client_name AS "clientName",
-            invoice_date AS "invoiceDate", due_date AS "dueDate", tax_rate::text AS "taxRate", total_amount::text AS total
+            invoice_date AS "invoiceDate", due_date AS "dueDate", tax_rate::text AS "taxRate", total_amount::text AS total, currency
        FROM invoices WHERE id = $1 FOR UPDATE`,
     [id],
   );
@@ -353,7 +391,7 @@ async function lockInvoice(db: PoolClient, id: string) {
 
 async function paidSoFar(db: PoolClient, id: string): Promise<string> {
   const { rows } = await db.query<{ paid: string }>(
-    `SELECT coalesce(sum(amount), 0)::numeric(14,2)::text AS paid FROM transactions WHERE invoice_id = $1 AND reversed_at IS NULL`,
+    `SELECT coalesce(sum(invoice_amount), 0)::numeric(14,2)::text AS paid FROM transactions WHERE invoice_id = $1 AND reversed_at IS NULL`,
     [id],
   );
   return rows[0].paid;
@@ -391,17 +429,20 @@ invoicesRouter.patch('/:id', ['admin'], async (req, res) => {
 
     if (current.status === 'draft') {
       if (sent.has('invoiceDate')) set('invoice_date', body.invoiceDate);
-      // Client: a new clientId refills the snapshot (fields sent in the request win); clientId: null unlinks.
+      // Client: a new clientId refills the snapshot and the currency (fields sent in the request win);
+      // clientId: null unlinks.
       if (body.clientId) {
-        const snapshot = await clientSnapshot(db, body.clientId, body, sent);
+        const { snapshot, currency } = await clientSnapshot(db, body.clientId, body, sent);
         set('client_id', body.clientId);
         for (const key of SNAPSHOT) set(key.replace(/[A-Z]/g, c => `_${c.toLowerCase()}`), snapshot[key] ?? (key === 'clientName' ? '' : null));
+        if (!sent.has('currency')) set('currency', currency);
       } else {
         if (body.clientId === null) set('client_id', null);
         for (const key of SNAPSHOT) {
           if (sent.has(key)) set(key.replace(/[A-Z]/g, c => `_${c.toLowerCase()}`), body[key] ?? (key === 'clientName' ? '' : null));
         }
       }
+      if (sent.has('currency')) set('currency', body.currency);
       if (body.items || body.taxRate !== undefined) {
         const taxRate = body.taxRate ?? current.taxRate;
         const items =
@@ -498,9 +539,12 @@ invoicesRouter.post('/:id/cancel', ['admin'], async (req, res) => {
 
 // ---------------------------------------------------------------------------
 // POST /api/invoices/:id/payments  (admin): an income transaction against a sent invoice.
+//   amount: in the invoice's currency (counts towards the balance). amountInr: the INR actually received,
+//   required for a foreign-currency invoice and refused (must equal amount) for an INR one.
 // ---------------------------------------------------------------------------
 const paymentSchema = z.object({
   amount: moneyAmount('Amount', 'positive'),
+  amountInr: moneyAmount('Amount received (INR)', 'positive').optional(),
   txnDate: isoDate,
   paymentMethod: z.enum(PAYMENT_METHODS, 'Choose a payment method'),
   referenceNumber: optionalText(100),
@@ -516,8 +560,10 @@ invoicesRouter.post('/:id/payments', ['admin'], async (req, res) => {
     ]);
   }
 
+  let invoiceCurrency: Currency = BASE_CURRENCY;
   const txnId = await withTransaction(async db => {
     const current = await lockInvoice(db, id);
+    invoiceCurrency = current.currency;
     if (current.status === 'draft') throw new HttpError(409, 'Send the invoice before recording a payment', 'INVALID_STATUS');
     if (current.status === 'cancelled') throw new HttpError(409, 'This invoice is cancelled', 'INVALID_STATUS');
     if (body.txnDate < current.invoiceDate) {
@@ -525,16 +571,39 @@ invoicesRouter.post('/:id/payments', ['admin'], async (req, res) => {
         { path: 'txnDate', message: 'The payment date cannot be before the invoice date' },
       ]);
     }
+    const foreign = current.currency !== BASE_CURRENCY;
+    if (foreign && !body.amountInr) {
+      throw new HttpError(400, 'Enter the amount received in INR', 'VALIDATION_ERROR', [
+        { path: 'amountInr', message: 'Enter the amount received in INR' },
+      ]);
+    }
+    if (!foreign && body.amountInr && compareMoney(body.amountInr, body.amount) !== 0) {
+      throw new HttpError(400, 'For an INR invoice the amount received is the amount', 'VALIDATION_ERROR', [
+        { path: 'amountInr', message: 'For an INR invoice the amount received is the amount' },
+      ]);
+    }
     const balance = subtractMoney(current.total, await paidSoFar(db, id));
     if (compareMoney(body.amount, balance) > 0) {
-      throw new HttpError(409, `The payment is more than the balance due (${balance})`, 'OVERPAYMENT');
+      throw new HttpError(409, `The payment is more than the balance due (${current.currency} ${balance})`, 'OVERPAYMENT');
     }
+    const label = `Payment for ${current.invoiceNumber ?? 'invoice'}`;
     const {
       rows: [txn],
     } = await db.query<{ id: string }>(
-      `INSERT INTO transactions (txn_date, type, category, description, amount, payment_method, reference_number, notes, invoice_id, created_by)
-       VALUES ($1, 'income', $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-      [body.txnDate, PAYMENT_CATEGORY, `Payment for ${current.invoiceNumber ?? 'invoice'}`, body.amount, body.paymentMethod, body.referenceNumber, body.notes, id, req.user!.id],
+      `INSERT INTO transactions (txn_date, type, category, description, amount, invoice_amount, payment_method, reference_number, notes, invoice_id, created_by)
+       VALUES ($1, 'income', $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+      [
+        body.txnDate,
+        PAYMENT_CATEGORY,
+        foreign ? `${label} (${current.currency} ${body.amount})` : label,
+        foreign ? body.amountInr : body.amount,
+        body.amount,
+        body.paymentMethod,
+        body.referenceNumber,
+        body.notes,
+        id,
+        req.user!.id,
+      ],
     );
     // Fully paid -> paid, in the same transaction.
     if (compareMoney(body.amount, balance) === 0) await db.query(`UPDATE invoices SET status = 'paid' WHERE id = $1`, [id]);
@@ -545,7 +614,7 @@ invoicesRouter.post('/:id/payments', ['admin'], async (req, res) => {
     action: 'invoice.payment_recorded',
     entityType: 'invoice',
     entityId: id,
-    metadata: { transactionId: txnId, amount: body.amount },
+    metadata: { transactionId: txnId, amount: body.amount, currency: invoiceCurrency, ...(body.amountInr ? { amountInr: body.amountInr } : {}) },
   });
   res.status(201).json({ invoice: await loadInvoice(id), paymentId: txnId });
 });
@@ -567,12 +636,13 @@ invoicesRouter.delete('/:id/payments/:txnId', ['admin'], async (req, res) => {
     const current = await lockInvoice(db, id);
     const { rows } = await db.query<{
       amount: string;
+      amountInr: string;
       txnDate: string;
       paymentMethod: string;
       referenceNumber: string | null;
       reversedAt: Date | null;
     }>(
-      `SELECT amount::text AS amount, txn_date AS "txnDate", payment_method AS "paymentMethod",
+      `SELECT invoice_amount::text AS amount, amount::text AS "amountInr", txn_date AS "txnDate", payment_method AS "paymentMethod",
               reference_number AS "referenceNumber", reversed_at AS "reversedAt"
          FROM transactions WHERE id = $1 AND invoice_id = $2 FOR UPDATE`,
       [txnId, id],

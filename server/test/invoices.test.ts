@@ -562,6 +562,7 @@ describe('payments', () => {
     expect((await auditRows('invoice.payment_reversed'))[0].metadata).toEqual({
       transactionId: b.body.paymentId,
       amount: '2000.00',
+      amountInr: '2000.00',
       txnDate: TODAY,
       paymentMethod: 'UPI',
       referenceNumber: 'UTR-FAKE-1',
@@ -627,7 +628,7 @@ describe('list, derived statuses and summary', () => {
       [paid.id]: 'paid',
       [cancelled.id]: 'cancelled',
     });
-    expect(all.summary).toEqual({ outstandingTotal: '6720.00', overdueTotal: '2360.00', overdueCount: 1, draftCount: 1, collectedThisMonth: '360.00' });
+    expect(all.summary).toEqual({ outstandingTotal: '6720.00', overdueTotal: '2360.00', otherCurrencies: [], overdueCount: 1, draftCount: 1, collectedThisMonth: '360.00' });
     for (const row of all.invoices) {
       for (const key of ['subtotal', 'taxAmount', 'total', 'amountPaid', 'balance', 'taxRate']) expect(row[key]).toMatch(/^\d+\.\d{2}$/);
     }

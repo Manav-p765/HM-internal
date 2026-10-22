@@ -127,6 +127,7 @@ export const ClientDetailModal: React.FC<ClientDetailModalProps> = ({ clientId, 
                   )}
                 </div>
                 {client.gstin && <p className="font-mono text-[11px] text-[#7185A5]">GSTIN {client.gstin}</p>}
+                <p className="text-[11px] text-[#7185A5]">Invoices in {client.currency}</p>
               </div>
             </div>
             <Button variant="outline" size="sm" icon={<Edit2 className="w-3.5 h-3.5" />} onClick={() => onEdit(client)}>

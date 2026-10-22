@@ -49,8 +49,8 @@ export const ClientInvoicesSection: React.FC<{ clientId: string }> = ({ clientId
                   <td className="px-4 py-2.5">
                     <InvoiceStatusBadge status={inv.derivedStatus} size="sm" />
                   </td>
-                  <td className="px-4 py-2.5 text-right font-mono whitespace-nowrap">{formatMoney(inv.total)}</td>
-                  <td className="px-4 py-2.5 text-right font-mono whitespace-nowrap">{formatMoney(inv.balance)}</td>
+                  <td className="px-4 py-2.5 text-right font-mono whitespace-nowrap">{formatMoney(inv.total, inv.currency)}</td>
+                  <td className="px-4 py-2.5 text-right font-mono whitespace-nowrap">{formatMoney(inv.balance, inv.currency)}</td>
                 </tr>
               ))}
             </tbody>

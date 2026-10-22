@@ -8,6 +8,7 @@ import { lastMonths, PeriodError, PRESETS, resolvePeriod, type Period } from '..
 import { createRouter } from '../middleware/access.js';
 import { HttpError } from '../middleware/errors.js';
 import { isoDate } from './shared.js';
+import { BASE_CURRENCY, currencyValue, type Currency } from '../services/currency.js';
 import { BALANCE_SQL, derivedStatusSql, PAID_JOIN } from './invoices.js';
 
 // Reports (/api/reports): read-only and admin only (managers see no money). Every sum is done in SQL on
@@ -45,8 +46,8 @@ async function periodFor(req: Request): Promise<Period> {
 
 const periodJson = (p: Period) => ({ from: p.from, to: p.to, preset: p.preset });
 
-async function auditExport(req: Request, name: string, period: Period, rows: number, capped: boolean) {
-  await audit(req, { action: 'export.downloaded', entityType: 'export', metadata: { export: name, filters: periodJson(period), rows, capped } });
+async function auditExport(req: Request, name: string, period: Period, rows: number, capped: boolean, extra: Record<string, string> = {}) {
+  await audit(req, { action: 'export.downloaded', entityType: 'export', metadata: { export: name, filters: { ...periodJson(period), ...extra }, rows, capped } });
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +126,9 @@ reportsRouter.get('/trend', ['admin'], async (req, res) => {
 
 // ---------------------------------------------------------------------------
 // Invoices (admin): status summary for invoices dated in the period; aging and top outstanding as of
-// today over every open invoice. No ledger or payment-method fields.
+// today over every open invoice. No ledger or payment-method fields. One currency at a time (?currency=,
+// default INR): every figure is in that currency, never a sum across currencies; `currencies` lists the
+// currencies that have invoices, for the picker.
 // ---------------------------------------------------------------------------
 const INVOICE_STATUSES = ['draft', 'sent', 'partially_paid', 'overdue', 'paid', 'cancelled'] as const;
 const AGING_BUCKETS = ['not_due', '0_30', '31_60', '61_90', '90_plus'] as const;
@@ -142,18 +145,26 @@ const OPEN_LIST_LIMIT = 200; // a constant, never request input
 const CLIENT_KEY =`coalesce(i.client_id::text, 'name:' || lower(i.client_name))`;
 const CLIENT_NAME = `coalesce(max(c.company_name), max(i.client_name))`;
 
-async function invoiceReport(period: Period) {
+const currencyQuery = z.object({ currency: currencyValue.default(BASE_CURRENCY) });
+
+function currencyFor(req: Request): Currency {
+  const parsed = currencyQuery.safeParse(req.query);
+  if (!parsed.success) validation('currency', parsed.error.issues[0].message);
+  return parsed.data.currency;
+}
+
+async function invoiceReport(period: Period, currency: Currency) {
   const today = todayIst();
-  const [byStatusRows, [summary], agingRows, open, topInvoiced, topOutstanding] = await Promise.all([
+  const [byStatusRows, [summary], agingRows, open, topInvoiced, topOutstanding, currencies] = await Promise.all([
     query<{ status: string; count: number; total: string; outstanding: string }>(
       // Outstanding counts sent invoices only (a draft is not owed yet), the same as summary.outstanding.
       `SELECT x.status, count(*)::int AS count, sum(x.total_amount)::numeric(14,2)::text AS total,
               coalesce(sum(x.balance) FILTER (WHERE x.base_status = 'sent'), 0)::numeric(14,2)::text AS outstanding
          FROM (SELECT ${derivedStatusSql('$3')} AS status, i.status AS base_status, i.total_amount, ${BALANCE_SQL} AS balance
                  FROM invoices i ${PAID_JOIN}
-                WHERE i.invoice_date BETWEEN $1::date AND $2::date) x
+                WHERE i.invoice_date BETWEEN $1::date AND $2::date AND i.currency = $4) x
         GROUP BY x.status`,
-      [period.from, period.to, today],
+      [period.from, period.to, today, currency],
     ),
     query<{ invoiced: string; collected: string; outstanding: string; count: number }>(
       `SELECT coalesce(sum(i.total_amount) FILTER (WHERE i.status IN ('sent', 'paid')), 0)::numeric(14,2)::text AS invoiced,
@@ -161,41 +172,42 @@ async function invoiceReport(period: Period) {
               coalesce(sum(${BALANCE_SQL}) FILTER (WHERE i.status = 'sent'), 0)::numeric(14,2)::text AS outstanding,
               count(*)::int AS count
          FROM invoices i ${PAID_JOIN}
-        WHERE i.invoice_date BETWEEN $1::date AND $2::date`,
-      [period.from, period.to],
+        WHERE i.invoice_date BETWEEN $1::date AND $2::date AND i.currency = $3`,
+      [period.from, period.to, currency],
     ),
     query<{ bucket: string; count: number; balance: string }>(
       `SELECT ${BUCKET_SQL('$1')} AS bucket, count(*)::int AS count, sum(${BALANCE_SQL})::numeric(14,2)::text AS balance
-         FROM invoices i ${PAID_JOIN} WHERE ${OPEN_SQL} GROUP BY 1`,
-      [today],
+         FROM invoices i ${PAID_JOIN} WHERE ${OPEN_SQL} AND i.currency = $2 GROUP BY 1`,
+      [today, currency],
     ),
     query(
       `SELECT i.id, i.invoice_number AS "invoiceNumber", i.client_name AS "clientName", i.due_date AS "dueDate",
               greatest($1::date - i.due_date, 0) AS "daysOverdue", ${BUCKET_SQL('$1')} AS bucket,
               i.total_amount::text AS total, ${BALANCE_SQL}::text AS balance
-         FROM invoices i ${PAID_JOIN} WHERE ${OPEN_SQL}
+         FROM invoices i ${PAID_JOIN} WHERE ${OPEN_SQL} AND i.currency = $2
         ORDER BY i.due_date, i.invoice_number
         LIMIT ${OPEN_LIST_LIMIT + 1}`,
-      [today],
+      [today, currency],
     ),
     query(
       `SELECT ${CLIENT_NAME} AS "clientName", count(*)::int AS count, sum(i.total_amount)::numeric(14,2)::text AS amount
          FROM invoices i LEFT JOIN clients c ON c.id = i.client_id
-        WHERE i.status IN ('sent', 'paid') AND i.invoice_date BETWEEN $1::date AND $2::date
+        WHERE i.status IN ('sent', 'paid') AND i.invoice_date BETWEEN $1::date AND $2::date AND i.currency = $3
         GROUP BY ${CLIENT_KEY}
         ORDER BY sum(i.total_amount) DESC, 1
         LIMIT 5`,
-      [period.from, period.to],
+      [period.from, period.to, currency],
     ),
     query(
       `SELECT ${CLIENT_NAME} AS "clientName", count(*)::int AS count, sum(${BALANCE_SQL})::numeric(14,2)::text AS amount
          FROM invoices i ${PAID_JOIN} LEFT JOIN clients c ON c.id = i.client_id
-        WHERE ${OPEN_SQL}
+        WHERE ${OPEN_SQL} AND i.currency = $1
         GROUP BY ${CLIENT_KEY}
         ORDER BY sum(${BALANCE_SQL}) DESC, 1
         LIMIT 5`,
-      [],
+      [currency],
     ),
+    query<{ currency: Currency }>(`SELECT DISTINCT currency FROM invoices ORDER BY currency`),
   ]);
   const zero = { count: 0, total: '0.00', outstanding: '0.00' };
   const byStatus = INVOICE_STATUSES.map(status => {
@@ -209,6 +221,9 @@ async function invoiceReport(period: Period) {
   return {
     today,
     period: periodJson(period),
+    currency,
+    // INR is always offered first, then every other currency that has invoices.
+    currencies: [BASE_CURRENCY, ...currencies.map(c => c.currency).filter(c => c !== BASE_CURRENCY)],
     summary,
     byStatus,
     aging,
@@ -220,21 +235,22 @@ async function invoiceReport(period: Period) {
 }
 
 reportsRouter.get('/invoices', ['admin'], async (req, res) => {
-  res.json(await invoiceReport(await periodFor(req)));
+  res.json(await invoiceReport(await periodFor(req), currencyFor(req)));
 });
 
 reportsRouter.get('/invoices.csv', ['admin'], async (req, res) => {
   const period = await periodFor(req);
+  const currency = currencyFor(req);
   const today = todayIst();
   const rows = await query<Record<string, string | number | null>>(
     `SELECT i.invoice_number AS "invoiceNumber", i.client_name AS "clientName", i.invoice_date AS "invoiceDate", i.due_date AS "dueDate",
             ${derivedStatusSql('$3')} AS status, i.total_amount::text AS total, p.paid::text AS paid, ${BALANCE_SQL}::text AS balance,
             CASE WHEN ${OPEN_SQL} THEN greatest($3::date - i.due_date, 0) END AS "daysOverdue"
        FROM invoices i ${PAID_JOIN}
-      WHERE i.invoice_date BETWEEN $1::date AND $2::date
+      WHERE i.invoice_date BETWEEN $1::date AND $2::date AND i.currency = $5
       ORDER BY i.invoice_date, i.invoice_number NULLS LAST
       LIMIT $4`,
-    [period.from, period.to, today, CSV_ROW_CAP + 1],
+    [period.from, period.to, today, CSV_ROW_CAP + 1, currency],
   );
   const capped = rows.length > CSV_ROW_CAP;
   const data = rows.slice(0, CSV_ROW_CAP).map(r => [
@@ -248,8 +264,8 @@ reportsRouter.get('/invoices.csv', ['admin'], async (req, res) => {
     r.balance,
     r.daysOverdue,
   ]);
-  const csv = toCsv(['Invoice', 'Client', 'Invoice date', 'Due date', 'Status', num('Total (INR)'), num('Paid (INR)'), num('Balance (INR)'), num('Days overdue')], data);
-  await auditExport(req, 'invoices', period, data.length, capped);
+  const csv = toCsv(['Invoice', 'Client', 'Invoice date', 'Due date', 'Status', num(`Total (${currency})`), num(`Paid (${currency})`), num(`Balance (${currency})`), num('Days overdue')], data);
+  await auditExport(req, 'invoices', period, data.length, capped, { currency });
   sendCsv(res, 'invoices', csv, capped);
 });
 

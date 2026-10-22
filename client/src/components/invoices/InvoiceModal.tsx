@@ -10,7 +10,7 @@ import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { FormField } from '../common/FormField';
 import { Lock, Plus, Trash2 } from 'lucide-react';
-import { formatMoney, previewTotals, trimRate } from '../../utils/money';
+import { CURRENCY_LABEL, formatMoney, INVOICE_CURRENCIES, InvoiceCurrency, previewTotals, trimRate } from '../../utils/money';
 
 interface InvoiceModalProps {
   isOpen: boolean;
@@ -53,6 +53,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, invoiceId, o
   const [clientGstin, setClientGstin] = useState('');
   const [invoiceDate, setInvoiceDate] = useState('');
   const [dueDate, setDueDate] = useState('');
+  const [currency, setCurrency] = useState<InvoiceCurrency>('INR');
   const [taxRate, setTaxRate] = useState('18');
   const [notes, setNotes] = useState('');
   const [items, setItems] = useState<ItemRow[]>([newRow()]);
@@ -88,6 +89,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, invoiceId, o
           setClientGstin(invoice.clientGstin ?? '');
           setInvoiceDate(invoice.invoiceDate);
           setDueDate(invoice.dueDate);
+          setCurrency(invoice.currency);
           setTaxRate(trimRate(invoice.taxRate));
           setNotes(invoice.notes ?? '');
           setItems(invoice.items.map(i => ({ key: i.id, description: i.description, quantity: trimRate(i.quantity), unitPrice: i.unitPrice })));
@@ -100,6 +102,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, invoiceId, o
           setClientGstin('');
           setInvoiceDate(today);
           setDueDate(addDays(today, 15));
+          setCurrency('INR');
           setTaxRate(trimRate(company!.defaultGstRate));
           setNotes('');
           setItems([newRow()]);
@@ -116,7 +119,8 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, invoiceId, o
     };
   }, [isOpen, invoiceId]);
 
-  // Picking a client prefills the snapshot; every field stays editable for this invoice.
+  // Picking a client prefills the snapshot and the client's saved currency; every field stays editable for
+  // this invoice.
   const pickClient = (id: string) => {
     setClientId(id);
     const client = clients.find(c => c.id === id);
@@ -125,6 +129,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, invoiceId, o
       setClientEmail(client.contactEmail ?? '');
       setClientAddress(client.address ?? '');
       setClientGstin(client.gstin ?? '');
+      setCurrency(client.currency);
     }
   };
 
@@ -151,6 +156,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, invoiceId, o
           clientGstin: clientGstin.trim() || null,
           invoiceDate,
           dueDate,
+          currency,
           taxRate: taxRate.trim(),
           notes: notes.trim() || null,
           items: items.map(i => ({ description: i.description.trim(), quantity: i.quantity.trim(), unitPrice: i.unitPrice.trim() })),
@@ -224,14 +230,23 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, invoiceId, o
             </FormField>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <FormField label="Invoice date" required error={errors.invoiceDate}>
               <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} className={input} disabled={locked} aria-label="Invoice date" />
             </FormField>
             <FormField label="Due date" required error={errors.dueDate}>
               <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={input} aria-label="Due date" />
             </FormField>
-            <FormField label="GST rate (%)" error={errors.taxRate}>
+            <FormField label="Currency" error={errors.currency}>
+              <select value={currency} onChange={e => setCurrency(e.target.value as InvoiceCurrency)} className={input} disabled={locked} aria-label="Currency">
+                {INVOICE_CURRENCIES.map(c => (
+                  <option key={c} value={c}>
+                    {CURRENCY_LABEL[c]}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="GST rate (%)" error={errors.taxRate} hint={currency !== 'INR' ? 'Usually 0 for export of services.' : undefined}>
               <input inputMode="decimal" value={taxRate} onChange={e => setTaxRate(e.target.value)} className={`${input} font-mono`} disabled={locked} aria-label="GST rate" />
             </FormField>
           </div>
@@ -288,7 +303,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, invoiceId, o
                       {err('unitPrice') && <p className="text-[11px] text-[#E11D48] mt-0.5">{err('unitPrice')}</p>}
                     </div>
                     <div className="col-span-2 sm:col-span-1 pt-2 text-right text-[11px] font-mono text-[#475569] truncate" title="Preview">
-                      {preview.lineTotals[idx] !== null ? formatMoney(preview.lineTotals[idx]) : '—'}
+                      {preview.lineTotals[idx] !== null ? formatMoney(preview.lineTotals[idx], currency) : '—'}
                     </div>
                     <div className="col-span-1 pt-1 text-right">
                       {!locked && (
@@ -322,15 +337,15 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ isOpen, invoiceId, o
                 <div className="space-y-1 sm:w-72 sm:ml-auto">
                   <div className="flex justify-between text-[#7185A5]">
                     <span>Subtotal</span>
-                    <span className="font-mono text-[#111827]">{formatMoney(t.subtotal)}</span>
+                    <span className="font-mono text-[#111827]">{formatMoney(t.subtotal, currency)}</span>
                   </div>
                   <div className="flex justify-between text-[#7185A5]">
                     <span>GST ({taxRate || 0}%)</span>
-                    <span className="font-mono text-[#111827]">{formatMoney(t.taxAmount)}</span>
+                    <span className="font-mono text-[#111827]">{formatMoney(t.taxAmount, currency)}</span>
                   </div>
                   <div className="flex justify-between text-sm font-bold text-[#111827] pt-1 border-t border-[#DFE6F1]">
                     <span>Total</span>
-                    <span className="font-mono text-[#5038F5]">{formatMoney(t.total)}</span>
+                    <span className="font-mono text-[#5038F5]">{formatMoney(t.total, currency)}</span>
                   </div>
                 </div>
               );

@@ -1,3 +1,5 @@
+import type { InvoiceCurrency } from '../utils/money';
+
 export type UserRole = 'admin' | 'manager' | 'employee' | 'client';
 export type StaffRole = Exclude<UserRole, 'client'>;
 
@@ -37,6 +39,7 @@ export interface Client {
   contactPhone: string | null;
   address: string | null;
   gstin: string | null;
+  currency: InvoiceCurrency; // default currency of the client's new invoices
   status: ClientStatus;
   notes: string | null;
   createdAt: string;

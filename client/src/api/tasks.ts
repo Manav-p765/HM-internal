@@ -8,6 +8,8 @@ export interface TaskListParams {
   priority?: TaskPriority;
   status?: TaskStatus;
   overdue?: boolean;
+  requestedByClient?: boolean; // admin/manager: tasks clients asked for in the portal
+  view?: 'assigned_by_me'; // tasks the caller assigned to someone else
   search?: string;
   limit?: number;
   offset?: number;
@@ -24,7 +26,7 @@ export interface TaskInput {
   clientVisible?: boolean;
 }
 
-// Staff. Employees only ever get their own tasks (the server enforces it).
+// Staff. Employees only ever get tasks assigned to them or by them (the server enforces it).
 export const tasksApi = {
   list: (params: TaskListParams = {}) =>
     api<{ tasks: Task[]; total: number; limit: number; offset: number }>(`/tasks${toQuery(params)}`),

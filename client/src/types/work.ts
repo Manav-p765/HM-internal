@@ -34,6 +34,23 @@ export const EMPLOYEE_TASK_TRANSITIONS: Partial<Record<TaskStatus, TaskStatus[]>
   blocked: ['in_progress'],
 };
 
+// Status changes an employee may make on a task they assigned to someone else: the review (mirrors the server).
+export const CREATOR_TASK_TRANSITIONS: Partial<Record<TaskStatus, TaskStatus[]>> = {
+  in_review: ['completed', 'in_progress'],
+};
+
+// The moves the signed-in user may make on a task (null = any status: admin/manager).
+export function allowedTaskMoves(task: Task, user: { id: string; role: string; employeeId?: string }): TaskStatus[] | null {
+  if (user.role === 'admin' || user.role === 'manager') return null;
+  if (task.assigneeId && task.assigneeId === user.employeeId) return EMPLOYEE_TASK_TRANSITIONS[task.status] ?? [];
+  if (task.createdBy === user.id) return CREATOR_TASK_TRANSITIONS[task.status] ?? [];
+  return [];
+}
+
+// Admin/manager edit and delete any task; an employee only one they assigned, while it is still to do.
+export const canChangeTask = (task: Task, user: { id: string; role: string }) =>
+  user.role === 'admin' || user.role === 'manager' || (task.createdBy === user.id && task.status === 'todo');
+
 export interface ProjectMember {
   id: string;
   code: string;
@@ -77,10 +94,12 @@ export interface Task {
   priority: TaskPriority;
   status: TaskStatus;
   clientVisible: boolean;
+  requestedByClient: boolean; // created by the client in the portal (always stays shared with them)
   completedAt: string | null;
   completionComment: string | null;
   overdue: boolean;
-  createdBy: string;
+  createdBy: string; // user id
+  createdByName: string; // who assigned it: an employee name, the client company, or "Hybrid Monks"
   updatedBy: string | null;
   createdAt: string;
   updatedAt: string;
@@ -131,6 +150,23 @@ export interface PortalTask {
   overdue: boolean;
   assignee: { fullName: string; designation: string } | null;
   feedbackCount: number;
+  requestedByClient: boolean; // the client's company asked for it
+  editable: boolean; // their request, not started yet: they may still change or reassign it
+}
+
+// GET /api/portal/projects/:id/assignees: who a client may assign on that project (its active team).
+export interface PortalAssignee {
+  id: string;
+  name: string;
+  designation: string;
+}
+
+export interface PortalTaskInput {
+  title: string;
+  description?: string | null;
+  priority?: TaskPriority;
+  deadline?: string | null;
+  assigneeId?: string | null;
 }
 
 export interface PortalComment {
@@ -139,4 +175,35 @@ export interface PortalComment {
   createdAt: string;
   authorName: string;
   fromClient: boolean;
+}
+
+// The staff bell (GET /api/notifications). "Assigned to you" notices are stored and marked read; reminders are
+// worked out by the server each time from deadlines (today in IST).
+export interface TaskNotification {
+  id: string;
+  kind: 'task_assigned';
+  readAt: string | null;
+  createdAt: string;
+  assignedBy: string | null;
+  task: { id: string; code: string; title: string; deadline: string | null; priority: TaskPriority; status: TaskStatus; projectName: string; overdue: boolean };
+}
+
+export interface TaskReminder {
+  id: string;
+  code: string;
+  title: string;
+  deadline: string;
+  priority: TaskPriority;
+  status: TaskStatus;
+  projectName: string;
+  assigneeName: string | null;
+  overdue: boolean;
+  dueToday: boolean;
+}
+
+export interface NotificationFeed {
+  unread: number;
+  assigned: TaskNotification[];
+  dueSoon: { total: number; tasks: TaskReminder[] }; // my open tasks due by tomorrow, overdue included
+  overdueTeam: { total: number; tasks: TaskReminder[] }; // admin/manager: everyone's; employee: ones I assigned
 }

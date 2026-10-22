@@ -1,5 +1,6 @@
 import { api } from './client';
 import { Client, ClientStatus, MyClientCompany } from '../types';
+import type { InvoiceCurrency } from '../utils/money';
 
 export interface ClientListParams {
   search?: string;
@@ -15,6 +16,7 @@ export interface ClientInput {
   contactPhone?: string | null;
   address?: string | null;
   gstin?: string | null;
+  currency?: InvoiceCurrency;
   notes?: string | null;
 }
 

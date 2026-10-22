@@ -29,7 +29,7 @@ function managerGetRoutes(): string[] {
   for (const [prefix, router] of mountedRouters) {
     for (const r of router.routes) {
       const allowed = r.access === 'session' || (Array.isArray(r.access) && r.access.includes('manager'));
-      if (r.method === 'get' && allowed) keys.push(`/api${prefix === '/' ? '' : prefix}${r.path}`);
+      if (r.method === 'get' && allowed) keys.push(`/api${prefix === '/' ? '' : prefix}${r.path === '/' && prefix !== '/' ? '' : r.path}`);
     }
   }
   return keys;

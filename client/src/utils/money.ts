@@ -3,8 +3,39 @@
 // (server/src/services/money.ts) only so the form can show something while typing, and is replaced by the
 // server's numbers on save. Integer arithmetic on BigInt; no floats.
 
-// The app is INR-only (company_settings.currency is fixed to INR on the server).
+// The company's own currency: the ledger, salaries and the P&L are INR only (company_settings.currency).
 export const CURRENCY = 'INR';
+
+// Invoice currencies, as server/src/services/currency.ts. An invoice (and a client's default for new
+// invoices) is in one of these; all have 2 decimal places.
+export const INVOICE_CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AUD', 'CAD', 'SGD', 'AED', 'NZD', 'CHF'] as const;
+export type InvoiceCurrency = (typeof INVOICE_CURRENCIES)[number];
+
+export const CURRENCY_LABEL: Record<InvoiceCurrency, string> = {
+  INR: 'INR · Indian Rupee',
+  USD: 'USD · US Dollar',
+  EUR: 'EUR · Euro',
+  GBP: 'GBP · Pound Sterling',
+  AUD: 'AUD · Australian Dollar',
+  CAD: 'CAD · Canadian Dollar',
+  SGD: 'SGD · Singapore Dollar',
+  AED: 'AED · UAE Dirham',
+  NZD: 'NZD · New Zealand Dollar',
+  CHF: 'CHF · Swiss Franc',
+};
+
+const SYMBOL: Record<InvoiceCurrency, string> = {
+  INR: '₹',
+  USD: '$',
+  EUR: '€',
+  GBP: '£',
+  AUD: 'A$',
+  CAD: 'C$',
+  SGD: 'S$',
+  AED: 'AED ',
+  NZD: 'NZ$',
+  CHF: 'CHF ',
+};
 
 const DECIMAL_2 = /^\d{1,15}(\.\d{1,2})?$/;
 
@@ -21,12 +52,14 @@ function fromHundredths(value: bigint): string {
   return `${negative ? '-' : ''}${abs / 100n}.${(abs % 100n).toString().padStart(2, '0')}`;
 }
 
-// "118000.5" -> "₹1,18,000.50" (Indian grouping, always 2 decimals). Non-numeric input -> "₹0.00".
-export function formatMoney(value: string | null | undefined): string {
+// "118000.5" -> "₹1,18,000.50" (Indian grouping, always 2 decimals); with another currency
+// "118000.5", "USD" -> "$118,000.50" (international grouping). Non-numeric input -> "₹0.00" / "$0.00".
+export function formatMoney(value: string | null | undefined, currency: InvoiceCurrency = 'INR'): string {
+  const symbol = SYMBOL[currency] ?? `${currency} `;
   const match = /^(-?)(\d+)(?:\.(\d{1,2}))?$/.exec((value ?? '').trim());
-  if (!match) return '₹0.00';
+  if (!match) return `${symbol}0.00`;
   const [, sign, whole, fraction = ''] = match;
-  return `${sign}₹${BigInt(whole).toLocaleString('en-IN')}.${fraction.padEnd(2, '0')}`;
+  return `${sign}${symbol}${BigInt(whole).toLocaleString(currency === 'INR' ? 'en-IN' : 'en-US')}.${fraction.padEnd(2, '0')}`;
 }
 
 const roundHalfUp = (numerator: bigint, denominator: bigint) => (numerator * 2n + denominator) / (denominator * 2n);

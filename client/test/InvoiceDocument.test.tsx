@@ -19,6 +19,9 @@ const company: CompanySettings = {
   terms: 'Payment within 15 days.',
   invoiceNextNumber: 8,
   logoDataUrl: null,
+  signatureDataUrl: null,
+  signatoryName: null,
+  signatoryDesignation: null,
   nextInvoiceNumber: 'HM-0008',
   updatedAt: '2026-10-14T04:00:00.000Z',
 };
@@ -34,6 +37,7 @@ const invoice: Invoice = {
   clientGstin: '27BBBBB1111B1Z5',
   invoiceDate: '2026-10-14',
   dueDate: '2026-10-29',
+  currency: 'INR',
   subtotal: '62505.98',
   taxRate: '18.00',
   taxAmount: '11251.08',
@@ -61,6 +65,7 @@ const payment = (over: Partial<InvoicePayment>): InvoicePayment => ({
   id: 'p1',
   txnDate: '2026-10-15',
   amount: '10000.00',
+  amountInr: '10000.00',
   paymentMethod: 'UPI',
   referenceNumber: 'UTR-FAKE',
   notes: null,
@@ -94,7 +99,7 @@ describe('InvoiceDocument totals', () => {
     expect(text(html, 'grand-total')).toBe('₹73,757.06');
     for (const item of invoice.items) expect(html).toContain(formatMoney(item.lineTotal));
     expect(html.match(/data-testid="invoice-line"/g)).toHaveLength(3);
-    expect(html).toContain('GST (18%):');
+    expect(html).toContain('GST (18%)');
   });
 
   it('lists live payments only and the server balance', () => {
@@ -110,6 +115,23 @@ describe('InvoiceDocument totals', () => {
     expect(html).not.toContain('₹5,000.00');
     expect(text(html, 'balance')).toBe('₹63,757.06');
     expect(html).toContain('Partially Paid');
+  });
+
+  it("prints a foreign-currency invoice in its own currency, never the INR received", () => {
+    const html = render({
+      ...invoice,
+      currency: 'USD',
+      amountPaid: '10000.00',
+      balance: '63757.06',
+      totalInWords: 'Seventy Three Thousand Seven Hundred and Fifty Seven US Dollars and Six Cents Only',
+      payments: [payment({ amountInr: '835000.00' })],
+    });
+    expect(text(html, 'grand-total')).toBe('$73,757.06');
+    expect(text(html, 'balance-due-panel')).toBe('$63,757.06');
+    expect(html).toContain('Rate (USD)');
+    expect(html).toContain('-$10,000.00');
+    expect(html).not.toContain('₹');
+    expect(html).not.toContain('835,000');
   });
 });
 
@@ -151,6 +173,15 @@ describe('InvoiceDocument company settings', () => {
   it('prints the logo from settings', () => {
     const logo = 'data:image/png;base64,iVBORw0KGgo=';
     expect(render(invoice, { ...company, logoDataUrl: logo })).toContain(`src="${logo}"`);
+  });
+
+  it('prints the signature image, signatory name and designation from settings', () => {
+    const signature = 'data:image/png;base64,iVBORw0KGgo=';
+    const html = render(invoice, { ...company, signatureDataUrl: signature, signatoryName: 'Asha Rao (Fake)', signatoryDesignation: 'Director' });
+    expect(html).toContain(`src="${signature}"`);
+    expect(text(html, 'signatory-name')).toBe('Asha Rao (Fake)');
+    expect(html).toContain('Director');
+    expect(html).toContain('Authorized Signatory');
   });
 
   it('leaves out empty optional blocks', () => {

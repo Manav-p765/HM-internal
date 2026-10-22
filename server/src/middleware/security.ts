@@ -62,6 +62,7 @@ export const RATE_LIMITS = {
   health: { name: 'health', windowMs: MINUTE, limit: 120, by: 'ip', message: RETRY },
   accountMail: { name: 'account-mail', windowMs: 60 * MINUTE, limit: 30, by: 'user', message: 'Too many invites or reset links sent. Please try again later.' },
   portalFeedback: { name: 'portal-feedback', windowMs: 15 * MINUTE, limit: 30, by: 'user', message: 'Too many comments. Please try again later.' },
+  portalTasks: { name: 'portal-tasks', windowMs: 15 * MINUTE, limit: 30, by: 'user', message: 'Too many task requests. Please try again later.' },
   heartbeat: { name: 'heartbeat', windowMs: MINUTE, limit: 6, by: 'user', message: 'Too many heartbeats' },
 } as const satisfies Record<string, LimitSpec>;
 
@@ -109,4 +110,5 @@ export const setPasswordPerTokenLimiter = createLimiter(RATE_LIMITS.setPasswordP
 export const healthLimiter = createLimiter(RATE_LIMITS.health);
 export const accountMailLimiter = createLimiter(RATE_LIMITS.accountMail);
 export const portalFeedbackLimiter = createLimiter(RATE_LIMITS.portalFeedback);
+export const portalTasksLimiter = createLimiter(RATE_LIMITS.portalTasks);
 export const heartbeatLimiter = createLimiter(RATE_LIMITS.heartbeat);

@@ -1,6 +1,9 @@
 // Invoice and company settings shapes, exactly as /api/invoices and /api/settings/company return them.
 // Money is always a decimal string with 2 places ("117.99"); never do arithmetic on it in the browser
 // (the form's live preview in utils/money.ts is the only exception and is labelled as a preview).
+// Every amount on an invoice is in the invoice's `currency`; a payment also carries `amountInr`, the INR the
+// company received (what the ledger holds).
+import type { InvoiceCurrency } from '../utils/money';
 
 export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'cancelled';
 // Derived on the server: overdue (sent, balance > 0, past due date IST) wins over partially_paid.
@@ -40,7 +43,8 @@ export interface InvoiceItem {
 export interface InvoicePayment {
   id: string; // the income transaction id
   txnDate: string;
-  amount: string;
+  amount: string; // in the invoice's currency
+  amountInr: string; // the INR received (the ledger amount); equals amount on an INR invoice
   paymentMethod: InvoicePaymentMethod;
   referenceNumber: string | null;
   notes: string | null;
@@ -62,6 +66,7 @@ export interface InvoiceSummaryRow {
   clientGstin: string | null;
   invoiceDate: string;
   dueDate: string;
+  currency: InvoiceCurrency;
   subtotal: string;
   taxRate: string;
   taxAmount: string;
@@ -92,13 +97,21 @@ export interface Invoice extends InvoiceSummaryRow {
 export type PrintableInvoice = Pick<
   Invoice,
   | 'invoiceNumber' | 'status' | 'derivedStatus' | 'clientName' | 'clientEmail' | 'clientAddress' | 'clientGstin'
-  | 'invoiceDate' | 'dueDate' | 'subtotal' | 'taxRate' | 'taxAmount' | 'total' | 'balance' | 'notes' | 'totalInWords' | 'items'
+  | 'invoiceDate' | 'dueDate' | 'currency' | 'subtotal' | 'taxRate' | 'taxAmount' | 'total' | 'balance' | 'notes' | 'totalInWords' | 'items'
 > & { payments: (Pick<InvoicePayment, 'id' | 'txnDate' | 'amount' | 'paymentMethod'> & { reversedAt?: string | null })[] };
 
 export type PrintableCompany = Pick<
   CompanySettings,
-  'companyName' | 'companyAddress' | 'companyPhone' | 'companyEmail' | 'companyGstin' | 'bankDetails' | 'terms' | 'logoDataUrl'
+  | 'companyName' | 'companyAddress' | 'companyPhone' | 'companyEmail' | 'companyGstin' | 'bankDetails' | 'terms' | 'logoDataUrl'
+  | 'signatureDataUrl' | 'signatoryName' | 'signatoryDesignation'
 >;
+
+// Outstanding and overdue balances in one non-INR currency (summaries never add currencies together).
+export interface CurrencyTotals {
+  currency: InvoiceCurrency;
+  outstandingTotal: string;
+  overdueTotal: string;
+}
 
 // GET /api/portal/invoices: the client's own company's issued invoices (never drafts). No internal fields:
 // no notes on payments, no cancel reason, no who-recorded-what, no reversed payments.
@@ -107,6 +120,7 @@ export interface PortalInvoiceRow {
   invoiceNumber: string;
   invoiceDate: string;
   dueDate: string;
+  currency: InvoiceCurrency;
   total: string;
   amountPaid: string;
   balance: string;
@@ -116,7 +130,8 @@ export interface PortalInvoiceRow {
 
 export interface PortalInvoicesResponse {
   invoices: PortalInvoiceRow[];
-  summary: { count: number; outstandingTotal: string; overdueTotal: string; overdueCount: number };
+  // outstandingTotal/overdueTotal: INR invoices; other currencies apart.
+  summary: { count: number; outstandingTotal: string; overdueTotal: string; otherCurrencies: CurrencyTotals[]; overdueCount: number };
 }
 
 // GET /api/portal/invoices/:id: the invoice as printed, live payments only, and the issuing company's
@@ -127,11 +142,12 @@ export interface PortalInvoiceResponse {
 }
 
 export interface InvoicesSummary {
-  outstandingTotal: string;
-  overdueTotal: string;
+  outstandingTotal: string; // INR invoices
+  overdueTotal: string; // INR invoices
+  otherCurrencies: CurrencyTotals[]; // every other currency with a balance, never converted or added
   overdueCount: number;
   draftCount: number;
-  collectedThisMonth: string;
+  collectedThisMonth: string; // INR received (the ledger)
 }
 
 export interface CompanySettings {
@@ -147,6 +163,9 @@ export interface CompanySettings {
   terms: string | null;
   invoiceNextNumber: number;
   logoDataUrl: string | null; // PNG/JPEG/WebP data URL checked by the server; printed on invoices
+  signatureDataUrl: string | null; // same rules; printed above "Authorized Signatory"
+  signatoryName: string | null;
+  signatoryDesignation: string | null;
   nextInvoiceNumber: string;
   updatedAt: string;
 }

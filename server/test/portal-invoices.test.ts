@@ -70,13 +70,14 @@ describe('GET /api/portal/invoices', () => {
       invoiceNumber: expect.stringMatching(/^HM-\d{4}$/),
       invoiceDate: expect.any(String),
       dueDate: '2099-01-01',
+      currency: 'INR',
       total: '1180.00',
       amountPaid: '300.00',
       balance: '880.00',
       status: 'sent',
       derivedStatus: 'partially_paid',
     });
-    expect(res.body.summary).toEqual({ count: 3, outstandingTotal: '880.00', overdueTotal: '0.00', overdueCount: 0 });
+    expect(res.body.summary).toEqual({ count: 3, outstandingTotal: '880.00', overdueTotal: '0.00', otherCurrencies: [], overdueCount: 0 });
     expect(JSON.stringify(res.body)).not.toMatch(new RegExp([SECRET_NOTE, SECRET_REF, SECRET_REASON, REVERSE_REASON, 'Globex'].join('|')));
   });
 
@@ -84,12 +85,12 @@ describe('GET /api/portal/invoices', () => {
     await user('client@globex.example.test', 'client', { clientId: ids.globex });
     const globex = await (await signIn('client@globex.example.test')).get('/api/portal/invoices').expect(200);
     expect(globex.body.invoices.map((i: { id: string }) => i.id)).toEqual([ids.globexInv]);
-    expect(globex.body.summary).toEqual({ count: 1, outstandingTotal: '916.86', overdueTotal: '0.00', overdueCount: 0 });
+    expect(globex.body.summary).toEqual({ count: 1, outstandingTotal: '916.86', overdueTotal: '0.00', otherCurrencies: [], overdueCount: 0 });
 
     const initech = await company('Initech (Fake)');
     await user('client@initech.example.test', 'client', { clientId: initech });
     const none = await (await signIn('client@initech.example.test')).get('/api/portal/invoices').expect(200);
-    expect(none.body).toEqual({ invoices: [], summary: { count: 0, outstandingTotal: '0.00', overdueTotal: '0.00', overdueCount: 0 } });
+    expect(none.body).toEqual({ invoices: [], summary: { count: 0, outstandingTotal: '0.00', overdueTotal: '0.00', otherCurrencies: [], overdueCount: 0 } });
   });
 });
 
@@ -102,7 +103,10 @@ describe('GET /api/portal/invoices/:id', () => {
     expect(invoice.items).toHaveLength(1);
     expect(invoice.payments).toEqual([{ id: expect.any(String), txnDate: expect.any(String), amount: '300.00', paymentMethod: 'UPI' }]);
     expect(Object.keys(issuer).sort()).toEqual(
-      ['bankDetails', 'companyAddress', 'companyEmail', 'companyGstin', 'companyName', 'companyPhone', 'logoDataUrl', 'terms'].sort(),
+      [
+        'bankDetails', 'companyAddress', 'companyEmail', 'companyGstin', 'companyName', 'companyPhone', 'logoDataUrl', 'terms',
+        'signatureDataUrl', 'signatoryName', 'signatoryDesignation',
+      ].sort(),
     );
     const raw = JSON.stringify(res.body);
     for (const hidden of [SECRET_NOTE, SECRET_REF, REVERSE_REASON, 'recordedByName', 'reversedAt', 'cancelReason', 'clientId', 'createdAt', 'invoicePrefix', 'invoiceNextNumber', 'admin@example.test']) {

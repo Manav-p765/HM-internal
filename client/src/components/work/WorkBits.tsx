@@ -51,6 +51,13 @@ export const OverdueBadge: React.FC = () => (
   </Badge>
 );
 
+// A task the client asked for in the portal (it always stays shared with them).
+export const ClientRequestBadge: React.FC = () => (
+  <Badge variant="purple" size="sm">
+    Client request
+  </Badge>
+);
+
 // progress is 0..1, or null when there is nothing to measure.
 export const ProgressBar: React.FC<{ progress: number | null; label?: string }> = ({ progress, label }) => {
   const pct = progress === null ? 0 : Math.round(progress * 100);

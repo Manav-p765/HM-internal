@@ -11,6 +11,7 @@ import { invoiceLabel } from '../../types/invoices';
 import { Card } from '../common/Card';
 import { TrendBars } from '../reports/TrendBars';
 import { InvoiceStatusBadge } from '../invoices/InvoiceStatusBadge';
+import { OtherCurrencyTotals } from '../invoices/OtherCurrencyTotals';
 import { ArrowRight, Banknote, Receipt, Scale, TrendingDown, TrendingUp, Users } from 'lucide-react';
 import { formatDate, formatMonthYear } from '../../utils/formatters';
 import { formatMoney } from '../../utils/money';
@@ -96,6 +97,7 @@ export const FinanceOverview: React.FC = () => {
 
         <MoneyCard label="Outstanding Invoices" icon={<Receipt className="w-4 h-4" />} tone="bg-[#B45309]/10 text-[#B45309]">
           <span className="text-2xl font-mono font-bold text-[#B45309]">{money(invoiceSummary?.outstandingTotal)}</span>
+          <OtherCurrencyTotals rows={invoiceSummary?.otherCurrencies} field="outstandingTotal" />
           <p className="text-[11px] text-[#7185A5] mt-1" data-testid="kpi-invoice-detail">
             Overdue <span className="font-mono text-[#E11D48]">{money(invoiceSummary?.overdueTotal)}</span> · Collected this month{' '}
             <span className="font-mono text-[#047857]">{money(invoiceSummary?.collectedThisMonth)}</span>
@@ -216,8 +218,8 @@ export const FinanceOverview: React.FC = () => {
                     </div>
                   </div>
                   <div className="text-right shrink-0">
-                    <span className="text-xs font-mono font-bold text-[#111827]">{formatMoney(inv.total)}</span>
-                    {inv.status === 'sent' && <div className="text-[10px] font-mono text-[#E11D48] mt-0.5">Due: {formatMoney(inv.balance)}</div>}
+                    <span className="text-xs font-mono font-bold text-[#111827]">{formatMoney(inv.total, inv.currency)}</span>
+                    {inv.status === 'sent' && <div className="text-[10px] font-mono text-[#E11D48] mt-0.5">Due: {formatMoney(inv.balance, inv.currency)}</div>}
                   </div>
                 </button>
               ))

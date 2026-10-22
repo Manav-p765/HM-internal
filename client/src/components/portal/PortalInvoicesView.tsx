@@ -9,6 +9,28 @@ import { InvoiceStatusBadge } from '../invoices/InvoiceStatusBadge';
 import { InvoiceDocument } from '../invoices/InvoiceDocument';
 import { formatDate } from '../../utils/formatters';
 import { formatMoney } from '../../utils/money';
+import type { CurrencyTotals, PortalInvoicesResponse } from '../../types/invoices';
+
+// A summary figure in each currency the company is billed in, one per line (INR first, if it has any;
+// currencies are never added together). Nothing due at all: "₹0.00", or the zero of the only other currency.
+const PortalTotals: React.FC<{ summary: PortalInvoicesResponse['summary']; field: 'outstandingTotal' | 'overdueTotal'; className: string }> = ({
+  summary,
+  field,
+  className,
+}) => {
+  const all: CurrencyTotals[] = [{ currency: 'INR', outstandingTotal: summary.outstandingTotal, overdueTotal: summary.overdueTotal }, ...summary.otherCurrencies];
+  const due = all.filter(r => r[field] !== '0.00');
+  const shown = due.length > 0 ? due : [summary.otherCurrencies.length === 1 && summary.outstandingTotal === '0.00' ? summary.otherCurrencies[0] : all[0]];
+  return (
+    <div className={`mt-1 font-mono font-bold ${className}`} data-testid={`portal-${field}`}>
+      {shown.map(r => (
+        <div key={r.currency} className="text-2xl">
+          {formatMoney(r[field], r.currency)}
+        </div>
+      ))}
+    </div>
+  );
+};
 
 // /portal/invoices: the client company's own issued invoices (never drafts), newest first. Read-only; every
 // amount and status is a server value from /api/portal/invoices.
@@ -31,11 +53,11 @@ export const PortalInvoicesView: React.FC = () => {
           </div>
           <div className="bg-white rounded-xl border border-[#DFE6F1] p-4">
             <span className="text-xs font-semibold text-[#7185A5]">Balance due</span>
-            <div className="text-2xl font-mono font-bold text-[#B45309] mt-1">{formatMoney(summary.outstandingTotal)}</div>
+            <PortalTotals summary={summary} field="outstandingTotal" className="text-[#B45309]" />
           </div>
           <div className="bg-white rounded-xl border border-[#DFE6F1] p-4">
             <span className="text-xs font-semibold text-[#7185A5]">Overdue</span>
-            <div className="text-2xl font-mono font-bold text-[#E11D48] mt-1">{formatMoney(summary.overdueTotal)}</div>
+            <PortalTotals summary={summary} field="overdueTotal" className="text-[#E11D48]" />
             <p className="text-[11px] text-[#7185A5] mt-0.5">
               {summary.overdueCount} invoice{summary.overdueCount === 1 ? '' : 's'} past the due date
             </p>
@@ -78,8 +100,8 @@ export const PortalInvoicesView: React.FC = () => {
                   </td>
                   <td className="py-3 px-4 text-[#475569]">{formatDate(inv.invoiceDate)}</td>
                   <td className="py-3 px-4 text-[#475569]">{formatDate(inv.dueDate)}</td>
-                  <td className="py-3 px-4 text-right font-mono text-[#111827]">{formatMoney(inv.total)}</td>
-                  <td className="py-3 px-4 text-right font-mono text-[#111827]">{inv.status === 'cancelled' ? '—' : formatMoney(inv.balance)}</td>
+                  <td className="py-3 px-4 text-right font-mono text-[#111827]">{formatMoney(inv.total, inv.currency)}</td>
+                  <td className="py-3 px-4 text-right font-mono text-[#111827]">{inv.status === 'cancelled' ? '—' : formatMoney(inv.balance, inv.currency)}</td>
                   <td className="py-3 px-4">
                     <InvoiceStatusBadge status={inv.derivedStatus} size="sm" />
                   </td>

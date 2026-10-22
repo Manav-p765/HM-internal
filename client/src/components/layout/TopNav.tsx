@@ -1,8 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { useApp } from '../../context/AppContext';
 import { invoicesApi } from '../../api/invoices';
 import { salaryApi } from '../../api/salary';
+import { tasksApi } from '../../api/tasks';
+import { notificationsApi } from '../../api/notifications';
+import { TaskReminder } from '../../types/work';
+import { formatDate } from '../../utils/formatters';
 import { invoiceLabel } from '../../types/invoices';
 import { useApiData } from '../../api/useApiData';
 import {
@@ -14,9 +18,15 @@ import {
   Clock,
   ArrowRight,
   ShieldAlert,
+  MessageSquarePlus,
+  ListTodo,
+  AlarmClock,
+  AlertTriangle,
 } from 'lucide-react';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
+
+const FEED_POLL_MS = 60_000;
 
 interface TopNavProps {
   onMobileMenuToggle: () => void;
@@ -53,7 +63,45 @@ export const TopNav: React.FC<TopNavProps> = ({
   const salaryMonth = useApiData(() => (isAdmin ? salaryApi.list() : Promise.resolve(null)), [isAdmin]);
   const pendingSalaryCount = salaryMonth.data ? salaryMonth.data.summary.headcount - salaryMonth.data.summary.paidCount : 0;
 
-  const notificationCount = overdueTotalCount + (isAdmin ? pendingSalaryCount : 0);
+  // Tasks clients requested in the portal that nobody has started yet (admin and manager). Reloaded each time
+  // the bell is opened, so a new request shows up without a page refresh.
+  const seesClientRequests = currentUser.role === 'admin' || currentUser.role === 'manager';
+  const clientRequests = useApiData(
+    () => (seesClientRequests ? tasksApi.list({ requestedByClient: true, status: 'todo', limit: 5 }) : Promise.resolve(null)),
+    [seesClientRequests],
+  );
+  const clientRequestCount = clientRequests.data?.total ?? 0;
+
+  // Tasks: "assigned to you" notices, my tasks due by tomorrow or overdue, and overdue tasks I'm responsible for
+  // (admin/manager: everyone's; an employee: the ones they assigned). Polled so a new assignment shows up.
+  const feed = useApiData(() => notificationsApi.feed(), []);
+  const reloadFeed = feed.reload;
+  useEffect(() => {
+    const timer = setInterval(reloadFeed, FEED_POLL_MS);
+    return () => clearInterval(timer);
+  }, [reloadFeed]);
+  const unreadAssigned = feed.data?.unread ?? 0;
+  const dueSoon = feed.data?.dueSoon ?? { total: 0, tasks: [] };
+  const overdueTeam = feed.data?.overdueTeam ?? { total: 0, tasks: [] };
+  const taskPath = (id: string) => (seesClientRequests ? `/tasks/${id}` : `/my/tasks/${id}`);
+  const openTask = (id: string, notificationId?: string) => {
+    if (notificationId) notificationsApi.markRead(notificationId).then(feed.reload, () => undefined);
+    navigate(taskPath(id));
+    setNotificationsOpen(false);
+  };
+  const markAllRead = () => notificationsApi.markAllRead().then(feed.reload, () => undefined);
+  const reminderLine = (t: TaskReminder, showAssignee: boolean) => (
+    <button onClick={() => openTask(t.id)} className="w-full text-left text-[11px] text-[#475569] hover:text-[#111827] cursor-pointer">
+      <span className="font-mono text-[10px] text-[#7185A5]">{t.code}</span> {t.title}
+      <span className={`block ${t.overdue ? 'text-[#E11D48]' : 'text-[#7185A5]'}`}>
+        {t.overdue ? `overdue since ${formatDate(t.deadline)}` : t.dueToday ? 'due today' : 'due tomorrow'}
+        {showAssignee ? ` · ${t.assigneeName ?? 'unassigned'}` : ''}
+      </span>
+    </button>
+  );
+
+  const notificationCount =
+    overdueTotalCount + (isAdmin ? pendingSalaryCount : 0) + clientRequestCount + unreadAssigned + dueSoon.total + overdueTeam.total;
 
   // Context-aware Quick Action button
   const renderQuickAction = () => {
@@ -143,7 +191,11 @@ export const TopNav: React.FC<TopNavProps> = ({
         {/* Functional Notifications */}
         <div className="relative">
           <button
-            onClick={() => setNotificationsOpen(!notificationsOpen)}
+            onClick={() => {
+              if (!notificationsOpen && seesClientRequests) clientRequests.reload();
+              if (!notificationsOpen) feed.reload();
+              setNotificationsOpen(!notificationsOpen);
+            }}
             className="relative p-2 text-[#7185A5] hover:text-[#111827] hover:bg-[#F7F9FC] rounded-lg transition-colors cursor-pointer"
             aria-label="View notifications"
           >
@@ -160,10 +212,115 @@ export const TopNav: React.FC<TopNavProps> = ({
                 <span className="text-xs font-semibold text-[#111827]">
                   Notifications ({notificationCount})
                 </span>
-                <span className="text-[11px] text-[#7185A5]">System alerts</span>
+                {unreadAssigned > 0 ? (
+                  <button onClick={markAllRead} className="text-[11px] font-medium text-[#5038F5] hover:underline cursor-pointer">
+                    Mark all read
+                  </button>
+                ) : (
+                  <span className="text-[11px] text-[#7185A5]">System alerts</span>
+                )}
               </div>
 
-              <div className="space-y-2 max-h-72 overflow-y-auto">
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {/* Assigned to you: newest first; unread ones stand out and are marked read when opened. */}
+                {feed.data && feed.data.assigned.length > 0 && (
+                  <div className="p-2.5 rounded-lg bg-[#5038F5]/5 border border-[#5038F5]/15 text-xs" data-testid="bell-assigned">
+                    <div className="flex items-center gap-1.5 font-semibold text-[#3F2BC9]">
+                      <ListTodo className="w-4 h-4 shrink-0" />
+                      {unreadAssigned > 0 ? `${unreadAssigned} New Task${unreadAssigned === 1 ? '' : 's'} for You` : 'Assigned to You'}
+                    </div>
+                    <ul className="mt-1 space-y-1">
+                      {feed.data.assigned.slice(0, 5).map(n => (
+                        <li key={n.id}>
+                          <button
+                            onClick={() => openTask(n.task.id, n.readAt ? undefined : n.id)}
+                            className={`w-full text-left text-[11px] hover:text-[#111827] cursor-pointer ${n.readAt ? 'text-[#7185A5]' : 'text-[#111827] font-medium'}`}
+                          >
+                            {!n.readAt && <span className="inline-block w-1.5 h-1.5 mr-1 rounded-full bg-[#5038F5] align-middle" />}
+                            <span className="font-mono text-[10px] text-[#7185A5]">{n.task.code}</span> {n.task.title}
+                            <span className="block text-[#7185A5] font-normal">
+                              {n.assignedBy ? `from ${n.assignedBy} · ` : ''}
+                              {n.task.deadline ? `due ${formatDate(n.task.deadline)}` : 'no deadline'}
+                              {n.task.overdue ? ' · overdue' : ''}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Reminders: my open tasks due today, tomorrow or already late. */}
+                {dueSoon.total > 0 && (
+                  <div className="p-2.5 rounded-lg bg-[#B45309]/5 border border-[#B45309]/15 text-xs" data-testid="bell-due-soon">
+                    <div className="flex items-center gap-1.5 font-semibold text-[#B45309]">
+                      <AlarmClock className="w-4 h-4 shrink-0" />
+                      {dueSoon.total} Task{dueSoon.total === 1 ? '' : 's'} Due Soon or Late
+                    </div>
+                    <ul className="mt-1 space-y-1">
+                      {dueSoon.tasks.map(t => (
+                        <li key={t.id}>{reminderLine(t, false)}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Overdue work I'm responsible for: everyone's (admin/manager) or what I assigned (employee). */}
+                {overdueTeam.total > 0 && (
+                  <div className="p-2.5 rounded-lg bg-[#E11D48]/5 border border-[#E11D48]/15 text-xs" data-testid="bell-overdue-team">
+                    <div className="flex items-center gap-1.5 font-semibold text-[#E11D48]">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      {overdueTeam.total} Overdue Task{overdueTeam.total === 1 ? '' : 's'}
+                      {seesClientRequests ? ' on the Team' : ' You Assigned'}
+                    </div>
+                    <ul className="mt-1 space-y-1">
+                      {overdueTeam.tasks.map(t => (
+                        <li key={t.id}>{reminderLine(t, true)}</li>
+                      ))}
+                    </ul>
+                    {seesClientRequests && (
+                      <button
+                        onClick={() => {
+                          navigate('/tasks');
+                          setNotificationsOpen(false);
+                        }}
+                        className="mt-1.5 text-[11px] font-medium text-[#5038F5] hover:underline flex items-center gap-1"
+                      >
+                        View Tasks <ArrowRight className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {clientRequestCount > 0 && (
+                  <div className="p-2.5 rounded-lg bg-[#5038F5]/5 border border-[#5038F5]/15 text-xs" data-testid="bell-client-requests">
+                    <div className="flex items-center gap-1.5 font-semibold text-[#3F2BC9]">
+                      <MessageSquarePlus className="w-4 h-4 shrink-0" />
+                      {clientRequestCount} New Client Request{clientRequestCount === 1 ? '' : 's'}
+                    </div>
+                    <ul className="mt-1 space-y-1">
+                      {clientRequests.data!.tasks.map(t => (
+                        <li key={t.id}>
+                          <button
+                            onClick={() => {
+                              navigate(`/tasks/${t.id}`);
+                              setNotificationsOpen(false);
+                            }}
+                            className="w-full text-left text-[11px] text-[#475569] hover:text-[#111827] cursor-pointer"
+                          >
+                            <span className="font-mono text-[10px] text-[#7185A5]">{t.code}</span> {t.title}
+                            <span className="text-[#7185A5]">
+                              {' '}
+                              · {t.clientName ?? t.projectName} → {t.assignee?.fullName ?? 'unassigned'}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="text-[11px] text-[#7185A5] mt-1">Listed until someone starts on them.</p>
+                  </div>
+                )}
+
                 {overdueTotalCount > 0 && (
                   <div className="p-2.5 rounded-lg bg-[#E11D48]/5 border border-[#E11D48]/15 text-xs">
                     <div className="flex items-center gap-1.5 font-semibold text-[#E11D48]">
@@ -210,7 +367,7 @@ export const TopNav: React.FC<TopNavProps> = ({
                 {notificationCount === 0 && (
                   <div className="py-6 text-center text-xs text-[#7185A5]">
                     <CheckCircle2 className="w-6 h-6 text-[#047857] mx-auto mb-1 opacity-80" />
-                    All finances and salaries up to date!
+                    All caught up!
                   </div>
                 )}
               </div>

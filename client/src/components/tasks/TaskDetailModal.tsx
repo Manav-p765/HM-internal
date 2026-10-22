@@ -4,7 +4,7 @@ import { useApp } from '../../context/AppContext';
 import { tasksApi } from '../../api/tasks';
 import { errorMessage } from '../../api/client';
 import { useApiData } from '../../api/useApiData';
-import { CommentType, Task } from '../../types/work';
+import { CommentType, Task, canChangeTask } from '../../types/work';
 import { formatDate } from '../../utils/formatters';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
@@ -12,13 +12,13 @@ import { Badge } from '../common/Badge';
 import { LoadError } from '../common/LoadError';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { TaskStatusControl } from '../work/TaskStatusControl';
-import { OverdueBadge, PriorityBadge, TaskStatusBadge, fieldClass, formatDateTime } from '../work/WorkBits';
+import { ClientRequestBadge, OverdueBadge, PriorityBadge, TaskStatusBadge, fieldClass, formatDateTime } from '../work/WorkBits';
 
 interface TaskDetailModalProps {
   taskId: string;
   onClose: () => void;
   onChanged: () => void; // refresh whatever list is behind
-  onEdit?: (task: Task) => void; // admin, manager
+  onEdit?: (task: Task) => void; // shown only to whoever may change the task (canChangeTask)
   onDeleted?: () => void;
 }
 
@@ -26,7 +26,6 @@ interface TaskDetailModalProps {
 // never shown to clients; "client feedback" is the thread shared with the client portal.
 export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, onClose, onChanged, onEdit, onDeleted }) => {
   const { currentUser, showToast } = useApp();
-  const isManager = currentUser.role === 'admin' || currentUser.role === 'manager';
   const detail = useApiData(() => tasksApi.get(taskId), [taskId]);
   const thread = useApiData(() => tasksApi.comments(taskId), [taskId]);
   const task = detail.data?.id === taskId ? detail.data : undefined;
@@ -95,6 +94,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, onClos
             <TaskStatusBadge status={task.status} />
             <PriorityBadge priority={task.priority} />
             {task.overdue && <OverdueBadge />}
+            {task.requestedByClient && <ClientRequestBadge />}
             {task.clientVisible ? (
               <Badge variant="info" size="sm">
                 <Eye className="w-3 h-3 inline mr-1" />
@@ -107,12 +107,12 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, onClos
               </Badge>
             )}
             <div className="ml-auto flex gap-2">
-              {onEdit && (
+              {onEdit && canChangeTask(task, currentUser) && (
                 <Button variant="outline" size="sm" icon={<Edit2 className="w-3.5 h-3.5" />} onClick={() => onEdit(task)}>
                   Edit
                 </Button>
               )}
-              {isManager && (
+              {canChangeTask(task, currentUser) && (
                 <Button variant="ghost" size="sm" icon={<Trash2 className="w-3.5 h-3.5" />} onClick={() => setConfirmDelete(true)}>
                   Delete
                 </Button>
@@ -126,6 +126,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ taskId, onClos
               <div>
                 <span className="text-[10px] text-[#7185A5] block">Assignee</span>
                 <span className="font-medium text-[#111827]">{task.assignee ? task.assignee.fullName : 'Unassigned'}</span>
+                <span className="text-[10px] text-[#7185A5] block">Assigned by {task.createdByName}</span>
               </div>
             </div>
             <div className="p-3 rounded-lg border border-[#DFE6F1] bg-white flex items-center gap-2">

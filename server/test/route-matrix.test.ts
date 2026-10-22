@@ -29,6 +29,10 @@ const CLIENT_ALLOWED = new Set([
   'GET /api/portal/projects/:id/tasks',
   'GET /api/portal/tasks/:id/comments',
   'POST /api/portal/tasks/:id/comments',
+  // Task requests on the company's own projects, assigned to that project's team (see portal-tasks.test.ts).
+  'GET /api/portal/projects/:id/assignees',
+  'POST /api/portal/projects/:id/tasks',
+  'PATCH /api/portal/tasks/:id',
   // Who works on the company's projects and their status today (name, designation, avatar, status, projects).
   'GET /api/portal/team',
   // The company's own issued invoices, read-only (no drafts, no internal fields; see portal-invoices.test.ts).

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useParams } from 'react-router';
-import { ArrowLeft, Calendar, FolderKanban, MessageSquare, User } from 'lucide-react';
+import { ArrowLeft, Calendar, FolderKanban, MessageSquare, Pencil, Plus, User } from 'lucide-react';
+import { PortalTaskRequestModal } from './PortalTaskRequestModal';
 import { portalApi } from '../../api/portal';
 import { errorMessage } from '../../api/client';
 import { useApiData } from '../../api/useApiData';
@@ -63,6 +64,9 @@ export const PortalProjectTasksView: React.FC = () => {
   const { id = '' } = useParams();
   const data = useApiData(() => portalApi.projectTasks(id), [id]);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  // undefined: closed; null: new request; a task: editing that request.
+  const [requestFor, setRequestFor] = useState<PortalTask | null | undefined>(undefined);
+  const [notice, setNotice] = useState('');
 
   return (
     <div className="space-y-6">
@@ -77,13 +81,31 @@ export const PortalProjectTasksView: React.FC = () => {
         <p className="py-10 text-center text-xs text-[#7185A5]">Loading tasks...</p>
       ) : (
         <>
-          <div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">{data.data.project.name}</h1>
-            <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">Tasks the team has shared with you. Leave feedback on any of them.</p>
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+            <div>
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">{data.data.project.name}</h1>
+              <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">
+                Tasks shared with you and the ones you've requested. Leave feedback on any of them.
+              </p>
+            </div>
+            <Button variant="primary" size="sm" icon={<Plus className="w-3.5 h-3.5" />} onClick={() => setRequestFor(null)}>
+              Request a task
+            </Button>
           </div>
+          {notice && (
+            <p role="status" className="p-3 text-xs bg-[#047857]/10 border border-[#047857]/20 text-[#047857] rounded-lg">
+              {notice}
+            </p>
+          )}
           {data.data.tasks.length === 0 ? (
             <Card padding="none">
-              <EmptyState icon={<FolderKanban className="w-6 h-6" />} title="No shared tasks yet" description="The team hasn't shared any tasks on this project yet." />
+              <EmptyState
+                icon={<FolderKanban className="w-6 h-6" />}
+                title="No shared tasks yet"
+                description="Nothing has been shared on this project yet. You can request a task for the team."
+                actionLabel="Request a task"
+                onAction={() => setRequestFor(null)}
+              />
             </Card>
           ) : (
             <div className="space-y-3">
@@ -94,21 +116,36 @@ export const PortalProjectTasksView: React.FC = () => {
                   open={openTaskId === task.id}
                   onToggle={() => setOpenTaskId(openTaskId === task.id ? null : task.id)}
                   onPosted={data.reload}
+                  onEdit={() => setRequestFor(task)}
                 />
               ))}
             </div>
           )}
         </>
       )}
+      {requestFor !== undefined && (
+        <PortalTaskRequestModal
+          projectId={id}
+          task={requestFor}
+          onClose={() => setRequestFor(undefined)}
+          onSaved={saved => {
+            setNotice(requestFor ? `${saved.code} updated.` : `${saved.code} requested${saved.assignee ? ` and assigned to ${saved.assignee.fullName}` : ''}. The team has been notified.`);
+            setRequestFor(undefined);
+            setOpenTaskId(saved.id);
+            data.reload();
+          }}
+        />
+      )}
     </div>
   );
 };
 
-const PortalTaskCard: React.FC<{ task: PortalTask; open: boolean; onToggle: () => void; onPosted: () => void }> = ({
+const PortalTaskCard: React.FC<{ task: PortalTask; open: boolean; onToggle: () => void; onPosted: () => void; onEdit: () => void }> = ({
   task,
   open,
   onToggle,
   onPosted,
+  onEdit,
 }) => (
   <Card padding="none" className="overflow-hidden">
     <button onClick={onToggle} className="w-full text-left px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2 hover:bg-[#F7F9FC] cursor-pointer" aria-expanded={open}>
@@ -116,6 +153,11 @@ const PortalTaskCard: React.FC<{ task: PortalTask; open: boolean; onToggle: () =
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-[#111827]">{task.title}</span>
           <span className="font-mono text-[10px] text-[#7185A5]">{task.code}</span>
+          {task.requestedByClient && (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#5038F5]/10 text-[#3F2BC9]" data-testid="your-request">
+              Your request
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap gap-x-3 text-[11px] text-[#7185A5] mt-0.5">
           {task.assignee && (
@@ -138,6 +180,14 @@ const PortalTaskCard: React.FC<{ task: PortalTask; open: boolean; onToggle: () =
         {task.overdue && <OverdueBadge />}
       </div>
     </button>
+    {open && task.editable && (
+      <div className="border-t border-[#DFE6F1] px-4 pt-3 bg-[#F7F9FC]/60 flex items-center justify-between gap-2 text-[11px] text-[#7185A5]">
+        <span>Not started yet: you can still change or reassign it.</span>
+        <Button variant="outline" size="sm" icon={<Pencil className="w-3 h-3" />} onClick={onEdit}>
+          Edit request
+        </Button>
+      </div>
+    )}
     {open && <PortalTaskThread task={task} onPosted={onPosted} />}
   </Card>
 );

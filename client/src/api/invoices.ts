@@ -1,6 +1,7 @@
 import { api } from './client';
 import { toQuery } from './query';
 import { Invoice, InvoiceListStatus, InvoicePaymentMethod, InvoicesSummary, InvoiceSummaryRow } from '../types/invoices';
+import type { InvoiceCurrency } from '../utils/money';
 
 export interface InvoiceListParams {
   status?: InvoiceListStatus;
@@ -36,13 +37,15 @@ export interface InvoiceInput {
   clientGstin?: string | null;
   invoiceDate?: string;
   dueDate: string;
+  currency?: InvoiceCurrency; // omitted: the client's default currency (INR without a client)
   taxRate?: string;
   notes?: string | null;
   items: InvoiceItemInput[];
 }
 
 export interface PaymentInput {
-  amount: string;
+  amount: string; // in the invoice's currency
+  amountInr?: string; // the INR received; required for a non-INR invoice
   txnDate: string;
   paymentMethod: InvoicePaymentMethod;
   referenceNumber?: string | null;

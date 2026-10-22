@@ -90,7 +90,7 @@ describe('role matrix', () => {
     { name: 'list tasks', method: 'get', path: () => '/api/tasks', expect: { admin: 200, manager: 200, employee: 200, client: 403, anonymous: 401 } },
     { name: 'task summary', method: 'get', path: () => '/api/tasks/summary', expect: { admin: 200, manager: 200, employee: 200, client: 403, anonymous: 401 } },
     { name: 'get own task', method: 'get', path: () => `/api/tasks/${ids.samTask}`, expect: { admin: 200, manager: 200, employee: 200, client: 403, anonymous: 401 } },
-    { name: 'create task', method: 'post', path: () => '/api/tasks', body: () => ({ projectId: ids.pA, title: 'T' }), expect: { admin: 201, manager: 201, employee: 403, client: 403, anonymous: 401 } },
+    { name: 'create task', method: 'post', path: () => '/api/tasks', body: () => ({ projectId: ids.pA, title: 'T' }), expect: { admin: 201, manager: 201, employee: 201, client: 403, anonymous: 401 } },
     { name: 'edit task', method: 'patch', path: () => `/api/tasks/${ids.samTask}`, body: () => ({ title: 'Renamed' }), expect: { admin: 200, manager: 200, employee: 403, client: 403, anonymous: 401 } },
     {
       name: 'delete task', method: 'delete', path: () => `/api/tasks/${freshTask}`,
