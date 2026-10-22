@@ -206,4 +206,15 @@ export interface NotificationFeed {
   assigned: TaskNotification[];
   dueSoon: { total: number; tasks: TaskReminder[] }; // my open tasks due by tomorrow, overdue included
   overdueTeam: { total: number; tasks: TaskReminder[] }; // admin/manager: everyone's; employee: ones I assigned
+  // Attendance, derived each time: an employee's own punch reminders; admin/manager the last week's
+  // forgotten punch-outs and outside-hours punches nobody has corrected.
+  attendance: {
+    punchInDue?: boolean;
+    punchOutDue?: boolean;
+    shift?: { start: string; end: string } | null;
+    review?: {
+      total: number;
+      records: { employeeId: string; fullName: string; workDate: string; punchIn: string; reasons: ('incomplete' | 'outside_hours')[] }[];
+    };
+  };
 }

@@ -3,20 +3,49 @@ import { z } from 'zod';
 import { query } from '../db.js';
 import { createRouter, STAFF } from '../middleware/access.js';
 import { HttpError } from '../middleware/errors.js';
+import { now } from '../services/clock.js';
 import { displayNameSql, OVERDUE_SQL } from './tasks.js';
+import { attendanceNeedingReview, todayFor } from './attendance.js';
 import { TODAY_SQL } from './shared.js';
 
 // The staff bell. Two parts:
 //   - stored: "a task was assigned to you" (migration 015, services/notifications.ts), read / unread;
 //   - derived each time, never stored: reminders for the caller's own open tasks due today, tomorrow or overdue,
 //     and overdue tasks of others they are responsible for (admin/manager: everyone's; an employee: the tasks
-//     they assigned to colleagues).
+//     they assigned to colleagues);
+//   - attendance, also derived: an employee is reminded to punch in while their shift window is open and to
+//     punch out once their shift has ended; admin/manager see forgotten punch-outs and outside-hours punches
+//     of the last ATTENDANCE_REVIEW_DAYS days that nobody has corrected yet.
 // Only tasks the caller may open anyway (see routes/tasks.ts) are listed; there are no money fields here.
 export const notificationsRouter = createRouter();
 
 const isManager = (req: Request) => req.user!.role === 'admin' || req.user!.role === 'manager';
 const LIST_LIMIT = 20;
 const REMINDER_LIMIT = 10;
+const ATTENDANCE_REVIEW_DAYS = 7;
+
+async function attendanceFeed(req: Request) {
+  const at = now();
+  if (isManager(req)) {
+    const records = (await attendanceNeedingReview(ATTENDANCE_REVIEW_DAYS, at)).filter(
+      r => r.reasons.includes('incomplete') || r.reasons.includes('outside_hours'),
+    );
+    return {
+      review: {
+        total: records.length,
+        records: records.slice(0, REMINDER_LIMIT).map(r => ({
+          employeeId: r.employeeId,
+          fullName: r.fullName,
+          workDate: r.workDate,
+          punchIn: r.punchIn,
+          reasons: r.reasons.filter(x => x !== 'late'),
+        })),
+      },
+    };
+  }
+  const today = req.user!.role === 'employee' && req.user!.employeeId ? await todayFor(req.user!.employeeId, at) : null;
+  return today ? { punchInDue: today.punchInDue, punchOutDue: today.punchOutDue, shift: today.shift } : {};
+}
 
 const REMINDER_COLUMNS = `
   t.id, t.task_code AS code, t.title, t.deadline, t.priority, t.status, p.name AS "projectName",
@@ -40,7 +69,7 @@ notificationsRouter.get('/', STAFF, async (req, res) => {
                        AND ($2::boolean OR t.created_by = $3)`;
   const teamParams = [employeeId, isManager(req), userId];
 
-  const [assigned, [{ unread }], dueSoon, [{ total: dueSoonTotal }], overdueTeam, [{ total: overdueTeamTotal }]] = await Promise.all([
+  const [assigned, [{ unread }], dueSoon, [{ total: dueSoonTotal }], overdueTeam, [{ total: overdueTeamTotal }], attendance] = await Promise.all([
     query(
       `SELECT n.id, n.kind, n.read_at AS "readAt", n.created_at AS "createdAt",
               json_build_object('id', t.id, 'code', t.task_code, 'title', t.title, 'deadline', t.deadline,
@@ -67,6 +96,7 @@ notificationsRouter.get('/', STAFF, async (req, res) => {
       : Promise.resolve([{ total: 0 }]),
     query(`SELECT ${REMINDER_COLUMNS} ${REMINDER_FROM} ${teamWhere} ORDER BY t.deadline, t.task_code LIMIT ${REMINDER_LIMIT}`, teamParams),
     query<{ total: number }>(`SELECT count(*)::int AS total FROM tasks t ${teamWhere}`, teamParams),
+    attendanceFeed(req),
   ]);
 
   res.json({
@@ -74,6 +104,7 @@ notificationsRouter.get('/', STAFF, async (req, res) => {
     assigned,
     dueSoon: { total: dueSoonTotal, tasks: dueSoon },
     overdueTeam: { total: overdueTeamTotal, tasks: overdueTeam },
+    attendance,
   });
 });
 

@@ -11,8 +11,6 @@ declare module 'express-session' {
     // When the user signed in (ms since epoch, from services/clock.ts). The session ends
     // SESSION_LIFETIME_MS after this, however active it is (checked in requireSession).
     loginAt?: number;
-    // IST date on which the automatic punch-in was last attempted for this session (services/attendance.ts).
-    punchCheckedOn?: string;
   }
 }
 

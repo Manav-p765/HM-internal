@@ -27,7 +27,7 @@ Migrations always run **before** the code that needs them, by hand, from your ma
    npm run db:migrate
    ```
    It prints each file it applies (`Applied N migration(s).`). Run it again: it must print `No pending migrations.`
-   This round adds `010_password_tokens`, `011_company_logo` and `012_employee_working_hours` (all additive).
+   This round adds `016_manual_punch_in` (it widens a CHECK and adds an index: additive). `013`–`015` were applied to production on 2026-10-22.
 3. Once only, if not done yet: make Neon enforce the statement timeout (Neon drops the one the app sends at connect time, see NEON.md):
    ```sql
    ALTER ROLE hm_app SET statement_timeout = '15s';
@@ -77,7 +77,7 @@ Must **not** be set in production (the server refuses to start): `DB_SCHEMA`, `S
 5. In the app:
    - [ ] Sign in as an admin: Dashboard opens on **Overview**, the **Operations** tab works, Invoices / Reports / Accounting / Salary open.
    - [ ] Sign in as a manager: no Invoices, Reports, Accounting or Salary in the menu; the dashboard has no money; `/invoices` redirects to the dashboard.
-   - [ ] Sign in as an employee: punched in automatically; **Punch Out** asks for confirmation; signing out does **not** punch out.
+   - [ ] Sign in as an employee: **not** punched in until they press **Punch In** (asks for confirmation); **Punch Out** asks for confirmation; signing out does **not** punch out.
    - [ ] Sign in as a client: Projects, **Invoices** (only their company's issued invoices; open one, Print / Save as PDF), Team.
    - [ ] Settings > Users: send yourself a reset link; the email arrives (check spam), has a plain and an HTML version, the link opens `APP_URL/set-password` and works once.
    - [ ] Employees: nobody who signs in shows "No login" (otherwise Link, or `npm run link-by-email`).

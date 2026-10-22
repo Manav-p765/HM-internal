@@ -59,7 +59,7 @@ beforeAll(async () => {
     .send({ clientId: acme, dueDate: '2099-01-01', items: [{ description: 'Design (fake)', quantity: '1', unitPrice: '1000.00' }] })
     .expect(201);
   await adminAgent.post(`/api/invoices/${inv.body.invoice.id}/send`).expect(200);
-  await signIn('a@example.test'); // automatic punch-in: today's attendance row
+  await (await signIn('a@example.test')).post('/api/attendance/me/punch-in').expect(201); // today's attendance row
   const [leave] = await query<{ id: string }>(
     `INSERT INTO leave_requests (employee_id, leave_type, start_date, end_date, day_type, total_days, reason, status)
      VALUES ($1, 'casual', '2099-01-05', '2099-01-05', 'full', 1, 'Fake reason', 'pending') RETURNING id`,

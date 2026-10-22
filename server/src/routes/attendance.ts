@@ -7,12 +7,21 @@ import { createRouter, STAFF } from '../middleware/access.js';
 import { HttpError, parseBody } from '../middleware/errors.js';
 import { isoDate } from './shared.js';
 import { dayStatus } from '../services/availability.js';
-import { employeeWorkDate, isOpenShift, openShiftSql, type WorkingHours } from '../services/attendance.js';
+import {
+  employeeWorkDate,
+  inPunchInWindow,
+  isOpenShift,
+  openShiftSql,
+  punchFlags,
+  shiftWindow,
+  type WorkingHours,
+} from '../services/attendance.js';
 
 // Attendance: one row per employee per working day. The working day follows the employee's working hours
 // (services/attendance.ts: it starts 2 h before their shift; without hours, 06:00-05:59 IST), so a night
-// shift is one record. Rows are created by the automatic punch-in at login or by an admin/manager
-// correction; employees can only punch out.
+// shift is one record. Rows are created by the employee's own Punch In (any time: a punch outside the shift
+// window is allowed and flagged) or by an admin/manager correction; the employee punches out themselves.
+// Late / outside-hours flags are derived from the working hours (punchFlags), never stored.
 // "Today" and every timestamp come from the server clock (services/clock.ts), never from the browser.
 // Clients are refused everywhere.
 export const attendanceRouter = createRouter();
@@ -33,7 +42,7 @@ interface RecordRow extends WorkingHours {
   workDate: string;
   punchIn: Date;
   punchOut: Date | null;
-  source: 'login' | 'manual';
+  source: 'login' | 'manual' | 'punch';
   note: string | null;
   corrected: boolean;
 }
@@ -55,7 +64,7 @@ const CURRENT_SHIFT_SQL = `
 
 function shape(record: RecordRow, at: Date) {
   const { shiftStart: _start, shiftEnd: _end, ...rest } = record;
-  return { ...rest, workedMinutes: workedMinutes(record, at) };
+  return { ...rest, workedMinutes: workedMinutes(record, at), ...punchFlags(record, record) };
 }
 
 // 'HH:MM' -> 'HH:MM' (Postgres time text is 'HH:MM:SS').
@@ -79,13 +88,19 @@ const notFound = () => new HttpError(404, 'Attendance record not found', 'NOT_FO
 
 // ---------------------------------------------------------------------------
 // GET /api/attendance/me/today  (employee): the current shift's record, the employee's working hours
-// (`shift`, null when not set yet) and any approved leave covering their current working day (`date`)
+// (`shift`, null when not set yet), any approved leave covering their current working day (`date`) and the
+// reminders `punchInDue` / `punchOutDue`
 // ---------------------------------------------------------------------------
 attendanceRouter.get('/me/today', ['employee'], async (req, res) => {
-  const employeeId = ownEmployeeId(req);
-  const at = now();
+  const today = await todayFor(ownEmployeeId(req), now());
+  if (!today) throw new HttpError(404, 'Your account is not linked to an employee record', 'NOT_LINKED');
+  res.json(today);
+});
+
+// The employee's current shift and what to remind them of (also used by the bell, routes/notifications.ts).
+export async function todayFor(employeeId: string, at: Date) {
   const hours = await workingHoursOf(employeeId);
-  if (!hours) throw new HttpError(404, 'Your account is not linked to an employee record', 'NOT_LINKED');
+  if (!hours) return null;
   const today = employeeWorkDate(at, hours);
   const [[record], [leave]] = await Promise.all([
     query<RecordRow>(`SELECT ${RECORD_COLUMNS} FROM ${RECORD_FROM} ${CURRENT_SHIFT_SQL}`, [employeeId, today, at]),
@@ -98,7 +113,69 @@ attendanceRouter.get('/me/today', ['employee'], async (req, res) => {
     ),
   ]);
   const shift = hours.shiftStart ? { start: hhmm(hours.shiftStart), end: hhmm(hours.shiftEnd) } : null;
-  res.json({ date: today, serverTime: at.toISOString(), shift, record: record ? shape(record, at) : null, leave: leave ?? null });
+  return {
+    date: today,
+    serverTime: at.toISOString(),
+    shift,
+    record: record ? shape(record, at) : null,
+    leave: leave ?? null,
+    ...punchPrompts(record, leave, today, hours, at),
+  };
+}
+
+// What to remind the employee of (the banner and the bell): punch in while their shift window is open and
+// nothing is recorded yet (not on a full-day leave), or punch out once the open shift has passed its end.
+function punchPrompts(
+  record: RecordRow | undefined,
+  leave: { dayType?: string } | undefined,
+  today: string,
+  hours: WorkingHours,
+  at: Date,
+): { punchInDue: boolean; punchOutDue: boolean } {
+  const punchInDue = !record && leave?.dayType !== 'full' && inPunchInWindow(at, today, hours);
+  const end = record && !record.punchOut && isOpenShift(record, hours, at) ? shiftWindow(record.workDate, hours)?.end : undefined;
+  return { punchInDue, punchOutDue: Boolean(end && at > end) };
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/attendance/me/punch-in  (employee): starts the shift of their current working day. Allowed at
+// any time (a punch outside the shift window is flagged, not refused), once per working day, and never while
+// a shift is still open (a night shift running past midnight).
+// ---------------------------------------------------------------------------
+attendanceRouter.post('/me/punch-in', ['employee'], async (req, res) => {
+  const employeeId = ownEmployeeId(req);
+  const at = now();
+  const hours = await workingHoursOf(employeeId);
+  if (!hours) throw new HttpError(404, 'Your account is not linked to an employee record', 'NOT_LINKED');
+  const day = employeeWorkDate(at, hours);
+
+  const record = await withTransaction(async client => {
+    // Serialises two clicks (or two tabs) on the same employee.
+    const employee = (await client.query<{ status: string }>('SELECT status FROM employees WHERE id = $1 FOR UPDATE', [employeeId])).rows[0];
+    if (!employee || employee.status === 'inactive') throw new HttpError(409, 'Your employee record is not active', 'EMPLOYEE_INACTIVE');
+    const current = (await client.query<RecordRow>(`SELECT ${RECORD_COLUMNS} FROM ${RECORD_FROM} ${CURRENT_SHIFT_SQL}`, [employeeId, day, at])).rows[0];
+    if (current && !current.punchOut && isOpenShift(current, hours, at)) {
+      throw new HttpError(409, 'You are already punched in', 'ALREADY_PUNCHED_IN');
+    }
+    if (current && current.workDate === day) {
+      throw new HttpError(409, 'This shift is already recorded. Ask a manager if it needs changing.', 'ALREADY_RECORDED');
+    }
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO attendance_records (employee_id, work_date, punch_in, source, created_by)
+       VALUES ($1, $2, $3, 'punch', $4) RETURNING id`,
+      [employeeId, day, at, req.user!.id],
+    );
+    return (await client.query<RecordRow>(`SELECT ${RECORD_COLUMNS} FROM ${RECORD_FROM} WHERE a.id = $1`, [inserted.rows[0].id])).rows[0];
+  });
+
+  const flags = punchFlags(record, hours);
+  await audit(req, {
+    action: 'attendance.punched_in',
+    entityType: 'attendance',
+    entityId: record.id,
+    metadata: { employeeId, workDate: day, source: 'punch', late: flags.lateMinutes !== null, outsideHours: flags.outsideHours },
+  });
+  res.status(201).json({ record: shape(record, at) });
 });
 
 // ---------------------------------------------------------------------------
@@ -261,8 +338,39 @@ attendanceRouter.get('/', ['admin', 'manager'], async (req, res) => {
       // Open shifts recorded on that working day (a night shift still running after 06:00 counts on its own day).
       currentlyWorking: employees.filter(e => e.record && !e.record.punchOut && e.record.workedMinutes !== null).length,
       incomplete: employees.filter(e => e.record && e.record.workedMinutes === null).length,
+      late: employees.filter(e => e.record?.lateMinutes != null).length,
+      outsideHours: employees.filter(e => e.record?.outsideHours).length,
     },
   });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/attendance/review?days=1..92  (admin, manager): records of the last `days` working days (default
+// 30) that need a look: incomplete (forgot to punch out), punched in outside the shift window, or late.
+// Records already corrected by an admin/manager are left out. Newest first.
+// ---------------------------------------------------------------------------
+const reviewQuery = z.object({ days: z.coerce.number().int().min(1).max(92).default(30) });
+
+export async function attendanceNeedingReview(days: number, at: Date) {
+  const rows = await query<RecordRow & { fullName: string; code: string }>(
+    `SELECT ${RECORD_COLUMNS}, e.full_name AS "fullName", e.employee_code AS code
+       FROM ${RECORD_FROM}
+      WHERE a.updated_by IS NULL AND a.work_date >= ($1::timestamptz AT TIME ZONE 'Asia/Kolkata')::date - $2::int
+        AND NOT EXISTS (SELECT 1 FROM users u WHERE u.employee_id = e.id AND u.role IN ('admin', 'manager'))
+      ORDER BY a.work_date DESC, e.full_name`,
+    [at, days],
+  );
+  return rows
+    .map(({ fullName, code, ...r }) => ({ ...shape(r, at), fullName, code }))
+    .filter(r => r.workedMinutes === null || r.outsideHours || r.lateMinutes !== null)
+    .map(r => ({ ...r, reasons: [...(r.workedMinutes === null ? ['incomplete'] : []), ...(r.outsideHours ? ['outside_hours'] : []), ...(r.lateMinutes !== null ? ['late'] : [])] }));
+}
+
+attendanceRouter.get('/review', ['admin', 'manager'], async (req, res) => {
+  const parsed = reviewQuery.safeParse(req.query);
+  if (!parsed.success) throw new HttpError(400, parsed.error.issues[0].message, 'VALIDATION_ERROR');
+  const records = await attendanceNeedingReview(parsed.data.days, now());
+  res.json({ days: parsed.data.days, records });
 });
 
 // ---------------------------------------------------------------------------

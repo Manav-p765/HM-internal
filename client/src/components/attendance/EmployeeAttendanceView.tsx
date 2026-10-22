@@ -8,6 +8,8 @@ import { EmptyState } from '../common/EmptyState';
 import { LoadError } from '../common/LoadError';
 import { Calendar, CheckCircle2, Clock, Download } from 'lucide-react';
 import { PunchOutButton } from './PunchOutButton';
+import { PunchInButton } from './PunchInButton';
+import { PunchFlagBadges } from './PunchFlagBadges';
 import { exportToCSV, formatDate, formatMinutes, formatMonthYear, formatTimeIst } from '../../utils/formatters';
 import { AttendanceRecord } from '../../types/attendance';
 
@@ -63,7 +65,7 @@ export const EmployeeAttendanceView: React.FC = () => {
         <div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111827]">My Attendance History</h1>
           <p className="text-xs sm:text-sm text-[#7185A5] mt-0.5">
-            You are punched in automatically when you sign in. Times are shown in IST.
+            Punch in when you start your shift and punch out when you stop. Times are shown in IST.
           </p>
         </div>
 
@@ -71,6 +73,14 @@ export const EmployeeAttendanceView: React.FC = () => {
           <Button variant="outline" size="sm" icon={<Download className="w-3.5 h-3.5" />} onClick={handleExportCSV} disabled={!data}>
             Export CSV
           </Button>
+          {today.data && !todayRecord && today.data.leave?.dayType !== 'full' && (
+            <PunchInButton
+              outsideWindow={!today.data.punchInDue}
+              onPunchedIn={async () => {
+                await Promise.all([today.reload(), reload()]);
+              }}
+            />
+          )}
           {todayRecord && !todayRecord.punchOut && (
             <PunchOutButton
               onPunchedOut={async () => {
@@ -159,7 +169,9 @@ export const EmployeeAttendanceView: React.FC = () => {
                   return (
                     <tr key={r.id} className="hover:bg-[#F7F9FC]/60 transition-colors">
                       <td className="py-3 px-4 font-semibold text-[#111827]">{formatDate(r.workDate)}</td>
-                      <td className="py-3 px-4 text-[#475569] font-mono">{formatTimeIst(r.punchIn)}</td>
+                      <td className="py-3 px-4 text-[#475569] font-mono">
+                        {formatTimeIst(r.punchIn)} <PunchFlagBadges record={r} />
+                      </td>
                       <td className="py-3 px-4 text-[#475569] font-mono">{r.punchOut ? formatTimeIst(r.punchOut) : '—'}</td>
                       <td className="py-3 px-4 font-mono font-medium text-[#111827]">{formatMinutes(r.workedMinutes)}</td>
                       <td className="py-3 px-4 text-center">

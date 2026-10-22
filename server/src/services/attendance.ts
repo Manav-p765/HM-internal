@@ -1,9 +1,4 @@
-import type { Request } from 'express';
-import { query } from '../db.js';
-import type { SessionUser } from '../middleware/auth.js';
-import { audit } from './audit.js';
-import { describeError } from './errorLog.js';
-import { istDate, now, WORKDAY_START_IST } from './clock.js';
+import { istDate, WORKDAY_START_IST } from './clock.js';
 
 // Working hours and shifts. Each employee has a shift in IST wall-clock time (employees.shift_start/end,
 // e.g. 21:00 -> 06:00 overnight; most shifts are at night for overseas clients). Around it:
@@ -76,47 +71,39 @@ export const employeeWorkDateSql = (e: string, at: string) => `
      WHEN ${e}.shift_start IS NULL THEN ${WORKDAY_START_IST.hour * 60 + WORKDAY_START_IST.minute}
      ELSE (extract(epoch FROM ${e}.shift_start) / 60)::int - ${SHIFT_EARLY_BUFFER_MINUTES} END))::date`;
 
-// Automatic punch-in: an employee-role user with a linked, active employee record gets a record for their
-// current working day on a successful login or a presence heartbeat (POST). Never from a GET. Nothing is
-// created while the employee still has an open shift (a night shift running past midnight stays one
-// record), nor when the working day already has a record (closed or open), so a tab left open after
-// punching out never starts a second shift. Idempotent (ON CONFLICT DO NOTHING); punch_in is the actual
-// creation time. The session remembers the working day it checked so the insert runs once per session per
-// working day. Never throws: a failure is logged (no secrets) and the caller carries on.
-export async function autoPunchIn(req: Request, user: SessionUser): Promise<void> {
-  if (user.role !== 'employee' || !user.employeeId) return;
-  const at = now();
+// Punching in is the employee's own action (POST /api/attendance/me/punch-in; migration 016). Nothing punches
+// anyone in automatically: signing in, a heartbeat or opening a page never creates a record.
 
-  try {
-    const [employee] = await query<WorkingHours>(
-      `SELECT shift_start::text AS "shiftStart", shift_end::text AS "shiftEnd" FROM employees WHERE id = $1`,
-      [user.employeeId],
-    );
-    if (!employee) return;
-    const day = employeeWorkDate(at, employee);
-    if (req.session.punchCheckedOn === day) return;
+// A punch-in more than this long after the shift start is late.
+export const LATE_AFTER_MINUTES = 30;
 
-    const inserted = await query<{ id: string }>(
-      `INSERT INTO attendance_records (employee_id, work_date, punch_in, source, created_by)
-       SELECT e.id, $2::date, $3, 'login', $4 FROM employees e
-        WHERE e.id = $1 AND e.status = 'active'
-          AND NOT EXISTS (SELECT 1 FROM attendance_records o WHERE o.employee_id = e.id AND ${openShiftSql('o', 'e', '$3')})
-       ON CONFLICT (employee_id, work_date) DO NOTHING
-       RETURNING id`,
-      [user.employeeId, day, at, user.id],
-    );
-    req.session.punchCheckedOn = day;
-    if (inserted.length > 0) {
-      await audit(req, {
-        action: 'attendance.punched_in',
-        actorUserId: user.id,
-        entityType: 'attendance',
-        entityId: inserted[0].id,
-        metadata: { employeeId: user.employeeId, workDate: day, source: 'login' },
-      });
-    }
-  } catch (err) {
-    // Only the error class and code: no message (pg messages carry values), body, session or credentials.
-    console.error(`Automatic punch-in failed for user ${user.id}: ${describeError(err)}`);
-  }
+// The scheduled shift of a working day: start and end instants (null without working hours).
+export function shiftWindow(workDate: string, hours: WorkingHours): { start: Date; end: Date } | null {
+  if (!hours.shiftStart || !hours.shiftEnd) return null;
+  const start = minutesOf(hours.shiftStart);
+  const length = (minutesOf(hours.shiftEnd) - start + 1440) % 1440;
+  const istMidnight = Date.parse(`${workDate}T00:00:00Z`) - IST_OFFSET_MINUTES * MINUTE;
+  return { start: new Date(istMidnight + start * MINUTE), end: new Date(istMidnight + (start + length) * MINUTE) };
+}
+
+// The window in which the Punch In prompt is shown: from the early buffer before the shift start to its end.
+export function inPunchInWindow(at: Date, workDate: string, hours: WorkingHours): boolean {
+  const shift = shiftWindow(workDate, hours);
+  if (!shift) return true; // no working hours: the whole default working day
+  return at.getTime() >= shift.start.getTime() - SHIFT_EARLY_BUFFER_MINUTES * MINUTE && at <= shift.end;
+}
+
+// Derived, never stored: how late the punch-in was (minutes after the shift start, only beyond
+// LATE_AFTER_MINUTES) and whether it fell outside the shift window altogether (allowed, flagged for review).
+// Without working hours nothing is flagged.
+export function punchFlags(
+  record: { workDate: string; punchIn: Date },
+  hours: WorkingHours,
+): { lateMinutes: number | null; outsideHours: boolean } {
+  const shift = shiftWindow(record.workDate, hours);
+  if (!shift) return { lateMinutes: null, outsideHours: false };
+  const t = record.punchIn.getTime();
+  const outsideHours = t < shift.start.getTime() - SHIFT_EARLY_BUFFER_MINUTES * MINUTE || t > shift.end.getTime();
+  const after = Math.floor((t - shift.start.getTime()) / MINUTE);
+  return { lateMinutes: !outsideHours && after > LATE_AFTER_MINUTES ? after : null, outsideHours };
 }

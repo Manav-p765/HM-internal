@@ -24,6 +24,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { Button } from '../common/Button';
+import { PunchInButton } from '../attendance/PunchInButton';
 import { Badge } from '../common/Badge';
 
 const FEED_POLL_MS = 60_000;
@@ -100,13 +101,28 @@ export const TopNav: React.FC<TopNavProps> = ({
     </button>
   );
 
+  // Attendance (from the same feed): an employee's punch reminders; admin/manager the records to review.
+  const attendance = feed.data?.attendance ?? {};
+  const attendanceReview = attendance.review ?? { total: 0, records: [] };
+
   const notificationCount =
-    overdueTotalCount + (isAdmin ? pendingSalaryCount : 0) + clientRequestCount + unreadAssigned + dueSoon.total + overdueTeam.total;
+    overdueTotalCount +
+    (isAdmin ? pendingSalaryCount : 0) +
+    clientRequestCount +
+    unreadAssigned +
+    dueSoon.total +
+    overdueTeam.total +
+    (attendance.punchInDue ? 1 : 0) +
+    (attendance.punchOutDue ? 1 : 0) +
+    attendanceReview.total;
 
   // Context-aware Quick Action button
   const renderQuickAction = () => {
-    // Employee: punch-in is automatic at sign-in; punch-out lives on the dashboard and attendance page.
+    // Employee: nothing punches them in automatically. While their shift is due the top bar offers Punch In on
+    // every page (the dashboard and My Attendance have their own button); punch-out lives on those two pages.
     if (currentUser.role === 'employee') {
+      const ownPunchCard = pathname.startsWith('/my/attendance') || pathname.startsWith('/dashboard');
+      if (attendance.punchInDue && !ownPunchCard) return <PunchInButton onPunchedIn={feed.reload} />;
       if (pathname.startsWith('/my/attendance')) return null;
       return (
         <Button variant="outline" size="sm" icon={<Clock className="w-3.5 h-3.5" />} onClick={() => navigate('/my/attendance')}>
@@ -222,6 +238,57 @@ export const TopNav: React.FC<TopNavProps> = ({
               </div>
 
               <div className="space-y-2 max-h-96 overflow-y-auto">
+                {/* Attendance reminders for the employee. */}
+                {(attendance.punchInDue || attendance.punchOutDue) && (
+                  <div className="p-2.5 rounded-lg bg-[#B45309]/5 border border-[#B45309]/15 text-xs" data-testid="bell-punch">
+                    <div className="flex items-center gap-1.5 font-semibold text-[#B45309]">
+                      <Clock className="w-4 h-4 shrink-0" />
+                      {attendance.punchInDue ? 'You have not punched in' : 'Your shift has ended'}
+                    </div>
+                    <p className="text-[11px] text-[#475569] mt-1">
+                      {attendance.punchInDue
+                        ? `Your shift${attendance.shift ? ` starts at ${attendance.shift.start} IST` : ' is on'}. Punch in when you start working.`
+                        : `Your shift ended${attendance.shift ? ` at ${attendance.shift.end} IST` : ''}. Punch out when you stop working.`}
+                    </p>
+                    <button
+                      onClick={() => {
+                        navigate('/my/attendance');
+                        setNotificationsOpen(false);
+                      }}
+                      className="mt-1.5 text-[11px] font-medium text-[#5038F5] hover:underline flex items-center gap-1"
+                    >
+                      My Attendance <ArrowRight className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Admin/manager: forgotten punch-outs and outside-hours punches of the last week, not yet corrected. */}
+                {attendanceReview.total > 0 && (
+                  <div className="p-2.5 rounded-lg bg-[#B45309]/5 border border-[#B45309]/15 text-xs" data-testid="bell-attendance-review">
+                    <div className="flex items-center gap-1.5 font-semibold text-[#B45309]">
+                      <Clock className="w-4 h-4 shrink-0" />
+                      {attendanceReview.total} Attendance Record{attendanceReview.total === 1 ? '' : 's'} to Check
+                    </div>
+                    <ul className="mt-1 space-y-0.5 text-[11px] text-[#475569]">
+                      {attendanceReview.records.slice(0, 5).map(r => (
+                        <li key={`${r.employeeId}-${r.workDate}`}>
+                          {r.fullName} · {formatDate(r.workDate)} ·{' '}
+                          {r.reasons.map(x => (x === 'incomplete' ? 'no punch-out' : 'outside hours')).join(', ')}
+                        </li>
+                      ))}
+                    </ul>
+                    <button
+                      onClick={() => {
+                        navigate('/attendance');
+                        setNotificationsOpen(false);
+                      }}
+                      className="mt-1.5 text-[11px] font-medium text-[#5038F5] hover:underline flex items-center gap-1"
+                    >
+                      Review Attendance <ArrowRight className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+
                 {/* Assigned to you: newest first; unread ones stand out and are marked read when opened. */}
                 {feed.data && feed.data.assigned.length > 0 && (
                   <div className="p-2.5 rounded-lg bg-[#5038F5]/5 border border-[#5038F5]/15 text-xs" data-testid="bell-assigned">
