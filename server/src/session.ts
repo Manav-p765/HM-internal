@@ -15,7 +15,7 @@ declare module 'express-session' {
 }
 
 // Absolute lifetime of a sign-in, for every role. Activity (requests, presence heartbeats) never extends it.
-export const SESSION_LIFETIME_MS = 12 * 60 * 60 * 1000;
+export const SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export const sessionMiddleware = session({
   name: 'hm.sid',

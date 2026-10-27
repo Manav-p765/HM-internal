@@ -640,7 +640,7 @@ describe('list, derived statuses and summary', () => {
 
     // Two days later the not-yet-due invoice is overdue too (nothing is stored).
     setClock(new Date('2026-10-21T04:00:00Z'));
-    agents.admin = await signIn('admin@example.test'); // sessions last 12 hours
+    agents.admin = await signIn('admin@example.test');
     expect(idsOf(await list('?status=overdue'))).toEqual([due.id, overdue.id].sort());
     expect((await list('')).summary.overdueTotal).toBe('4720.00');
   });

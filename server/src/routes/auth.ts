@@ -69,7 +69,7 @@ authRouter.post('/login', 'public', loginLimiter, async (req, res) => {
 
   await regenerateSession(req); // new session id on privilege change (session fixation)
   req.session.userId = user.id;
-  req.session.loginAt = now().getTime(); // the 12-hour session lifetime starts here
+  req.session.loginAt = now().getTime(); // the 7-day session lifetime starts here
   await query('UPDATE users SET last_login_at = now() WHERE id = $1', [user.id]);
   await audit(req, { action: 'auth.login_success', actorUserId: user.id, entityType: 'user', entityId: user.id });
 
@@ -127,7 +127,7 @@ authRouter.post('/change-password', 'session', async (req, res) => {
 
   // Sign out every other device and give this one a fresh session id.
   await deleteUserSessions(userId);
-  // A new session id, but the same sign-in: the 12-hour lifetime still counts from the original login.
+  // A new session id, but the same sign-in: the 7-day lifetime still counts from the original login.
   const loginAt = req.session.loginAt;
   await regenerateSession(req);
   req.session.userId = userId;
