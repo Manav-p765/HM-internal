@@ -14,6 +14,7 @@ import {
   openShiftSql,
   punchFlags,
   type WorkingHours,
+  workDayStart,
 } from '../services/attendance.js';
 
 // Attendance: one row per employee per working day. The working day follows the employee's working hours
@@ -87,8 +88,8 @@ const notFound = () => new HttpError(404, 'Attendance record not found', 'NOT_FO
 
 // ---------------------------------------------------------------------------
 // GET /api/attendance/me/today  (employee): the current shift's record, the employee's working hours
-// (`shift`, null when not set yet), any approved leave covering their current working day (`date`) and the
-// reminder `punchInDue`
+// (`shift`, null when not set yet), the shift just closed (`lastShift`, see todayFor), any approved leave
+// covering their current working day (`date`) and the reminder `punchInDue`
 // ---------------------------------------------------------------------------
 attendanceRouter.get('/me/today', ['employee'], async (req, res) => {
   const today = await todayFor(ownEmployeeId(req), now());
@@ -111,12 +112,24 @@ export async function todayFor(employeeId: string, at: Date) {
       [employeeId, today],
     ),
   ]);
+  // A shift of an earlier working day that was punched out during this one (a night shift closed after the
+  // working day rolled over): shown as "last shift" so the punch-out is visibly recorded, while `record` stays
+  // null and the employee can still punch in for this working day.
+  const [lastShift] = record
+    ? []
+    : await query<RecordRow>(
+        `SELECT ${RECORD_COLUMNS} FROM ${RECORD_FROM}
+          WHERE a.employee_id = $1 AND a.work_date < $2 AND a.punch_out >= $3
+          ORDER BY a.punch_out DESC LIMIT 1`,
+        [employeeId, today, workDayStart(today, hours)],
+      );
   const shift = hours.shiftStart ? { start: hhmm(hours.shiftStart), end: hhmm(hours.shiftEnd) } : null;
   return {
     date: today,
     serverTime: at.toISOString(),
     shift,
     record: record ? shape(record, at) : null,
+    lastShift: lastShift ? shape(lastShift, at) : null,
     leave: leave ?? null,
     ...punchPrompts(record, leave, today, hours, at),
   };

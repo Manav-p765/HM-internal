@@ -311,7 +311,7 @@ describe('working hours', () => {
     expect((await records(ids.empB)).map(r => r.work_date)).toEqual([DAY]);
 
     for (const t of ['2026-10-14T19:00:00Z', '2026-10-14T23:30:00Z', '2026-10-15T01:30:00Z']) {
-      setClock(new Date(t)); // 00:30, 05:00 and 07:00 IST on the 15th (sessions last 12 h)
+      setClock(new Date(t)); // 00:30, 05:00 and 07:00 IST on the 15th
       await agent.post('/api/presence/heartbeat').expect(200);
     }
     const today = await agent.get('/api/attendance/me/today').expect(200);
@@ -339,7 +339,7 @@ describe('working hours', () => {
     await setShift(ids.empA, '10:00', '19:00');
     await query(`INSERT INTO attendance_records (employee_id, work_date, punch_in) VALUES ($1, $2, '2026-10-14T04:30:00Z')`, [ids.empA, DAY]);
     setClock(new Date('2026-10-14T16:29:00Z')); // 21:59 IST: inside the buffer (19:00 + 3 h)
-    agents.employee = await signIn('a@example.test'); // sessions last 12 h; the open shift blocks a new record
+    agents.employee = await signIn('a@example.test'); // the open shift blocks a new record
     agents.manager = await signIn('manager@example.test');
     expect((await agents.employee.get('/api/attendance/me/today').expect(200)).body.record.workedMinutes).toBe(719);
     expect((await agents.manager.get('/api/attendance').expect(200)).body.summary.currentlyWorking).toBe(1);
@@ -349,6 +349,52 @@ describe('working hours', () => {
     const roster = (await agents.manager.get('/api/attendance').expect(200)).body;
     expect(roster.summary).toMatchObject({ currentlyWorking: 0, incomplete: 1 });
     expect(roster.employees.find((e: { employeeId: string }) => e.employeeId === ids.empA).shift).toEqual({ start: '10:00', end: '19:00' });
+  });
+
+  it('a late punch-in gets a whole shift: still "working" past the scheduled end plus buffer, then closes normally', async () => {
+    await query('DELETE FROM attendance_records');
+    await setShift(ids.empA, '10:00', '19:00');
+    setClock(new Date('2026-10-14T08:30:00Z')); // 14:00 IST, 4 h late
+    await punchIn(await signIn('a@example.test')).expect(201);
+    setClock(new Date('2026-10-14T17:00:00Z')); // 22:30 IST: past 19:00 + 3 h, inside 14:00 + 9 h + 3 h
+    const agent = await signIn('a@example.test');
+    expect((await agent.get('/api/attendance/me/today').expect(200)).body.record).toMatchObject({ punchOut: null, workedMinutes: 510 });
+    expect((await agent.post('/api/attendance/me/punch-out').expect(200)).body.record).toMatchObject({ workDate: DAY, workedMinutes: 510 });
+  });
+
+  it('a punch-in before the early buffer (previous working day) can still be punched out after the day rolls over', async () => {
+    await query('DELETE FROM attendance_records');
+    await setShift(ids.empB, '21:00', '06:00');
+    setClock(new Date('2026-10-14T13:00:00Z')); // 18:30 IST: before 19:00, so the 13th's working day
+    const punched = await punchIn(await signIn('b@example.test')).expect(201);
+    expect(punched.body.record).toMatchObject({ workDate: '2026-10-13', outsideHours: true, workedMinutes: 0 });
+
+    setClock(new Date('2026-10-14T23:30:00Z')); // 05:00 IST on the 15th: the 14th's working day
+    const agent = await signIn('b@example.test');
+    const today = await agent.get('/api/attendance/me/today').expect(200);
+    expect(today.body).toMatchObject({ date: DAY, record: { workDate: '2026-10-13', punchOut: null }, punchInDue: false });
+    expect((await agent.post('/api/attendance/me/punch-out').expect(200)).body.record).toMatchObject({ workedMinutes: 630 });
+    // Shown as the last shift, not as nothing recorded.
+    const after = await agent.get('/api/attendance/me/today').expect(200);
+    expect(after.body).toMatchObject({ record: null, lastShift: { workDate: '2026-10-13', workedMinutes: 630 } });
+  });
+
+  it('without working hours, a night shift closed after 06:00 shows as the last shift; punching in for the new day still works', async () => {
+    await query('DELETE FROM attendance_records');
+    setClock(new Date('2026-10-14T15:30:00Z')); // 21:00 IST on the 14th
+    await punchIn(await signIn('a@example.test')).expect(201);
+    setClock(new Date('2026-10-15T01:00:00Z')); // 06:30 IST on the 15th: the 15th's working day
+    const agent = await signIn('a@example.test');
+    expect((await agent.post('/api/attendance/me/punch-out').expect(200)).body.record).toMatchObject({ workDate: DAY, workedMinutes: 570 });
+
+    const today = await agent.get('/api/attendance/me/today').expect(200);
+    expect(today.body).toMatchObject({ date: '2026-10-15', record: null, lastShift: { workDate: DAY, workedMinutes: 570 } });
+    expect(today.body.lastShift.punchOut).toBe('2026-10-15T01:00:00.000Z');
+
+    setClock(new Date('2026-10-15T15:30:00Z')); // 21:00 IST on the 15th
+    const evening = await signIn('a@example.test');
+    await punchIn(evening).expect(201);
+    expect((await evening.get('/api/attendance/me/today').expect(200)).body).toMatchObject({ record: { workDate: '2026-10-15' }, lastShift: null });
   });
 
   it('employees without working hours keep the default working day (06:00 IST) and show shift: null', async () => {

@@ -38,30 +38,42 @@ export function employeeWorkDate(at: Date, hours: WorkingHours): string {
   return istDate(new Date(at.getTime() - dayStartOffsetMinutes(hours) * MINUTE));
 }
 
-// Until when a record of this working day is the current shift (exclusive), or null without working hours.
-function shiftCurrentUntil(workDate: string, hours: WorkingHours): Date | null {
-  if (!hours.shiftStart || !hours.shiftEnd) return null;
-  const start = minutesOf(hours.shiftStart);
-  const length = (minutesOf(hours.shiftEnd) - start + 1440) % 1440;
+// The instant the employee's working day `workDate` starts.
+export function workDayStart(workDate: string, hours: WorkingHours): Date {
   const istMidnight = Date.parse(`${workDate}T00:00:00Z`) - IST_OFFSET_MINUTES * MINUTE;
-  return new Date(istMidnight + (start + length + SHIFT_LATE_BUFFER_MINUTES) * MINUTE);
+  return new Date(istMidnight + dayStartOffsetMinutes(hours) * MINUTE);
+}
+
+// Until when a record is the current shift (exclusive), or null without working hours: the late buffer after
+// the later of the scheduled shift end and a full shift length from the punch-in. A late or early punch-in
+// (allowed, flagged) still gets a whole shift: it used to turn "incomplete" while the employee was working,
+// and one before the working day's start could no longer be punched out at all.
+function shiftCurrentUntil(record: { workDate: string; punchIn: Date }, hours: WorkingHours): Date | null {
+  const shift = shiftWindow(record.workDate, hours);
+  if (!shift) return null;
+  const length = shift.end.getTime() - shift.start.getTime();
+  return new Date(Math.max(shift.end.getTime(), record.punchIn.getTime() + length) + SHIFT_LATE_BUFFER_MINUTES * MINUTE);
 }
 
 // The record is still the employee's current (open) shift at `at`.
 export function isOpenShift(record: { workDate: string; punchIn: Date; punchOut: Date | null }, hours: WorkingHours, at: Date): boolean {
   if (record.punchOut !== null) return false;
-  const until = shiftCurrentUntil(record.workDate, hours);
+  const until = shiftCurrentUntil(record, hours);
   return until ? at < until : at.getTime() - record.punchIn.getTime() < MAX_SHIFT_HOURS * 60 * MINUTE;
 }
 
 // SQL twins of the functions above. `a` is an attendance_records alias, `e` the employees row it belongs to,
 // `at` a timestamptz parameter.
+const shiftLengthSql = (e: string) =>
+  `(CASE WHEN ${e}.shift_end >= ${e}.shift_start THEN ${e}.shift_end - ${e}.shift_start
+         ELSE ${e}.shift_end - ${e}.shift_start + interval '24 hours' END)`;
+
 export const openShiftSql = (a: string, e: string, at: string) => `
   (${a}.punch_out IS NULL AND CASE
      WHEN ${e}.shift_start IS NULL THEN ${a}.punch_in > ${at}::timestamptz - interval '${MAX_SHIFT_HOURS} hours'
-     ELSE ${at}::timestamptz < ((${a}.work_date + ${e}.shift_start
-            + CASE WHEN ${e}.shift_end > ${e}.shift_start THEN ${e}.shift_end - ${e}.shift_start
-                   ELSE ${e}.shift_end - ${e}.shift_start + interval '24 hours' END) AT TIME ZONE 'Asia/Kolkata')
+     ELSE ${at}::timestamptz < GREATEST(
+            (${a}.work_date + ${e}.shift_start + ${shiftLengthSql(e)}) AT TIME ZONE 'Asia/Kolkata',
+            ${a}.punch_in + ${shiftLengthSql(e)})
           + interval '${SHIFT_LATE_BUFFER_MINUTES} minutes'
    END)`;
 

@@ -73,6 +73,11 @@ export const EmployeeAttendanceView: React.FC = () => {
           <Button variant="outline" size="sm" icon={<Download className="w-3.5 h-3.5" />} onClick={handleExportCSV} disabled={!data}>
             Export CSV
           </Button>
+          {!todayRecord && today.data?.lastShift?.punchOut && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#047857]/10 text-[#047857] text-xs font-semibold">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Last shift punched out {formatTimeIst(today.data.lastShift.punchOut)}
+            </span>
+          )}
           {today.data && !todayRecord && today.data.leave?.dayType !== 'full' && (
             <PunchInButton
               outsideWindow={!today.data.punchInDue}

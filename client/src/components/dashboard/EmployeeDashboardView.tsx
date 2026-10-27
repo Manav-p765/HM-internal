@@ -92,6 +92,12 @@ export const EmployeeDashboardView: React.FC = () => {
             ) : (
               <>
                 <span className="text-xl font-bold text-[#111827]">{todayLeave ? 'On leave today' : 'No punch-in yet'}</span>
+                {today.data.lastShift?.punchOut && (
+                  <p className="text-xs text-[#047857] font-semibold" data-testid="last-shift">
+                    Last shift ({formatDate(today.data.lastShift.workDate)}) recorded: {formatTimeIst(today.data.lastShift.punchIn)} –{' '}
+                    {formatTimeIst(today.data.lastShift.punchOut)} · Worked {formatMinutes(today.data.lastShift.workedMinutes)}
+                  </p>
+                )}
                 <p className="text-xs text-[#7185A5]">
                   {todayLeave
                     ? `${LEAVE_TYPE_LABEL[todayLeave.leaveType]} · ${dayTypeLabel(todayLeave)}`

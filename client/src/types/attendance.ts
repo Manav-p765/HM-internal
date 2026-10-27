@@ -40,6 +40,9 @@ export interface MyAttendanceToday {
   serverTime: string;
   shift: { start: string; end: string } | null; // working hours, IST; null when not set yet
   record: AttendanceRecord | null;
+  // With no record yet: an earlier working day's shift punched out during this one (a night shift closed
+  // after the day rolled over), so the punch-out shows as done. Punching in for this day is still allowed.
+  lastShift: AttendanceRecord | null;
   leave: TodayLeave | null;
   punchInDue: boolean; // the shift window is open and nothing is recorded yet (not on full-day leave)
 }
